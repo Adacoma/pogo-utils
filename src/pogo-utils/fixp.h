@@ -622,75 +622,6 @@ static inline int q1_15_is_saturated(q1_15_t x) {
     return (x == Q1_15_MAX || x == Q1_15_MIN);
 }
 
-///*
-// * q1_15_exp:
-// * Computes exp(x) for a Q1.15 number x.
-// * Since Q1.15 can represent only numbers in approximately [-1.0, 0.99997]
-// * and exp(x) >= 1 for x >= 0, we saturate nonnegative x to Q1_15_MAX.
-// * For negative x we use range reduction:
-// *
-// *     x = n * ln2 + r,   with r in [0, ln2)
-// *
-// * Then exp(x) = 2^n * exp(r), where exp(r) is approximated by a 7-term series:
-// *
-// *     exp(r) ≈ 1 + r + r^2/2! + ... + r^6/6!
-// *
-// * All calculations for the series are done in 32-bit arithmetic with Q1_15_SCALE
-// * (32768) representing 1.0.
-// */
-//static inline q1_15_t q1_15_exp(q1_15_t x) {
-//    // Use the macro for ln2 in Q1.15.
-//    const q1_15_t ln2_fixed = Q1_15_LN2_CONST;  // ~22713
-//
-//    // For any nonnegative input, exp(x) is >= 1.0; saturate to Q1_15_MAX.
-//    if (x >= 0)
-//        return Q1_15_MAX;
-//
-//    /* Compute n = floor(x/ln2) using 32-bit arithmetic.
-//       Let L = Q1_15_ONE * ln2 ≈ 32768 * 0.693147 ≈ 22713 in Q1.15 units.
-//    */
-//    int32_t x32 = (int32_t)x;  // e.g., for x = -1.0, x32 = -32768.
-//    int32_t L = Q1_15_LN2_CONST;
-//    int n = x32 / L;         // C division truncates toward 0.
-//    if (x32 % L != 0)
-//        n--;  // Adjust for negative x to get the floor.
-//
-//    // Compute n * ln2 in Q1.15.
-//    int32_t ln2_32 = ln2_fixed;
-//    int32_t n_ln2 = n * ln2_32;
-//
-//    // Compute remainder r = x - (n * ln2) in 32-bit arithmetic.
-//    int32_t r32 = x32 - n_ln2;
-//    q1_15_t r = (q1_15_t) r32;
-//
-//    /* Compute exp(r) using a 7-term series in 32-bit arithmetic.
-//       We work with 32-bit values where Q1_15_ONE (32768) represents 1.0.
-//       Here we use 5 terms (term0 plus terms for i = 1 to 5).
-//    */
-//    int32_t term32 = Q1_15_ONE;  // term0 = 1.0
-//    int32_t sum32  = Q1_15_ONE;  // series sum starts at 1.0
-//    for (int i = 1; i <= 5; i++) {
-//        int32_t prod = ((int32_t)term32 * (int32_t)r) >> Q1_15_FRACTIONAL_BITS;
-//        term32 = prod / i;  // plain 32-bit division (non-saturating)
-//        sum32 += term32;
-//    }
-//
-//    // Multiply the series result by 2^n.
-//    int32_t result32 = sum32;
-//    if (n < 0) {
-//        for (int i = 0; i < -n; i++)
-//            result32 >>= 1;  // Divide by 2 for negative n.
-//    } else {
-//        for (int i = 0; i < n; i++) {
-//            result32 <<= 1;  // Multiply by 2 for positive n.
-//            if (result32 >= Q1_15_ONE)
-//                result32 = Q1_15_ONE - 1;  // Saturate.
-//        }
-//    }
-//    if (result32 >= Q1_15_ONE)
-//         result32 = Q1_15_ONE - 1;
-//    return (q1_15_t) result32;
-//}
 
 /*
  * q1_15_exp:
@@ -1125,72 +1056,108 @@ static inline int q16_16_is_saturated(q16_16_t x) {
 }
 
 
+// Saturation arguments (given in Q16.16):
+#define Q16_16_EXP_MAX_ARG ((q16_16_t)681360)           // ~10.397 in Q16.16
+#define Q16_16_EXP_MIN_ARG ((q16_16_t)(-16 * Q16_16_ONE)) // -16.0 in Q16.16
+
 /*
  * q16_16_exp:
- * Computes e^x for a Q16.16 number x.
- * Uses range reduction: x = n * ln2 + r, with r in [0, ln2),
- * so that e^x = 2^n * e^r.
  *
- * e^r is approximated by a 7-term Taylor series:
- *    e^r ≈ 1 + r + r^2/2! + r^3/3! + ... + r^5/5!
+ * Computes e^x for a Q16.16 number x using range reduction and an unrolled Taylor
+ * series for e^r, avoiding costly 64-bit divisions.
  *
- * All series computations are done in 64-bit arithmetic,
- * with Q16_16_ONE (65536) representing 1.0.
+ * 1. Early saturation:
+ *      - if x ≥ Q16_16_EXP_MAX_ARG, returns Q16_16_MAX.
+ *      - if x < Q16_16_EXP_MIN_ARG, returns 0.
  *
- * For saturation, if x ≥ 10.397 (≈681360 in Q16.16) the function returns Q16_16_MAX,
- * and if x < -16.0 (i.e. below -1048576) it returns 0.
+ * 2. Range reduction:
+ *      x = n * ln2 + r,  with r in [0, ln2)
+ *   so that e^x = 2^n * e^r.
+ *
+ * 3. The Taylor series for e^r is approximated as:
+ *      e^r ≈ 1 + r + r^2/2 + r^3/6 + r^4/24 + r^5/120
+ *
+ *    We compute r^2, r^3, r^4, and r^5 in 64-bit arithmetic (with Q16.16 scaling) and
+ *    replace the divisions by 6, 24, and 120 with multiplications by precomputed reciprocals.
+ *
+ *    Precomputed reciprocals in Q32 (i.e., representing 1/i as floor((1<<32)/i)):
+ *         RECIP_6   ≈ 715827882    (for division by 6)
+ *         RECIP_24  ≈ 178956970    (for division by 24)
+ *         RECIP_120 ≈ 35791394     (for division by 120)
+ *
+ * 4. The result is then scaled by 2^n using shifts.
+ *
+ * 5. Finally, the result is saturated to the Q16.16 representable range.
  */
-#define Q16_16_EXP_MAX_ARG ((q16_16_t)681360)  // 10.397 * 65536, approximate
-#define Q16_16_EXP_MIN_ARG ((q16_16_t)(-16 * Q16_16_ONE)) // -16.0 in Q16.16
 static inline q16_16_t q16_16_exp(q16_16_t x) {
-    const q16_16_t max_arg = Q16_16_EXP_MAX_ARG;
-    const q16_16_t min_arg = Q16_16_EXP_MIN_ARG;
-    if (x >= max_arg)
+    // Early saturation.
+    if (x >= Q16_16_EXP_MAX_ARG)
         return Q16_16_MAX;
-    if (x < min_arg)
+    if (x < Q16_16_EXP_MIN_ARG)
         return 0;
 
     // Use the precomputed ln2 constant.
-    const q16_16_t ln2_fixed = Q16_16_LN2_CONST;  // ~45426
+    const q16_16_t ln2 = Q16_16_LN2_CONST;  // ~45426 in Q16.16
 
-    // Range reduction: write x = n * ln2 + r.
+    // Range reduction: find n such that x = n * ln2 + r, with r in [0, ln2).
+    // We use 64-bit arithmetic for the division.
     int64_t x64 = x;
-    int n = (int)(x64 / ln2_fixed);
-    if (x64 < 0 && (x64 % ln2_fixed) != 0)
-        n--;  // adjust for floor for negative x
+    int n = (int)(x64 / ln2);
+    if (x64 < 0 && (x64 % ln2) != 0)
+        n--;  // Adjust for floor when x is negative.
 
     // Compute n * ln2 in Q16.16.
-    q16_16_t n_ln2 = q16_16_mul(q16_16_from_int(n), ln2_fixed);
-    // Compute remainder: r = x - n*ln2.
-    q16_16_t r = q16_16_sub(x, n_ln2);
+    int64_t n_ln2 = (int64_t)n * ln2;
+    // Compute the remainder: r = x - n * ln2.
+    q16_16_t r = x - (q16_16_t)n_ln2;
 
-    // Compute e^r using a 7-term Taylor series.
-    // Let scale = Q16_16_ONE (65536) represent 1.0.
-    int64_t term = Q16_16_ONE;  // term_0 = 1.0
-    int64_t sum  = Q16_16_ONE;  // initialize series sum with 1.0
-    for (int i = 1; i <= 5; i++) {  // Using 5 terms in the series
-        term = (term * r) >> 16;  // Q16_16_FRACTIONAL_BITS = 16
-        term = term / i;
-        sum += term;
-    }
+    // Compute the Taylor series for e^r:
+    // e^r ≈ 1 + r + r^2/2 + r^3/6 + r^4/24 + r^5/120
+    int64_t one = Q16_16_ONE;  // 65536 represents 1.0 in Q16.16
 
-    // Multiply the series result by 2^n.
-    int64_t result = sum;
+    // Compute powers of r in Q16.16:
+    int64_t r2 = (((int64_t)r * r) >> 16);  // r^2 in Q16.16
+    int64_t r3 = (((int64_t)r2 * r) >> 16);   // r^3 in Q16.16
+    int64_t r4 = (((int64_t)r3 * r) >> 16);   // r^4 in Q16.16
+    int64_t r5 = (((int64_t)r4 * r) >> 16);   // r^5 in Q16.16
+
+    // Precomputed reciprocals in Q32.
+    const int64_t RECIP_6   = 715827882LL;   // ≈ (1<<32)/6
+    const int64_t RECIP_24  = 178956970LL;    // ≈ (1<<32)/24
+    const int64_t RECIP_120 = 35791394LL;     // ≈ (1<<32)/120
+
+    int64_t term0 = one;              // 1.0
+    int64_t term1 = r;                // r
+    int64_t term2 = r2 >> 1;          // r^2/2 (division by 2 using a right shift)
+    int64_t term3 = (r3 * RECIP_6) >> 32;   // r^3/6
+    int64_t term4 = (r4 * RECIP_24) >> 32;  // r^4/24
+    int64_t term5 = (r5 * RECIP_120) >> 32; // r^5/120
+
+    int64_t series = term0 + term1 + term2 + term3 + term4 + term5;
+
+    // Scale the series result by 2^n.
+    int64_t result = series;
     if (n < 0) {
-        for (int i = 0; i < -n; i++)
-            result >>= 1;
+        result = result >> (-n);
     } else {
-        for (int i = 0; i < n; i++) {
-            result <<= 1;
-            if (result > Q16_16_MAX) { result = Q16_16_MAX; break; }
+        if (n >= 32) {  // A left shift of 32 or more would overflow.
+            result = Q16_16_MAX;
+        } else {
+            result = result << n;
+            if (result > Q16_16_MAX)
+                result = Q16_16_MAX;
         }
     }
+
+    // Final saturation.
     if (result > Q16_16_MAX)
         result = Q16_16_MAX;
     if (result < Q16_16_MIN)
         result = Q16_16_MIN;
-    return (q16_16_t) result;
+
+    return (q16_16_t)result;
 }
+
 
 /*
  * q16_16_log:
@@ -1491,63 +1458,152 @@ static inline int q6_10_is_saturated(q6_10_t x) {
     return (x == Q6_10_MAX || x == Q6_10_MIN);
 }
 
+///*
+// * q6_10_exp:
+// * Computes exp(x) for a Q6.10 number x.
+// * Uses range reduction: x = n * ln2 + r, with r in [0, ln2)
+// * so that exp(x) = 2^n * exp(r).
+// * Approximates exp(r) with a 5-term Taylor series:
+// *    exp(r) ≈ 1 + r + r^2/2 + r^3/6 + r^4/24.
+// *
+// * Calculations use 64-bit arithmetic with Q6_10_ONE (1024) as 1.0.
+// * If x ≥ 3.5 (real) we saturate to Q6_10_MAX, and if x < -10.0 we return 0.
+// */
+//#define Q6_10_EXP_MAX_ARG 3584    // Represents 3.5 in Q6.10.
+//#define Q6_10_EXP_MIN_ARG (-10240) // Represents -10.0 in Q6.10.
+//#define Q6_10_LN2_CONST 709       // Represents ln2 (0.693147) in Q6.10.
+//static inline q6_10_t q6_10_exp(q6_10_t x) {
+//    // Use precomputed constants:
+//    q6_10_t max_arg = Q6_10_EXP_MAX_ARG;
+//    q6_10_t min_arg = Q6_10_EXP_MIN_ARG;
+//    if (x >= max_arg)
+//        return Q6_10_MAX;
+//    if (x < min_arg)
+//        return 0;
+//
+//    // Use precomputed ln2 constant.
+//    q6_10_t ln2 = Q6_10_LN2_CONST;
+//    int32_t x32 = x;
+//    int n = x32 / ln2;
+//    if (x32 % ln2 != 0)
+//        n--;  // floor for negative x
+//    int32_t n_ln2 = n * ln2;
+//    q6_10_t r = (q6_10_t)(x32 - n_ln2);
+//
+//    // Compute exp(r) using a 5-term Taylor series:
+//    int64_t term = Q6_10_ONE;  // 1.0 in Q6.10 (1024)
+//    int64_t sum  = Q6_10_ONE;
+//    for (int i = 1; i <= 4; i++) {
+//        term = (term * r) >> Q6_10_FRACTIONAL_BITS;
+//        term = term / i;
+//        sum += term;
+//    }
+//
+//    int64_t result = sum;
+//    if (n < 0) {
+//        for (int i = 0; i < -n; i++)
+//            result >>= 1;
+//    } else {
+//        for (int i = 0; i < n; i++) {
+//            result <<= 1;
+//            if (result > Q6_10_MAX) { result = Q6_10_MAX; break; }
+//        }
+//    }
+//    if (result > Q6_10_MAX)
+//        result = Q6_10_MAX;
+//    if (result < 0)
+//        result = 0;
+//    return (q6_10_t)result;
+//}
+
+#define Q6_10_LN2_CONST 709 /* Define ln(2) in Q6.10 as a macro. 0.693147 * 1024 ≈ 709. */
+#define Q6_10_EXP_MAX_ARG 3584     // Represents 3.5 in Q6.10.
+#define Q6_10_EXP_MIN_ARG (-10240)  // Represents -10.0 in Q6.10.
+
 /*
  * q6_10_exp:
- * Computes exp(x) for a Q6.10 number x.
- * Uses range reduction: x = n * ln2 + r, with r in [0, ln2)
- * so that exp(x) = 2^n * exp(r).
- * Approximates exp(r) with a 5-term Taylor series:
- *    exp(r) ≈ 1 + r + r^2/2 + r^3/6 + r^4/24.
+ * Computes exp(x) for a Q6.10 number x using range reduction and an unrolled
+ * Taylor series for exp(r). The algorithm uses:
  *
- * Calculations use 64-bit arithmetic with Q6_10_ONE (1024) as 1.0.
- * If x ≥ 3.5 (real) we saturate to Q6_10_MAX, and if x < -10.0 we return 0.
+ *  1. Early saturation: if x ≥ Q6_10_EXP_MAX_ARG, return Q6_10_MAX;
+ *     if x < Q6_10_EXP_MIN_ARG, return 0.
+ *
+ *  2. Range reduction: express x = n * ln2 + r with r in [0, ln2) so that:
+ *         exp(x) = 2^n * exp(r)
+ *
+ *  3. Taylor series for exp(r) is approximated as:
+ *         exp(r) ≈ 1 + r + r²/2 + r³/6 + r⁴/24
+ *
+ *     The division by 2 is done by a right-shift by 1.
+ *     The division by 6 is replaced by a multiplication by RECIP_6 (in Q32) and a >>32.
+ *     The division by 24 is replaced by a multiplication by RECIP_24 (in Q32) and a >>32.
+ *
+ *  4. Finally, the result is scaled by 2^n using shifts (with overflow checks) and
+ *     saturated to the Q6.10 range.
  */
-#define Q6_10_EXP_MAX_ARG 3584    // Represents 3.5 in Q6.10.
-#define Q6_10_EXP_MIN_ARG (-10240) // Represents -10.0 in Q6.10.
-#define Q6_10_LN2_CONST 709       // Represents ln2 (0.693147) in Q6.10.
 static inline q6_10_t q6_10_exp(q6_10_t x) {
-    // Use precomputed constants:
-    q6_10_t max_arg = Q6_10_EXP_MAX_ARG;
-    q6_10_t min_arg = Q6_10_EXP_MIN_ARG;
-    if (x >= max_arg)
+    // Early saturation.
+    if (x >= Q6_10_EXP_MAX_ARG)
         return Q6_10_MAX;
-    if (x < min_arg)
+    if (x < Q6_10_EXP_MIN_ARG)
         return 0;
 
-    // Use precomputed ln2 constant.
-    q6_10_t ln2 = Q6_10_LN2_CONST;
+    // Range reduction:
+    //   Write x = n * ln2 + r, where ln2 is given in Q6.10.
+    q6_10_t ln2 = Q6_10_LN2_CONST;  // 709 in Q6.10
     int32_t x32 = x;
     int n = x32 / ln2;
     if (x32 % ln2 != 0)
-        n--;  // floor for negative x
+        n--;  // For negative x, adjust to floor division.
     int32_t n_ln2 = n * ln2;
     q6_10_t r = (q6_10_t)(x32 - n_ln2);
 
-    // Compute exp(r) using a 5-term Taylor series:
-    int64_t term = Q6_10_ONE;  // 1.0 in Q6.10 (1024)
-    int64_t sum  = Q6_10_ONE;
-    for (int i = 1; i <= 4; i++) {
-        term = (term * r) >> Q6_10_FRACTIONAL_BITS;
-        term = term / i;
-        sum += term;
-    }
+    // Compute exp(r) using an unrolled 5-term Taylor series.
+    // All arithmetic is performed in 64-bit integers with Q6.10_ONE (1024) as 1.0.
+    int64_t one   = Q6_10_ONE;  // 1024
+    int64_t term0 = one;        // 1.0
+    int64_t term1 = r;          // r
 
-    int64_t result = sum;
+    // Compute r^2 in Q6.10.
+    int64_t r2 = (((int64_t)r * r) >> Q6_10_FRACTIONAL_BITS);
+    // term2 = r^2/2; division by 2 via right shift.
+    int64_t term2 = r2 >> 1;
+
+    // Compute r^3 in Q6.10.
+    int64_t r3 = (r2 * r) >> Q6_10_FRACTIONAL_BITS;
+    // Use RECIP_6 to compute r^3/6 without a division.
+    const int64_t RECIP_6 = 715827882LL;  // floor((1<<32)/6)
+    int64_t term3 = (r3 * RECIP_6) >> 32;
+
+    // Compute r^4 in Q6.10.
+    int64_t r4 = (r3 * r) >> Q6_10_FRACTIONAL_BITS;
+    // Use RECIP_24 to compute r^4/24.
+    const int64_t RECIP_24 = 178956970LL;  // floor((1<<32)/24)
+    int64_t term4 = (r4 * RECIP_24) >> 32;
+
+    int64_t series = term0 + term1 + term2 + term3 + term4;
+
+    // Scale the series result by 2^n.
+    int64_t result = series;
     if (n < 0) {
-        for (int i = 0; i < -n; i++)
-            result >>= 1;
+        result = result >> (-n);
     } else {
-        for (int i = 0; i < n; i++) {
-            result <<= 1;
-            if (result > Q6_10_MAX) { result = Q6_10_MAX; break; }
+        if (n >= 32) {  // A left shift by 32 or more would overflow.
+            result = Q6_10_MAX;
+        } else {
+            result = result << n;
+            if (result > Q6_10_MAX)
+                result = Q6_10_MAX;
         }
     }
     if (result > Q6_10_MAX)
         result = Q6_10_MAX;
     if (result < 0)
         result = 0;
+
     return (q6_10_t)result;
 }
+
 
 /*
  * q6_10_log:
@@ -1560,7 +1616,6 @@ static inline q6_10_t q6_10_exp(q6_10_t x) {
  * Multiply the result by 1024 to get Q6_10 units.
  * Finally, ln(x) = [ln(m) + n*ln2] (with ln2 ≈ 0.693147, i.e. ~709 in Q6_10).
  */
-#define Q6_10_LN2_CONST 709 /* Define ln(2) in Q6.10 as a macro. 0.693147 * 1024 ≈ 709. */
 static inline q6_10_t q6_10_log(q6_10_t x) {
     if (x <= 0)
         return Q6_10_MIN;  // undefined for nonpositive x
