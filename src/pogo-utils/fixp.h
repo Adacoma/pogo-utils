@@ -396,42 +396,6 @@ static inline q8_24_t q8_24_exp(q8_24_t x) {
  *
  * Finally, ln(x) = ln(m) + n*ln2, where ln2 is given by Q8_24_LN2_CONST.
  */
-//static inline q8_24_t _q8_24_log_base(q8_24_t x) {
-//    if (x <= 0)
-//        return Q8_24_MIN;  // Saturate for nonpositive x.
-//
-//    int n = 0;
-//    q8_24_t m = x;
-//    while (m < Q8_24_ONE) {
-//        // Multiply m by 2 using the macro to convert 2 to Q8.24.
-//        m = q8_24_mul(m, Q8_24_FROM_INT(2));
-//        n--;
-//    }
-//    while (m >= (Q8_24_ONE << 1)) {  // while m >= 2.0
-//        m = q8_24_div(m, Q8_24_FROM_INT(2));
-//        n++;
-//    }
-//
-//    // t = m - Q8_24_ONE, so that m = 1+t (with t in Q8.24 units)
-//    q8_24_t t = q8_24_sub(m, Q8_24_ONE);
-//
-//    // Compute ln(1+t) using a 7-term alternating series.
-//    q8_24_t term = t;
-//    q8_24_t sum = t;
-//    for (int i = 2; i <= 5; i++) {
-//        term = q8_24_mul(term, t);
-//        q8_24_t frac = q8_24_div(term, Q8_24_FROM_INT(i));
-//        if (i % 2 == 0)
-//            sum = q8_24_sub(sum, frac);
-//        else
-//            sum = q8_24_add(sum, frac);
-//    }
-//
-//    // Use the macro-defined ln2 constant.
-//    q8_24_t n_ln2 = q8_24_mul(Q8_24_FROM_INT(n), Q8_24_LN2_CONST);
-//    return q8_24_add(sum, n_ln2);
-//}
-
 static inline q8_24_t _q8_24_log_base(q8_24_t x) {
     // For nonpositive x, return a saturated value.
     if (x <= 0)
@@ -1225,87 +1189,110 @@ static inline q16_16_t q16_16_exp(q16_16_t x) {
 
 
 /*
- * q16_16_log:
- * Computes the natural logarithm (ln) for a Q16.16 number x > 0.
- * Q16.16 uses 32 bits with 16 fractional bits (so 1.0 = 65536).
+ * _q16_16_log_base:
+ * Computes the natural logarithm of x (x > 0) in Q16.16 by first normalizing
+ * x to the form:   x = m * 2^n,   with m in [Q16_16_ONE, 2*Q16_16_ONE)
+ * Then, letting t = m - Q16_16_ONE (so that m = 1+t), we approximate:
  *
- * First, x is normalized by writing it as:
+ *   ln(1+t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5 - t^6/6 + t^7/7 - t^8/8 + t^9/9.
  *
- *      x = m * 2^n,    with m in [Q16_16_ONE, 2*Q16_16_ONE)
- *
- * (Q16_16_ONE is defined as 1 << 16, i.e. 65536.)
- *
- * Then, letting t = m - Q16_16_ONE, we approximate ln(1+t)
- * via an alternating series:
- *
- *      ln(1+t) ≈ t - t^2/2 + t^3/3 - t^4/4 + ...
- *
- * In this revised version, we use terms for i = 2 up through 9 (i.e. 8 terms after the initial t)
- * and we use rounding in each multiplication and division step.
- *
- * Finally, ln(x) is computed as:
- *
- *      ln(x) = ln(m) + n * ln2,
- *
- * where ln2 is approximated in Q16.16 (ln2 ≈ 0.693147, represented as ~45426).
- *
- * All intermediate calculations are done in 64-bit arithmetic, and the final
- * result is saturated to the Q16.16 range if necessary.
+ * In this version the normalization is done via bit–level operations (using __builtin_clz)
+ * and the series is unrolled. Divisions by powers of two are replaced with right shifts,
+ * while divisions by 3, 5, 7, and 9 are replaced by multiplications by precomputed reciprocals
+ * in Q32 with rounding.
  */
 static inline q16_16_t _q16_16_log_base(q16_16_t x) {
     if (x <= 0)
-        return Q16_16_MIN;  // log undefined for nonpositive x
+        return Q16_16_MIN;  // Log undefined for nonpositive x; saturate as needed.
 
-    int n = 0;
-    // Use 64-bit integer for normalization.
-    // If x equals Q16_16_MAX (which is 0x7FFFFFFF, but note that the ideal 1.0 is 65536),
-    // treat it as the ideal 1.0 (65536) for normalization purposes.
-    int64_t m = (x == Q16_16_MAX) ? (1LL << Q16_16_FRACTIONAL_BITS) : (int64_t)x;
+    // ----- Step 1: Normalize x using bit-level operations -----
+    // Represent x in Q16.16 as:  x = m * 2^n,  with m in [65536, 131072).
+    int p = 31 - __builtin_clz((unsigned int)x);  // floor(log2(x))
+    int n = p - Q16_16_FRACTIONAL_BITS;            // n = floor(log2(x)) - 16
+    uint32_t m;
+    if (n >= 0)
+        m = x >> n;
+    else
+        m = x << (-n);
+    // m is now the normalized mantissa (in Q16.16) satisfying: 65536 <= m < 131072.
 
-    // Normalize m so that m is in [65536, 131072)
-    while (m < (1LL << Q16_16_FRACTIONAL_BITS)) {
-        m *= 2;
-        n--;
-    }
-    while (m >= ((int64_t)1 << (Q16_16_FRACTIONAL_BITS + 1))) {
-        m /= 2;
-        n++;
-    }
+    // ----- Step 2: Compute ln(1+t) via an unrolled alternating series -----
+    // Let t = m - Q16_16_ONE, so that m = 1+t in Q16.16.
+    int32_t t = (int32_t)m - Q16_16_ONE;
+    // Our series is:
+    //   ln(1+t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5 - t^6/6 + t^7/7 - t^8/8 + t^9/9.
+    // All terms are computed in 64-bit arithmetic in Q16.16.
+    int64_t t64 = t;    // Q16.16
+    int64_t sum  = t64;  // First term: t.
+    int64_t term = t64;  // Current term; will be updated iteratively.
 
-    // Let t = m - 65536. (t represents m - 1.0 in Q16.16.)
-    int64_t t = m - (1LL << Q16_16_FRACTIONAL_BITS);
+    // Precomputed reciprocals in Q32 (i.e. floor((1<<32)/d)):
+    const uint32_t RECIP_3 = 1431655765U;   // ≈ (1<<32)/3
+    const uint32_t RECIP_5 = 858993459U;      // ≈ (1<<32)/5
+    const uint32_t RECIP_7 = 613566756U;      // ≈ (1<<32)/7
+    const uint32_t RECIP_9 = 477218588U;      // ≈ (1<<32)/9
 
-    // Compute ln(1+t) using an alternating series.
-    // We'll compute terms for i = 2 through 9 (8 terms) for improved accuracy.
-    int64_t term = t;  // first term is t
-    int64_t sum = t;   // initialize sum with t
-    for (int i = 2; i <= 5; i++) {
-        // Multiply the previous term by t in Q16.16 arithmetic.
-        // Use rounding: add half the divisor before shifting.
-        int64_t prod = term * t;
-        prod = (prod + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-        // Now perform division by i with rounding.
-        term = (prod + i/2) / i;
-        if (i % 2 == 0)
-            sum -= term;
-        else
-            sum += term;
-    }
+    // For each term i = 2 to 9, update term = term * t (with rounding) then divide by i.
+    // Use a right-shift with rounding for multiplications (round by adding 1<<(16-1)).
+    // Alternate subtracting and adding according to the series sign.
 
-    // ln2 in Q16.16: ideally, ln2 ≈ 0.693147, which is approximately 45426 in Q16.16.
-    q16_16_t ln2_fixed = Q16_16_LN2_CONST;
-    int64_t n_ln2 = n * (int64_t)ln2_fixed;
+    // i = 2: term = (t^2) / 2.
+    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
+    term = term >> 1;  // Division by 2 (power of two).
+    sum -= term;       // Even term: subtract.
 
-    int64_t ln_x = sum + n_ln2;
+    // i = 3: term = (t^3) / 3.
+    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
+    term = (term * RECIP_3 + (1LL << 31)) >> 32;  // Division by 3.
+    sum += term;       // Odd term: add.
 
-    // Saturate the final result to the Q16.16 range.
-    if (ln_x > Q16_16_MAX)
-        ln_x = Q16_16_MAX;
-    if (ln_x < Q16_16_MIN)
-        ln_x = Q16_16_MIN;
+    // i = 4: term = (t^4) / 4.
+    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
+    term = term >> 2;  // Division by 4.
+    sum -= term;       // Even: subtract.
 
-    return (q16_16_t)ln_x;
+    // i = 5: term = (t^5) / 5.
+    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
+    term = (term * RECIP_5 + (1LL << 31)) >> 32;  // Division by 5.
+    sum += term;       // Odd: add.
+
+    // i = 6: term = (t^6) / 6.
+    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
+    // Division by 6: since 6 is not a power of two, use reciprocal.
+    // (1<<32)/6 = 715827882.
+    term = (term * 715827882LL + (1LL << 31)) >> 32;
+    sum -= term;       // Even: subtract.
+
+    // i = 7: term = (t^7) / 7.
+    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
+    term = (term * RECIP_7 + (1LL << 31)) >> 32;  // Division by 7.
+    sum += term;       // Odd: add.
+
+    // i = 8: term = (t^8) / 8.
+    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
+    term = term >> 3;  // Division by 8.
+    sum -= term;       // Even: subtract.
+
+    // i = 9: term = (t^9) / 9.
+    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
+    term = (term * RECIP_9 + (1LL << 31)) >> 32;  // Division by 9.
+    sum += term;       // Odd: add.
+
+    // ----- Step 3: Reconstruct ln(x) -----
+    // We have normalized x as:  x = m * 2^n, where m = 1+t.
+    // Thus, ln(x) = ln(m) + n * ln2, and ln(m) ≈ series = sum.
+    int64_t n_ln2 = (int64_t)n * Q16_16_LN2_CONST;
+    int64_t ln_val = sum + n_ln2;
+    
+    // Saturate result if needed.
+    if (ln_val > Q16_16_MAX)
+        ln_val = Q16_16_MAX;
+    if (ln_val < Q16_16_MIN)
+        ln_val = Q16_16_MIN;
+    
+    return (q16_16_t)ln_val;
 }
+
 
 /*
  * q16_16_log:
