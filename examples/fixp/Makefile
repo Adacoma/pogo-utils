@@ -9,8 +9,9 @@ MAKEFILE_DIR := $(notdir $(patsubst %/,%,$(dir $(MAKEFILE_PATH))))
 BUILD_DIR=./build
 POGO_SDK=../../pogobot-sdk
 POGOSIM_INCLUDE_DIR=../../pogosim/src/
-POGOSIM_SRC_DIR=../../pogosim/src/pogosim
 POGOUTILS_INCLUDE_DIR=../../src
+
+POGOSIM_SRC_DIR=$(POGOSIM_INCLUDE_DIR)/pogosim
 
 POGO_SDK_TOOLS=$(POGO_SDK)/tools
 POGO_SDK_INCS=$(POGO_SDK)/includes

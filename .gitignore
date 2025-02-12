@@ -59,3 +59,6 @@ pogobot-sdk
 frames/
 build/
 examples/*/build/
+
+# Examples binaries
+examples/fixp/fixp
