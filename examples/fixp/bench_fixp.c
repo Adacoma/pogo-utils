@@ -256,31 +256,36 @@ void test_fixp_functions(void) {
     printf0("=== Q8.24 exp and log Tests ===\n");
     {
         q8_24_t exp1 = q8_24_exp(q8_24_from_float(1.0f));
-        printf0("exp(1) = %li.%lu (expected ~2.71828)\n", q8_24_get_int(exp1), q8_24_get_frac(exp1));
-        assert(fabsf(q8_24_to_float(exp1) - 2.71828f) < 0.05f);
+        //printf0("exp(1) = %li.%lu (expected ~2.71828)\n", q8_24_get_int(exp1), q8_24_get_frac(exp1));
+        printf0("exp(1) = %f (expected ~2.71828)\n", q8_24_to_float(exp1));
+        assert(fabsf(q8_24_to_float(exp1) - 2.71828f) < 0.01f);
     }
     {
         q8_24_t log_e = q8_24_log(q8_24_from_float(2.71828f));
-        printf0("log(2.71828) = %li.%lu (expected ~1.0)\n", q8_24_get_int(log_e), q8_24_get_frac(log_e));
-        assert(fabsf(q8_24_to_float(log_e) - 1.0f) < 0.05f);
+        //printf0("log(2.71828) = %li.%lu (expected ~1.0)\n", q8_24_get_int(log_e), q8_24_get_frac(log_e));
+        printf0("log(2.71828) = %f (expected ~1.0)\n", q8_24_to_float(log_e));
+        assert(fabsf(q8_24_to_float(log_e) - 1.0f) < 0.01f);
     }
     {
         q8_24_t three = q8_24_from_float(3.0f);
         q8_24_t log3 = q8_24_log(three);
         q8_24_t exp_log3 = q8_24_exp(log3);
-        printf0("exp(log(3.0)) = %li.%lu (expected ~3.0)\n", q8_24_get_int(exp_log3), q8_24_get_frac(exp_log3));
-        assert(fabsf(q8_24_to_float(exp_log3) - 3.0f) < 0.05f);
+        //printf0("exp(log(3.0)) = %li.%lu (expected ~3.0)\n", q8_24_get_int(exp_log3), q8_24_get_frac(exp_log3));
+        printf0("exp(log(3.0)) = %f (expected ~3.0)\n", q8_24_to_float(exp_log3));
+        assert(fabsf(q8_24_to_float(exp_log3) - 3.0f) < 0.01f);
     }
     {
         q8_24_t two = q8_24_from_float(2.0f);
         q8_24_t log_exp2 = q8_24_log(q8_24_exp(two));
-        printf0("log(exp(2.0)) = %li.%lu (expected ~2.0)\n", q8_24_get_int(log_exp2), q8_24_get_frac(log_exp2));
-        assert(fabsf(q8_24_to_float(log_exp2) - 2.0f) < 0.05f);
+        //printf0("log(exp(2.0)) = %li.%lu (expected ~2.0)\n", q8_24_get_int(log_exp2), q8_24_get_frac(log_exp2));
+        printf0("log(exp(2.0)) = %f (expected ~2.0)\n", q8_24_to_float(log_exp2));
+        assert(fabsf(q8_24_to_float(log_exp2) - 2.0f) < 0.01f);
     }
     {
         q8_24_t a = q8_24_from_float(-10.0f);
         q8_24_t exp_a = q8_24_exp(a);
-        printf0("exp(10.0) = %li.%lu \n", q8_24_get_int(exp_a), q8_24_get_frac(exp_a));
+        //printf0("exp(-10.0) = %li.%lu \n", q8_24_get_int(exp_a), q8_24_get_frac(exp_a));
+        printf0("exp(-10.0) = %f \n", q8_24_to_float(exp_a));
     }
 
 

@@ -17,6 +17,9 @@
 // Precomputed constant macro for ln(2) in Q8.24.
 // For Q8.24, 1.0 = (1UL << 24) = 16777216, so ln(2) ≈ 0.693147 * 16777216 ≈ 11639491.
 #define Q8_24_LN2_CONST     11639491       // Precomputed: 0.693147 * 16777216
+//#define Q8_24_LN2_CONST     11629080       // Precomputed: 0.693147 * 16777216
+#define Q8_24_INV_LN2       24204406       // 1/ln2 in Q8.24 (≈1.442695 * 2^24)
+
 
 /*
  * In Q8.24 the maximum representable value is (2^31 - 1) scaled by 2^-24,
@@ -242,53 +245,152 @@ static inline int q8_24_is_saturated(q8_24_t x) {
  */
 #define Q8_24_EXP_MAX_ARG_CONST  81368978  // Precomputed: 4.85203 * 16777216
 #define Q8_24_EXP_MIN_ARG_CONST  (-279035456) // Precomputed: -16.632 * 16777216
+//static inline q8_24_t q8_24_exp(q8_24_t x) {
+//    const q8_24_t max_arg = Q8_24_EXP_MAX_ARG_CONST;
+//    const q8_24_t min_arg = Q8_24_EXP_MIN_ARG_CONST;
+//    if (x > max_arg)
+//        return Q8_24_MAX;
+//    if (x < min_arg)
+//        return 0;
+//
+//    // Use precomputed ln2.
+//    const q8_24_t ln2_fixed = Q8_24_LN2_CONST;
+//
+//    // Range reduction: find integer n such that x = n * ln2 + r, with r in [0, ln2).
+//    int64_t x64 = x;
+//    int n = (int)(x64 / ln2_fixed);
+//    if (x64 < 0 && (x64 % ln2_fixed) != 0)
+//        n--;
+//
+//    q8_24_t n_ln2 = n * ln2_fixed;  // Multiply in integer arithmetic.
+//    q8_24_t r = q8_24_sub(x, n_ln2);
+//
+//    // Compute exp(r) using a Taylor series:
+//    // exp(r) ≈ 1 + r + r^2/2! + r^3/3! + r^4/4! + r^5/5!
+//    int64_t term = Q8_24_ONE;  // term0 = 1.0 in Q8_24
+//    int64_t sum  = Q8_24_ONE;  // initialize sum with 1.0
+//    for (int i = 1; i <= 5; i++) {
+//        term = (term * r) >> 24;  // Q8_24_FRACTIONAL_BITS = 24
+//        term = term / i;
+//        sum += term;
+//    }
+//
+//    // Scale the series result by 2^n.
+//    int64_t result = sum;
+//    if (n >= 0) {
+//        for (int i = 0; i < n; i++) {
+//            result = result << 1;
+//            if (result > Q8_24_MAX) { result = Q8_24_MAX; break; }
+//        }
+//    } else {
+//        for (int i = 0; i < -n; i++) {
+//            result = result >> 1;
+//        }
+//    }
+//    if (result > Q8_24_MAX)
+//        result = Q8_24_MAX;
+//    if (result < Q8_24_MIN)
+//        result = Q8_24_MIN;
+//    return (q8_24_t) result;
+//}
+
+/*
+ * q8_24_exp:
+ * Computes e^x for a Q8.24 number x using range reduction and a 7‑term Taylor series expansion,
+ * but avoids slow 64‑bit divisions by replacing them with multiplications by precomputed reciprocal constants.
+ *
+ * The algorithm is:
+ * 1. Early saturation: if x > Q8_24_EXP_MAX_ARG_CONST, return Q8_24_MAX; if x < Q8_24_EXP_MIN_ARG_CONST, return 0.
+ *
+ * 2. Range reduction: Express x = n * ln2 + r, with r in [0, ln2).
+ *    (n is computed via integer division in 32 bits.)
+ *
+ * 3. Compute e^r using the unrolled Taylor series:
+ *      e^r ≈ 1 + r + r^2/2! + r^3/3! + r^4/4! + r^5/5!
+ *
+ *    Here, instead of dividing by 2,6,24,120, we use:
+ *      - r^2/2 is computed as (r^2 >> 1)
+ *      - r^3/6  is computed as (r^3 * RECIP_6)  >> 32, where RECIP_6  ≈ (1<<32)/6
+ *      - r^4/24 is computed as (r^4 * RECIP_24) >> 32, where RECIP_24 ≈ (1<<32)/24
+ *      - r^5/120 is computed as (r^5 * RECIP_120) >> 32, where RECIP_120 ≈ (1<<32)/120
+ *
+ * 4. Scale the result by 2^n via shifting.
+ *
+ * 5. Saturate the final result to the Q8.24 range.
+ */
 static inline q8_24_t q8_24_exp(q8_24_t x) {
-    const q8_24_t max_arg = Q8_24_EXP_MAX_ARG_CONST;
-    const q8_24_t min_arg = Q8_24_EXP_MIN_ARG_CONST;
-    if (x > max_arg)
+    // Early saturation.
+    if (x > Q8_24_EXP_MAX_ARG_CONST)
         return Q8_24_MAX;
-    if (x < min_arg)
+    if (x < Q8_24_EXP_MIN_ARG_CONST)
         return 0;
 
-    // Use precomputed ln2.
-    const q8_24_t ln2_fixed = Q8_24_LN2_CONST;
+//    // Precomputed ln2 in Q8.24.
+//    const q8_24_t ln2 = Q8_24_LN2_CONST;
+//
+//    // Range reduction: find n such that x = n*ln2 + r with r in [0, ln2).
+//    int n = (int)(((int64_t)x * Q8_24_INV_LN2) >> Q8_24_FRACTIONAL_BITS);
+//    // For negative x, adjust n if needed.
+//    if (x < 0 && (x % Q8_24_LN2_CONST) != 0)
+//        n--;
+//    // Compute remainder: r = x - n * ln2
+//    q8_24_t r = x - n * Q8_24_LN2_CONST;
 
-    // Range reduction: find integer n such that x = n * ln2 + r, with r in [0, ln2).
-    int64_t x64 = x;
-    int n = (int)(x64 / ln2_fixed);
-    if (x64 < 0 && (x64 % ln2_fixed) != 0)
+    // Precomputed ln2 in Q8.24.
+    const q8_24_t ln2 = Q8_24_LN2_CONST;
+
+    // Range reduction: find n such that x = n*ln2 + r with r in [0, ln2).
+    int n = (int)(x / ln2);
+    if (x < 0 && (x % ln2) != 0)
         n--;
+    q8_24_t r = x - n * ln2;
 
-    q8_24_t n_ln2 = n * ln2_fixed;  // Multiply in integer arithmetic.
-    q8_24_t r = q8_24_sub(x, n_ln2);
 
-    // Compute exp(r) using a Taylor series:
-    // exp(r) ≈ 1 + r + r^2/2! + r^3/3! + r^4/4! + r^5/5!
-    int64_t term = Q8_24_ONE;  // term0 = 1.0 in Q8_24
-    int64_t sum  = Q8_24_ONE;  // initialize sum with 1.0
-    for (int i = 1; i <= 5; i++) {
-        term = (term * r) >> 24;  // Q8_24_FRACTIONAL_BITS = 24
-        term = term / i;
-        sum += term;
-    }
+    // Compute Taylor series for e^r.
+    // All intermediate terms are kept in 64-bit arithmetic (with Q8.24 scaling).
+    int64_t one   = Q8_24_ONE;     // 1.0 in Q8.24.
+    int64_t term1 = r;             // r.
+    int64_t term2 = (((int64_t)r * r) >> 24);  // r^2 in Q8.24.
+    int64_t term3 = ((term2 * r) >> 24);         // r^3 in Q8.24.
+    int64_t term4 = ((term3 * r) >> 24);         // r^4 in Q8.24.
+    int64_t term5 = ((term4 * r) >> 24);         // r^5 in Q8.24.
+
+    // Precomputed reciprocals in Q32 format.
+    // (1 << 32) / 6   ≈ 715827883
+    // (1 << 32) / 24  ≈ 178956971
+    // (1 << 32) / 120 ≈ 35791394
+    const int64_t RECIP_6   = 715827883LL;
+    const int64_t RECIP_24  = 178956971LL;
+    const int64_t RECIP_120 = 35791394LL;
+
+    int64_t series = one
+                     + term1
+                     + (term2 >> 1)                      // r^2/2! (division by 2 using shift)
+                     + ((term3 * RECIP_6) >> 32)           // r^3/3!
+                     + ((term4 * RECIP_24) >> 32)          // r^4/4!
+                     + ((term5 * RECIP_120) >> 32);        // r^5/5!
 
     // Scale the series result by 2^n.
-    int64_t result = sum;
+    int64_t result = series;
     if (n >= 0) {
-        for (int i = 0; i < n; i++) {
-            result = result << 1;
-            if (result > Q8_24_MAX) { result = Q8_24_MAX; break; }
+        if (n >= 31) { // If n is very high, saturate.
+            result = Q8_24_MAX;
+        } else {
+            result = result << n;
+            if (result > Q8_24_MAX)
+                result = Q8_24_MAX;
         }
     } else {
-        for (int i = 0; i < -n; i++) {
-            result = result >> 1;
-        }
+        result = result >> (-n);
     }
+
+    // Final saturation.
     if (result > Q8_24_MAX)
         result = Q8_24_MAX;
     if (result < Q8_24_MIN)
         result = Q8_24_MIN;
-    return (q8_24_t) result;
+
+    return (q8_24_t)result;
 }
 
 
