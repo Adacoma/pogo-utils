@@ -1107,7 +1107,7 @@ void bench_fixp_functions(void) {
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
-    printf0("add,%lu,%lu,%lu,%lu,%lu,%lu", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
+    printf0("add,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
     // Sub
     {
@@ -1162,7 +1162,7 @@ void bench_fixp_functions(void) {
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
-    printf0("sub,%lu,%lu,%lu,%lu,%lu,%lu", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
+    printf0("sub,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
     // Mul
     {
@@ -1217,7 +1217,7 @@ void bench_fixp_functions(void) {
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
-    printf0("mul,%lu,%lu,%lu,%lu,%lu,%lu", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
+    printf0("mul,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
     // Div
     {
@@ -1272,7 +1272,7 @@ void bench_fixp_functions(void) {
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
-    printf0("div,%lu,%lu,%lu,%lu,%lu,%lu", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
+    printf0("div,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
     // Abs
     {
@@ -1323,7 +1323,7 @@ void bench_fixp_functions(void) {
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
-    printf0("abs,%lu,%lu,%lu,%lu,%lu,%lu", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
+    printf0("abs,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
     // Exp
     {
@@ -1380,7 +1380,7 @@ void bench_fixp_functions(void) {
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
-    printf0("exp,%lu,%lu,%lu,%lu,%lu,%lu", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
+    printf0("exp,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
     // Log
     {
@@ -1437,7 +1437,7 @@ void bench_fixp_functions(void) {
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
-    printf0("log,%lu,%lu,%lu,%lu,%lu,%lu", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
+    printf0("log,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 }
 
 
