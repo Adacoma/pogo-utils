@@ -396,40 +396,105 @@ static inline q8_24_t q8_24_exp(q8_24_t x) {
  *
  * Finally, ln(x) = ln(m) + n*ln2, where ln2 is given by Q8_24_LN2_CONST.
  */
+//static inline q8_24_t _q8_24_log_base(q8_24_t x) {
+//    if (x <= 0)
+//        return Q8_24_MIN;  // Saturate for nonpositive x.
+//
+//    int n = 0;
+//    q8_24_t m = x;
+//    while (m < Q8_24_ONE) {
+//        // Multiply m by 2 using the macro to convert 2 to Q8.24.
+//        m = q8_24_mul(m, Q8_24_FROM_INT(2));
+//        n--;
+//    }
+//    while (m >= (Q8_24_ONE << 1)) {  // while m >= 2.0
+//        m = q8_24_div(m, Q8_24_FROM_INT(2));
+//        n++;
+//    }
+//
+//    // t = m - Q8_24_ONE, so that m = 1+t (with t in Q8.24 units)
+//    q8_24_t t = q8_24_sub(m, Q8_24_ONE);
+//
+//    // Compute ln(1+t) using a 7-term alternating series.
+//    q8_24_t term = t;
+//    q8_24_t sum = t;
+//    for (int i = 2; i <= 5; i++) {
+//        term = q8_24_mul(term, t);
+//        q8_24_t frac = q8_24_div(term, Q8_24_FROM_INT(i));
+//        if (i % 2 == 0)
+//            sum = q8_24_sub(sum, frac);
+//        else
+//            sum = q8_24_add(sum, frac);
+//    }
+//
+//    // Use the macro-defined ln2 constant.
+//    q8_24_t n_ln2 = q8_24_mul(Q8_24_FROM_INT(n), Q8_24_LN2_CONST);
+//    return q8_24_add(sum, n_ln2);
+//}
+
 static inline q8_24_t _q8_24_log_base(q8_24_t x) {
+    // For nonpositive x, return a saturated value.
     if (x <= 0)
-        return Q8_24_MIN;  // Saturate for nonpositive x.
+        return Q8_24_LN2_CONST * (-100); // or Q8_24_MIN; choose an appropriate saturation.
 
-    int n = 0;
-    q8_24_t m = x;
-    while (m < Q8_24_ONE) {
-        // Multiply m by 2 using the macro to convert 2 to Q8.24.
-        m = q8_24_mul(m, Q8_24_FROM_INT(2));
-        n--;
-    }
-    while (m >= (Q8_24_ONE << 1)) {  // while m >= 2.0
-        m = q8_24_div(m, Q8_24_FROM_INT(2));
-        n++;
-    }
-
-    // t = m - Q8_24_ONE, so that m = 1+t (with t in Q8.24 units)
-    q8_24_t t = q8_24_sub(m, Q8_24_ONE);
-
-    // Compute ln(1+t) using a 7-term alternating series.
-    q8_24_t term = t;
-    q8_24_t sum = t;
-    for (int i = 2; i <= 5; i++) {
-        term = q8_24_mul(term, t);
-        q8_24_t frac = q8_24_div(term, Q8_24_FROM_INT(i));
-        if (i % 2 == 0)
-            sum = q8_24_sub(sum, frac);
-        else
-            sum = q8_24_add(sum, frac);
-    }
-
-    // Use the macro-defined ln2 constant.
-    q8_24_t n_ln2 = q8_24_mul(Q8_24_FROM_INT(n), Q8_24_LN2_CONST);
-    return q8_24_add(sum, n_ln2);
+    // ----- Step 1: Normalize x using bit-level operations -----
+    // We want to represent x as:
+    //       x = m * 2^n,
+    // where m is in [Q8_24_ONE, 2*Q8_24_ONE) (i.e. [1.0, 2.0)).
+    // Compute the index of the highest set bit. For positive x:
+    int p = 31 - __builtin_clz((unsigned int)x); // floor(log2(x))
+    // The constant Q8_24_ONE is 1 << 24. Thus, we want:
+    int n = p - Q8_24_FRACTIONAL_BITS;  // n = floor_log2(x) - 24.
+    
+    // Normalize x: if n >= 0, then m = x >> n; otherwise, m = x << (-n).
+    q8_24_t m;
+    if (n >= 0)
+        m = x >> n;
+    else
+        m = x << (-n);
+    // Now m is in [Q8_24_ONE, 2*Q8_24_ONE).
+    
+    // ----- Step 2: Compute the series for ln(1+t) -----
+    // Let t = m - Q8_24_ONE (so that m = 1 + t in Q8.24).
+    q8_24_t t = m - Q8_24_ONE;
+    // We approximate ln(1+t) by:
+    //    ln(1+t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5.
+    // Perform all multiplications in 64-bit arithmetic.
+    int64_t t64 = t;  // t in Q8.24.
+    
+    // Compute powers of t in Q8.24:
+    int64_t t2 = (t64 * t64) >> Q8_24_FRACTIONAL_BITS;      // t^2 in Q8.24.
+    int64_t t3 = (t2 * t64) >> Q8_24_FRACTIONAL_BITS;       // t^3 in Q8.24.
+    int64_t t4 = (t3 * t64) >> Q8_24_FRACTIONAL_BITS;       // t^4 in Q8.24.
+    int64_t t5 = (t4 * t64) >> Q8_24_FRACTIONAL_BITS;       // t^5 in Q8.24.
+    
+    // Replace divisions by constants:
+    // Division by 2: use a right shift by 1.
+    int64_t term2 = t2 >> 1;
+    // Division by 3: use multiplication by reciprocal RECIP_3 in Q32.
+    // (1<<32) / 3 ≈ 1431655765.
+    const uint32_t RECIP_3 = 1431655765U;
+    int64_t term3 = (t3 * RECIP_3) >> 32;
+    // Division by 4: use a right shift by 2.
+    int64_t term4 = t4 >> 2;
+    // Division by 5: use multiplication by reciprocal RECIP_5 in Q32.
+    // (1<<32) / 5 ≈ 858993459.
+    const uint32_t RECIP_5 = 858993459U;
+    int64_t term5 = (t5 * RECIP_5) >> 32;
+    
+    // Combine terms with alternating signs:
+    // ln(1+t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5.
+    int64_t series = t64 - term2 + term3 - term4 + term5;
+    // series is in Q8.24.
+    
+    // ----- Step 3: Reconstruct ln(x) -----
+    // We have:
+    //      ln(x) = ln(m) + n * ln2,
+    // and we computed ln(m) ≈ series.
+    int64_t n_ln2 = (int64_t)n * Q8_24_LN2_CONST;
+    int64_t result = series + n_ln2;
+    
+    return (q8_24_t)result;
 }
 
 
@@ -1457,64 +1522,6 @@ static inline q6_10_t q6_10_abs(q6_10_t x) {
 static inline int q6_10_is_saturated(q6_10_t x) {
     return (x == Q6_10_MAX || x == Q6_10_MIN);
 }
-
-///*
-// * q6_10_exp:
-// * Computes exp(x) for a Q6.10 number x.
-// * Uses range reduction: x = n * ln2 + r, with r in [0, ln2)
-// * so that exp(x) = 2^n * exp(r).
-// * Approximates exp(r) with a 5-term Taylor series:
-// *    exp(r) ≈ 1 + r + r^2/2 + r^3/6 + r^4/24.
-// *
-// * Calculations use 64-bit arithmetic with Q6_10_ONE (1024) as 1.0.
-// * If x ≥ 3.5 (real) we saturate to Q6_10_MAX, and if x < -10.0 we return 0.
-// */
-//#define Q6_10_EXP_MAX_ARG 3584    // Represents 3.5 in Q6.10.
-//#define Q6_10_EXP_MIN_ARG (-10240) // Represents -10.0 in Q6.10.
-//#define Q6_10_LN2_CONST 709       // Represents ln2 (0.693147) in Q6.10.
-//static inline q6_10_t q6_10_exp(q6_10_t x) {
-//    // Use precomputed constants:
-//    q6_10_t max_arg = Q6_10_EXP_MAX_ARG;
-//    q6_10_t min_arg = Q6_10_EXP_MIN_ARG;
-//    if (x >= max_arg)
-//        return Q6_10_MAX;
-//    if (x < min_arg)
-//        return 0;
-//
-//    // Use precomputed ln2 constant.
-//    q6_10_t ln2 = Q6_10_LN2_CONST;
-//    int32_t x32 = x;
-//    int n = x32 / ln2;
-//    if (x32 % ln2 != 0)
-//        n--;  // floor for negative x
-//    int32_t n_ln2 = n * ln2;
-//    q6_10_t r = (q6_10_t)(x32 - n_ln2);
-//
-//    // Compute exp(r) using a 5-term Taylor series:
-//    int64_t term = Q6_10_ONE;  // 1.0 in Q6.10 (1024)
-//    int64_t sum  = Q6_10_ONE;
-//    for (int i = 1; i <= 4; i++) {
-//        term = (term * r) >> Q6_10_FRACTIONAL_BITS;
-//        term = term / i;
-//        sum += term;
-//    }
-//
-//    int64_t result = sum;
-//    if (n < 0) {
-//        for (int i = 0; i < -n; i++)
-//            result >>= 1;
-//    } else {
-//        for (int i = 0; i < n; i++) {
-//            result <<= 1;
-//            if (result > Q6_10_MAX) { result = Q6_10_MAX; break; }
-//        }
-//    }
-//    if (result > Q6_10_MAX)
-//        result = Q6_10_MAX;
-//    if (result < 0)
-//        result = 0;
-//    return (q6_10_t)result;
-//}
 
 #define Q6_10_LN2_CONST 709 /* Define ln(2) in Q6.10 as a macro. 0.693147 * 1024 ≈ 709. */
 #define Q6_10_EXP_MAX_ARG 3584     // Represents 3.5 in Q6.10.
