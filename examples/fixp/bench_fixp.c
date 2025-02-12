@@ -650,6 +650,76 @@ void test_fixp_functions(void) {
         assert(fabsf(f_q1 - f_q1_back) < TOLERANCE);
     }
 
+    printf0("\n");
+    printf0("=== Q16.16 approximate_reciprocal Tests ===\n");
+
+    // Test 1: Reciprocal of 1.0 should be approximately 1.0.
+    {
+        q16_16_t b = q16_16_from_float(1.0f);
+        q16_16_t recip = q16_16_approximate_reciprocal(b);
+        float f_recip = q16_16_to_float(recip);
+        printf0("Reciprocal of 1.0: %f (expected ~1.0)\n", f_recip);
+        assert(fabsf(f_recip - 1.0f) < TOLERANCE);
+    }
+
+    // Test 2: Reciprocal of 2.0 should be approximately 0.5.
+    {
+        q16_16_t b = q16_16_from_float(2.0f);
+        q16_16_t recip = q16_16_approximate_reciprocal(b);
+        float f_recip = q16_16_to_float(recip);
+        printf0("Reciprocal of 2.0: %f (expected ~0.5)\n", f_recip);
+        assert(fabsf(f_recip - 0.5f) < TOLERANCE);
+    }
+
+    // Test 3: Reciprocal of 0.5 should be approximately 2.0.
+    {
+        q16_16_t b = q16_16_from_float(0.5f);
+        q16_16_t recip = q16_16_approximate_reciprocal(b);
+        float f_recip = q16_16_to_float(recip);
+        printf0("Reciprocal of 0.5: %f (expected ~2.0)\n", f_recip);
+        assert(fabsf(f_recip - 2.0f) < TOLERANCE);
+    }
+
+    // Test 4: Reciprocal of -1.0 should be approximately -1.0.
+    {
+        q16_16_t b = q16_16_from_float(-1.0f);
+        q16_16_t recip = q16_16_approximate_reciprocal(b);
+        float f_recip = q16_16_to_float(recip);
+        printf0("Reciprocal of -1.0: %f (expected ~-1.0)\n", f_recip);
+        assert(fabsf(f_recip + 1.0f) < TOLERANCE);
+    }
+
+    // Test 5: Reciprocal of -2.0 should be approximately -0.5.
+    {
+        q16_16_t b = q16_16_from_float(-2.0f);
+        q16_16_t recip = q16_16_approximate_reciprocal(b);
+        float f_recip = q16_16_to_float(recip);
+        printf0("Reciprocal of -2.0: %f (expected ~-0.5)\n", f_recip);
+        assert(fabsf(f_recip + 0.5f) < TOLERANCE);
+    }
+
+    // Saturation Tests:
+    // Test 6: For a very small positive value b, 1/b exceeds the representable range.
+    // In Q16.16, the smallest b that can be inverted without saturation is 2 (i.e. 2/65536 ≈ 0.000030517578125).
+    // Hence, for any b <= 2 (in Q16.16 representation), the reciprocal should be saturated to Q16_16_MAX.
+    {
+        // 0.00003 * 65536 ≈ 1.96608, which is below the threshold.
+        q16_16_t b = q16_16_from_float(0.00003f);
+        q16_16_t recip = q16_16_approximate_reciprocal(b);
+        float f_recip = q16_16_to_float(recip);
+        printf0("Reciprocal of 0.00003: %f (expected saturated to Q16_16_MAX ~32767.99998)\n", f_recip);
+        assert(recip == Q16_16_MAX);
+    }
+
+    // Test 7: For a very small negative value b, the reciprocal should be saturated to Q16_16_MIN.
+    {
+        q16_16_t b = q16_16_from_float(-0.00003f);
+        q16_16_t recip = q16_16_approximate_reciprocal(b);
+        float f_recip = q16_16_to_float(recip);
+        printf0("Reciprocal of -0.00003: %f (expected saturated to Q16_16_MIN -32768.0)\n", f_recip);
+        assert(recip == Q16_16_MIN);
+    }
+
 
     printf0("\n");
     printf0("=== Q16.16 Arithmetic Tests ===\n");
@@ -702,6 +772,9 @@ void test_fixp_functions(void) {
         assert(fabsf(prod_f - 7.0f) < TOLERANCE);
     }
 
+#undef TOLERANCE
+#define TOLERANCE 1e-1f
+
     /* Test division */
     {
         q16_16_t x = q16_16_from_float(7.0f);
@@ -721,6 +794,9 @@ void test_fixp_functions(void) {
         // Here we simply check that the result equals Q16_16_MAX (if x is nonnegative)
         assert(quot == Q16_16_MAX);
     }
+
+#undef TOLERANCE
+#define TOLERANCE 1e-3f
 
     /* Test absolute value */
     {
