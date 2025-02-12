@@ -29,8 +29,8 @@ void test_fixp_functions(void);
 void bench_fixp_functions(void);
 
 
-#if 0
 void test_fixp_functions(void) {
+#ifdef SIMULATOR
     printf0("==============================================\n");
     printf0("=== POGO-UTILS " POGO_UTILS_VERSION " - FIXED-POINT TESTS  ===\n");
     printf0("==============================================\n");
@@ -496,20 +496,21 @@ void test_fixp_functions(void) {
         assert(fabsf(log1_f) < TOLERANCE);
     }
     // XXX
-//    {
-//        // Test 6: log(0.5) should be about ln(0.5) ≈ -0.693147.
-//        q1_15_t const log05 = q1_15_log(q1_15_from_float(0.5f));
-//        float const log05_f = q1_15_to_float(log05);
-//        printf0("q1_15_log(0.5) = %d.%u (expected ~ -0.693147)\n", (int16_t)q1_15_get_int(log05), (uint16_t)q1_15_get_frac(log05));
-//        assert(fabsf(log05_f + 0.693147f) < TOLERANCE);
-//    }
-//    {
-//        // Test 7: log(0.3679) should be about ln(0.3679) ≈ -1.0.
-//        q1_15_t log037 = q1_15_log(q1_15_from_float(0.3679f));
-//        float log037_f = q1_15_to_float(log037);
-//        printf0("q1_15_log(0.3679) = %f (expected ~ -1.0)\n", log037_f);
-//        assert(fabsf(log037_f + 1.0f) < TOLERANCE);
-//    }
+    {
+        // Test 6: log(0.5) should be about ln(0.5) ≈ -0.693147.
+        q1_15_t const log05 = q1_15_log(q1_15_from_float(0.5f));
+        float const log05_f = q1_15_to_float(log05);
+        printf0("q1_15_log(0.5) = %d.%u (expected ~ -0.693147)\n", (int16_t)q1_15_get_int(log05), (uint16_t)q1_15_get_frac(log05));
+        assert(fabsf(log05_f + 0.693147f) < TOLERANCE);
+    }
+    // XXX
+    {
+        // Test 7: log(0.3679) should be about ln(0.3679) ≈ -1.0.
+        q1_15_t log037 = q1_15_log(q1_15_from_float(0.3679f));
+        float log037_f = q1_15_to_float(log037);
+        printf0("q1_15_log(0.3679) = %f (expected ~ -1.0)\n", log037_f);
+        assert(fabsf(log037_f + 1.0f) < TOLERANCE);
+    }
     {
         // Test 8: log(-0.5) is undefined; the function should return Q1_15_MIN.
         q1_15_t log_neg = q1_15_log(q1_15_from_float(-0.5f));
@@ -658,57 +659,63 @@ void test_fixp_functions(void) {
         assert(fabsf(abs_neg_f - 4.5f) < TOLERANCE);
     }
 
-//    // Test exp
-//    {
-//        q16_16_t zero = q16_16_from_float(0.0f);
-//        q16_16_t exp0 = q16_16_exp(zero);
-//        float f_exp0 = q16_16_to_float(exp0);
-//        printf0("q16_16_exp(0.0) = %f (expected 1.0)\n", f_exp0);
-//        assert(fabsf(f_exp0 - 1.0f) < TOLERANCE);
-//    }
-//    {
-//        q16_16_t neg_ln2 = q16_16_from_float(-0.693147f);
-//        q16_16_t exp_neg_ln2 = q16_16_exp(neg_ln2);
-//        float f_exp_neg_ln2 = q16_16_to_float(exp_neg_ln2);
-//        printf0("q16_16_exp(-0.693147) = %f (expected ~0.5)\n", f_exp_neg_ln2);
-//        assert(fabsf(f_exp_neg_ln2 - 0.5f) < TOLERANCE);
-//    }
-//    {
-//        q16_16_t const neg1 = Q16_16_NEG_ONE;
-//        q16_16_t const exp_neg1 = q16_16_exp(neg1);
-//        float const f_exp_neg1 = q16_16_to_float(exp_neg1);
-//        printf0("q16_16_exp(-1.0) = %f (expected ~0.3679)\n", f_exp_neg1);
-//        assert(fabsf((float)f_exp_neg1 - 0.3679f) < TOLERANCE);
-//    }
+    // XXX
+    // Test exp
+    {
+        q16_16_t zero = q16_16_from_float(0.0f);
+        q16_16_t exp0 = q16_16_exp(zero);
+        float f_exp0 = q16_16_to_float(exp0);
+        printf0("q16_16_exp(0.0) = %f (expected 1.0)\n", f_exp0);
+        assert(fabsf(f_exp0 - 1.0f) < TOLERANCE);
+    }
+    // XXX
+    {
+        q16_16_t neg_ln2 = q16_16_from_float(-0.693147f);
+        q16_16_t exp_neg_ln2 = q16_16_exp(neg_ln2);
+        float f_exp_neg_ln2 = q16_16_to_float(exp_neg_ln2);
+        printf0("q16_16_exp(-0.693147) = %f (expected ~0.5)\n", f_exp_neg_ln2);
+        assert(fabsf(f_exp_neg_ln2 - 0.5f) < TOLERANCE);
+    }
+    // XXX
+    {
+        q16_16_t const neg1 = Q16_16_NEG_ONE;
+        q16_16_t const exp_neg1 = q16_16_exp(neg1);
+        float const f_exp_neg1 = q16_16_to_float(exp_neg1);
+        printf0("q16_16_exp(-1.0) = %f (expected ~0.3679)\n", f_exp_neg1);
+        assert(fabsf((float)f_exp_neg1 - 0.3679f) < TOLERANCE);
+    }
 
     printf0("\n");
     printf0("=== Q16.16 exp and refined log Tests ===\n");
 
-//    {
-//        // Test exp(-1.0)
-//        q16_16_t neg1 = q16_16_from_float(-1.0f);
-//        q16_16_t exp_neg1 = q16_16_exp(neg1);
-//        float f_exp_neg1 = q16_16_to_float(exp_neg1);
-//        printf0("q16_16_exp(-1.0) = %f (expected ~0.3679)\n", f_exp_neg1);
-//        assert(fabsf(f_exp_neg1 - 0.3679f) < TOLERANCE);
-//    }
-//    {
-//        // Test log(1.0)
-//        q16_16_t one = q16_16_from_float(1.0f);
-//        q16_16_t log_one = q16_16_log(one);
-//        float f_log_one = q16_16_to_float(log_one);
-//        printf0("q16_16_log(1.0) = %f (expected 0.0)\n", f_log_one);
-//        assert(fabsf(f_log_one - 0.0f) < TOLERANCE);
-//    }
-//    {
-//        // Test refined log(exp(-1.0)) should be near -1.0.
-//        q16_16_t neg1 = q16_16_from_float(-1.0f);
-//        q16_16_t exp_neg1 = q16_16_exp(neg1);
-//        q16_16_t log_exp_neg1 = q16_16_log(exp_neg1);
-//        float f_log_exp_neg1 = q16_16_to_float(log_exp_neg1);
-//        printf0("q16_16_log(exp(-1.0)) = %f (expected ~ -1.0)\n", f_log_exp_neg1);
-//        assert(fabsf(f_log_exp_neg1 + 1.0f) < TOLERANCE);
-//    }
+    // XXX
+    {
+        // Test exp(-1.0)
+        q16_16_t neg1 = q16_16_from_float(-1.0f);
+        q16_16_t exp_neg1 = q16_16_exp(neg1);
+        float f_exp_neg1 = q16_16_to_float(exp_neg1);
+        printf0("q16_16_exp(-1.0) = %f (expected ~0.3679)\n", f_exp_neg1);
+        assert(fabsf(f_exp_neg1 - 0.3679f) < TOLERANCE);
+    }
+    // XXX
+    {
+        // Test log(1.0)
+        q16_16_t one = q16_16_from_float(1.0f);
+        q16_16_t log_one = q16_16_log(one);
+        float f_log_one = q16_16_to_float(log_one);
+        printf0("q16_16_log(1.0) = %f (expected 0.0)\n", f_log_one);
+        assert(fabsf(f_log_one - 0.0f) < TOLERANCE);
+    }
+    // XXX
+    {
+        // Test refined log(exp(-1.0)) should be near -1.0.
+        q16_16_t neg1 = q16_16_from_float(-1.0f);
+        q16_16_t exp_neg1 = q16_16_exp(neg1);
+        q16_16_t log_exp_neg1 = q16_16_log(exp_neg1);
+        float f_log_exp_neg1 = q16_16_to_float(log_exp_neg1);
+        printf0("q16_16_log(exp(-1.0)) = %f (expected ~ -1.0)\n", f_log_exp_neg1);
+        assert(fabsf(f_log_exp_neg1 + 1.0f) < TOLERANCE);
+    }
 
 
 #undef TOLERANCE
@@ -898,59 +905,66 @@ void test_fixp_functions(void) {
     printf0("\n");
     printf0("=== Q6.10 Exp and Log Tests ===\n");
 
-//    /* Test exp */
-//    {
-//        q6_10_t zero = q6_10_from_float(0.0f);
-//        q6_10_t exp0 = q6_10_exp(zero);
-//        float f_exp0 = q6_10_to_float(exp0);
-//        printf0("q6_10_exp(0.0) = %f (expected 1.0)\n", f_exp0);
-//        assert(fabsf(f_exp0 - 1.0f) < TOLERANCE);
-//    }
-//    {
-//        q6_10_t neg_ln2 = q6_10_from_float(-0.693147f);
-//        q6_10_t exp_neg_ln2 = q6_10_exp(neg_ln2);
-//        float f_exp_neg_ln2 = q6_10_to_float(exp_neg_ln2);
-//        printf0("q6_10_exp(-0.693147) = %f (expected ~0.5)\n", f_exp_neg_ln2);
-//        assert(fabsf(f_exp_neg_ln2 - 0.5f) < TOLERANCE);
-//    }
-////    {
-////        q6_10_t neg1 = q6_10_from_float(-1.0f);
-////        q6_10_t exp_neg1 = q6_10_exp(neg1);
-////        float f_exp_neg1 = q6_10_to_float(exp_neg1);
-////        printf0("q6_10_exp(-1.0) = %f (expected ~0.3679)\n", f_exp_neg1);
-////        assert(fabsf(f_exp_neg1 - 0.3679f) < TOLERANCE);
-////    }
-//
-//    /* Test log */
-//    {
-//        q6_10_t one = q6_10_from_float(1.0f);
-//        q6_10_t log1 = q6_10_log(one);
-//        float f_log1 = q6_10_to_float(log1);
-//        printf0("q6_10_log(1.0) = %f (expected 0.0)\n", f_log1);
-//        assert(fabsf(f_log1 - 0.0f) < TOLERANCE);
-//    }
-////    {
-////        q6_10_t half = q6_10_from_float(0.5f);
-////        q6_10_t log_half = q6_10_log(half);
-////        float f_log_half = q6_10_to_float(log_half);
-////        printf0("q6_10_log(0.5) = %f (expected ~ -0.693147)\n", f_log_half);
-////        assert(fabsf(f_log_half + 0.693147f) < TOLERANCE);
-////    }
-////    {
-////        q6_10_t half = q6_10_from_float(0.366211f);
-////        q6_10_t log_half = q6_10_log(half);
-////        float f_log_half = q6_10_to_float(log_half);
-////        printf0("q6_10_log(0.366211) = %f (expected ~ -1.0)\n", f_log_half);
-////        assert(fabsf(f_log_half + 1.0f) < TOLERANCE);
-////    }
-////    {
-////        q6_10_t neg1 = q6_10_from_float(-1.0f);
-////        q6_10_t exp_neg1_val = q6_10_exp(neg1);  // ~0.3679
-////        q6_10_t log_exp_neg1 = q6_10_log(exp_neg1_val);
-////        float f_log_exp_neg1 = q6_10_to_float(log_exp_neg1);
-////        printf0("q6_10_log(exp(-1.0)) = %f (expected ~ -1.0)\n", f_log_exp_neg1);
-////        assert(fabsf(f_log_exp_neg1 + 1.0f) < TOLERANCE);
-////    }
+    // XXX
+    /* Test exp */
+    {
+        q6_10_t zero = q6_10_from_float(0.0f);
+        q6_10_t exp0 = q6_10_exp(zero);
+        float f_exp0 = q6_10_to_float(exp0);
+        printf0("q6_10_exp(0.0) = %f (expected 1.0)\n", f_exp0);
+        assert(fabsf(f_exp0 - 1.0f) < TOLERANCE);
+    }
+    // XXX
+    {
+        q6_10_t neg_ln2 = q6_10_from_float(-0.693147f);
+        q6_10_t exp_neg_ln2 = q6_10_exp(neg_ln2);
+        float f_exp_neg_ln2 = q6_10_to_float(exp_neg_ln2);
+        printf0("q6_10_exp(-0.693147) = %f (expected ~0.5)\n", f_exp_neg_ln2);
+        assert(fabsf(f_exp_neg_ln2 - 0.5f) < TOLERANCE);
+    }
+    // XXX
+    {
+        q6_10_t neg1 = q6_10_from_float(-1.0f);
+        q6_10_t exp_neg1 = q6_10_exp(neg1);
+        float f_exp_neg1 = q6_10_to_float(exp_neg1);
+        printf0("q6_10_exp(-1.0) = %f (expected ~0.3679)\n", f_exp_neg1);
+        assert(fabsf(f_exp_neg1 - 0.3679f) < TOLERANCE);
+    }
+    // XXX
+
+    /* Test log */
+    {
+        q6_10_t one = q6_10_from_float(1.0f);
+        q6_10_t log1 = q6_10_log(one);
+        float f_log1 = q6_10_to_float(log1);
+        printf0("q6_10_log(1.0) = %f (expected 0.0)\n", f_log1);
+        assert(fabsf(f_log1 - 0.0f) < TOLERANCE);
+    }
+    // XXX
+    {
+        q6_10_t half = q6_10_from_float(0.5f);
+        q6_10_t log_half = q6_10_log(half);
+        float f_log_half = q6_10_to_float(log_half);
+        printf0("q6_10_log(0.5) = %f (expected ~ -0.693147)\n", f_log_half);
+        assert(fabsf(f_log_half + 0.693147f) < TOLERANCE);
+    }
+    // XXX
+    {
+        q6_10_t half = q6_10_from_float(0.366211f);
+        q6_10_t log_half = q6_10_log(half);
+        float f_log_half = q6_10_to_float(log_half);
+        printf0("q6_10_log(0.366211) = %f (expected ~ -1.0)\n", f_log_half);
+        assert(fabsf(f_log_half + 1.0f) < TOLERANCE);
+    }
+    // XXX
+    {
+        q6_10_t neg1 = q6_10_from_float(-1.0f);
+        q6_10_t exp_neg1_val = q6_10_exp(neg1);  // ~0.3679
+        q6_10_t log_exp_neg1 = q6_10_log(exp_neg1_val);
+        float f_log_exp_neg1 = q6_10_to_float(log_exp_neg1);
+        printf0("q6_10_log(exp(-1.0)) = %f (expected ~ -1.0)\n", f_log_exp_neg1);
+        assert(fabsf(f_log_exp_neg1 + 1.0f) < TOLERANCE);
+    }
 
 
     printf0("\n");
@@ -1035,8 +1049,8 @@ void test_fixp_functions(void) {
 
     printf0("\n");
     printf0("All tests passed successfully.\n");
-}
 #endif
+}
 
 
 void bench_fixp_functions(void) {
@@ -1227,7 +1241,7 @@ void bench_fixp_functions(void) {
 
     // Div
     {
-        volatile float val = 23.04435f;
+        volatile float val = 0.0876f;
         volatile float val2 = 0.001f;
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
@@ -1236,7 +1250,7 @@ void bench_fixp_functions(void) {
         elapsed_float = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
     {
-        volatile double val = 23.04435;
+        volatile double val = 0.0876;
         volatile double val2 = 0.001f;
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
@@ -1245,7 +1259,7 @@ void bench_fixp_functions(void) {
         elapsed_double = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
     {
-        volatile q8_24_t val = q8_24_from_float(-23.0876f);
+        volatile q8_24_t val = q8_24_from_float(0.0876);
         volatile q8_24_t val2 = q8_24_from_float(0.001f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
@@ -1263,7 +1277,7 @@ void bench_fixp_functions(void) {
         elapsed_q1_15 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
     {
-        volatile q16_16_t val = q16_16_from_float(-23.0876f);
+        volatile q16_16_t val = q16_16_from_float(0.0876f);
         volatile q16_16_t val2 = q16_16_from_float(0.001f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
@@ -1272,7 +1286,7 @@ void bench_fixp_functions(void) {
         elapsed_q16_16 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
     {
-        volatile q6_10_t val = q6_10_from_float(-23.0876f);
+        volatile q6_10_t val = q6_10_from_float(0.0876f);
         volatile q6_10_t val2 = q6_10_from_float(0.001f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
@@ -1463,7 +1477,7 @@ void user_init(void) {
     // Set led index to show error codes
     error_codes_led_idx = 3; // Default value, negative values to disable
 
-//    test_fixp_functions();
+    test_fixp_functions();
     bench_fixp_functions();
 }
 
