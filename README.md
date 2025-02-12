@@ -4,6 +4,13 @@ This library contains a collection of useful C code routines for programming [Po
 ## Installation
 First, install the pogosim simulator, found [Here](https://github.com/Adacoma/pogosim).
 
+Create symlinks to other repositories:
+```shell
+ln -s PATH_TO/pogobot-sdk   # Path to the pogobot-sdk, found at: https://github.com/nekonaute/pogobot-sdk
+ln -s PATH_TO/pogosim       # Path to the pogosim simulator, found at: https://github.com/Adacoma/pogosim
+```
+
+
 Then:
 ```shell
 ./build.sh
