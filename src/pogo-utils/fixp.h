@@ -325,17 +325,6 @@ static inline q8_24_t q8_24_exp(q8_24_t x) {
     if (x < Q8_24_EXP_MIN_ARG_CONST)
         return 0;
 
-//    // Precomputed ln2 in Q8.24.
-//    const q8_24_t ln2 = Q8_24_LN2_CONST;
-//
-//    // Range reduction: find n such that x = n*ln2 + r with r in [0, ln2).
-//    int n = (int)(((int64_t)x * Q8_24_INV_LN2) >> Q8_24_FRACTIONAL_BITS);
-//    // For negative x, adjust n if needed.
-//    if (x < 0 && (x % Q8_24_LN2_CONST) != 0)
-//        n--;
-//    // Compute remainder: r = x - n * ln2
-//    q8_24_t r = x - n * Q8_24_LN2_CONST;
-
     // Precomputed ln2 in Q8.24.
     const q8_24_t ln2 = Q8_24_LN2_CONST;
 
@@ -633,75 +622,172 @@ static inline int q1_15_is_saturated(q1_15_t x) {
     return (x == Q1_15_MAX || x == Q1_15_MIN);
 }
 
+///*
+// * q1_15_exp:
+// * Computes exp(x) for a Q1.15 number x.
+// * Since Q1.15 can represent only numbers in approximately [-1.0, 0.99997]
+// * and exp(x) >= 1 for x >= 0, we saturate nonnegative x to Q1_15_MAX.
+// * For negative x we use range reduction:
+// *
+// *     x = n * ln2 + r,   with r in [0, ln2)
+// *
+// * Then exp(x) = 2^n * exp(r), where exp(r) is approximated by a 7-term series:
+// *
+// *     exp(r) ≈ 1 + r + r^2/2! + ... + r^6/6!
+// *
+// * All calculations for the series are done in 32-bit arithmetic with Q1_15_SCALE
+// * (32768) representing 1.0.
+// */
+//static inline q1_15_t q1_15_exp(q1_15_t x) {
+//    // Use the macro for ln2 in Q1.15.
+//    const q1_15_t ln2_fixed = Q1_15_LN2_CONST;  // ~22713
+//
+//    // For any nonnegative input, exp(x) is >= 1.0; saturate to Q1_15_MAX.
+//    if (x >= 0)
+//        return Q1_15_MAX;
+//
+//    /* Compute n = floor(x/ln2) using 32-bit arithmetic.
+//       Let L = Q1_15_ONE * ln2 ≈ 32768 * 0.693147 ≈ 22713 in Q1.15 units.
+//    */
+//    int32_t x32 = (int32_t)x;  // e.g., for x = -1.0, x32 = -32768.
+//    int32_t L = Q1_15_LN2_CONST;
+//    int n = x32 / L;         // C division truncates toward 0.
+//    if (x32 % L != 0)
+//        n--;  // Adjust for negative x to get the floor.
+//
+//    // Compute n * ln2 in Q1.15.
+//    int32_t ln2_32 = ln2_fixed;
+//    int32_t n_ln2 = n * ln2_32;
+//
+//    // Compute remainder r = x - (n * ln2) in 32-bit arithmetic.
+//    int32_t r32 = x32 - n_ln2;
+//    q1_15_t r = (q1_15_t) r32;
+//
+//    /* Compute exp(r) using a 7-term series in 32-bit arithmetic.
+//       We work with 32-bit values where Q1_15_ONE (32768) represents 1.0.
+//       Here we use 5 terms (term0 plus terms for i = 1 to 5).
+//    */
+//    int32_t term32 = Q1_15_ONE;  // term0 = 1.0
+//    int32_t sum32  = Q1_15_ONE;  // series sum starts at 1.0
+//    for (int i = 1; i <= 5; i++) {
+//        int32_t prod = ((int32_t)term32 * (int32_t)r) >> Q1_15_FRACTIONAL_BITS;
+//        term32 = prod / i;  // plain 32-bit division (non-saturating)
+//        sum32 += term32;
+//    }
+//
+//    // Multiply the series result by 2^n.
+//    int32_t result32 = sum32;
+//    if (n < 0) {
+//        for (int i = 0; i < -n; i++)
+//            result32 >>= 1;  // Divide by 2 for negative n.
+//    } else {
+//        for (int i = 0; i < n; i++) {
+//            result32 <<= 1;  // Multiply by 2 for positive n.
+//            if (result32 >= Q1_15_ONE)
+//                result32 = Q1_15_ONE - 1;  // Saturate.
+//        }
+//    }
+//    if (result32 >= Q1_15_ONE)
+//         result32 = Q1_15_ONE - 1;
+//    return (q1_15_t) result32;
+//}
+
 /*
  * q1_15_exp:
  * Computes exp(x) for a Q1.15 number x.
- * Since Q1.15 can represent only numbers in approximately [-1.0, 0.99997]
- * and exp(x) >= 1 for x >= 0, we saturate nonnegative x to Q1_15_MAX.
- * For negative x we use range reduction:
  *
- *     x = n * ln2 + r,   with r in [0, ln2)
+ * For x >= 0, exp(x) is at least 1.0 and we saturate to Q1_15_MAX.
  *
- * Then exp(x) = 2^n * exp(r), where exp(r) is approximated by a 7-term series:
+ * For negative x, we use range reduction:
+ *      x = n * ln2 + r, with r in [0, ln2),
+ * so that exp(x) = 2^n * exp(r).
  *
- *     exp(r) ≈ 1 + r + r^2/2! + ... + r^6/6!
+ * Then exp(r) is approximated by the unrolled Taylor series:
+ *      exp(r) ≈ 1 + r + r²/2 + r³/3 + r⁴/4 + r⁵/5
  *
- * All calculations for the series are done in 32-bit arithmetic with Q1_15_SCALE
- * (32768) representing 1.0.
+ * To avoid slow 32-bit divisions we:
+ *   - Replace division by 2 with a right shift by 1.
+ *   - Replace division by 4 with a right shift by 2.
+ *   - Replace division by 3 with a multiplication by RECIP_3 (≈ (1<<32)/3)
+ *   - Replace division by 5 with a multiplication by RECIP_5 (≈ (1<<32)/5)
+ *
+ * All intermediate arithmetic is done in 32- or 64-bit integers.
  */
 static inline q1_15_t q1_15_exp(q1_15_t x) {
-    // Use the macro for ln2 in Q1.15.
-    const q1_15_t ln2_fixed = Q1_15_LN2_CONST;  // ~22713
-
-    // For any nonnegative input, exp(x) is >= 1.0; saturate to Q1_15_MAX.
+    // For any nonnegative input, exp(x) >= 1.0; saturate to Q1_15_MAX.
     if (x >= 0)
         return Q1_15_MAX;
 
-    /* Compute n = floor(x/ln2) using 32-bit arithmetic.
-       Let L = Q1_15_ONE * ln2 ≈ 32768 * 0.693147 ≈ 22713 in Q1.15 units.
-    */
-    int32_t x32 = (int32_t)x;  // e.g., for x = -1.0, x32 = -32768.
-    int32_t L = Q1_15_LN2_CONST;
-    int n = x32 / L;         // C division truncates toward 0.
+    // Range reduction: write x = n * ln2 + r, with r in [0, ln2)
+    // x and ln2 are in Q1.15. Since x is negative, we compute floor(x/ln2).
+    int32_t x32 = (int32_t)x;             // e.g., for x = -1.0, x32 = -32768.
+    int32_t L = Q1_15_LN2_CONST;          // ~22713 in Q1.15 units.
+    int n = x32 / L;                     // C division truncates toward 0.
     if (x32 % L != 0)
-        n--;  // Adjust for negative x to get the floor.
-
-    // Compute n * ln2 in Q1.15.
-    int32_t ln2_32 = ln2_fixed;
-    int32_t n_ln2 = n * ln2_32;
-
-    // Compute remainder r = x - (n * ln2) in 32-bit arithmetic.
-    int32_t r32 = x32 - n_ln2;
+        n--;                           // Adjust to get the mathematical floor for negative x.
+    int32_t n_ln2 = n * L;
+    int32_t r32 = x32 - n_ln2;           // Remainder r in Q1.15.
     q1_15_t r = (q1_15_t) r32;
+    
+    // Prepare the constant representing 1.0 in Q1.15.
+    int32_t one = Q1_15_ONE;             // 32768
 
-    /* Compute exp(r) using a 7-term series in 32-bit arithmetic.
-       We work with 32-bit values where Q1_15_ONE (32768) represents 1.0.
-       Here we use 5 terms (term0 plus terms for i = 1 to 5).
-    */
-    int32_t term32 = Q1_15_ONE;  // term0 = 1.0
-    int32_t sum32  = Q1_15_ONE;  // series sum starts at 1.0
-    for (int i = 1; i <= 5; i++) {
-        int32_t prod = ((int32_t)term32 * (int32_t)r) >> Q1_15_FRACTIONAL_BITS;
-        term32 = prod / i;  // plain 32-bit division (non-saturating)
-        sum32 += term32;
-    }
+    // Unroll the Taylor series for exp(r):
+    // exp(r) ≈ 1 + r + r²/2 + r³/3 + r⁴/4 + r⁵/5
+    int32_t sum = one;                   // term0 = 1.0
 
-    // Multiply the series result by 2^n.
-    int32_t result32 = sum32;
+    // term1 = r
+    int32_t term1 = r;
+    sum += term1;
+
+    // term2 = (term1 * r) >> 15, then divided by 2 (division by 2 is a right shift by 1)
+    int64_t prod = (int64_t)term1 * r;
+    int32_t term2 = (int32_t)(prod >> (Q1_15_FRACTIONAL_BITS + 1)); // shift by (15 + 1)
+    sum += term2;
+
+    // term3 = (term2 * r) >> 15, then divided by 3.
+    prod = (int64_t)term2 * r;
+    int32_t term3_intermediate = (int32_t)(prod >> Q1_15_FRACTIONAL_BITS);
+    // Precomputed reciprocal for 3 in Q32: RECIP_3 = floor((1<<32)/3) ≈ 1431655765 (0x55555555).
+    const uint32_t RECIP_3 = 1431655765U;
+    int32_t term3 = (int32_t)(((int64_t)term3_intermediate * RECIP_3) >> 32);
+    sum += term3;
+
+    // term4 = (term3 * r) >> 15, then divided by 4 (division by 4 is a right shift by 2).
+    prod = (int64_t)term3 * r;
+    int32_t term4 = (int32_t)(prod >> (Q1_15_FRACTIONAL_BITS + 2)); // shift by (15 + 2)
+    sum += term4;
+
+    // term5 = (term4 * r) >> 15, then divided by 5.
+    prod = (int64_t)term4 * r;
+    int32_t term5_intermediate = (int32_t)(prod >> Q1_15_FRACTIONAL_BITS);
+    // Precomputed reciprocal for 5 in Q32: RECIP_5 = floor((1<<32)/5) ≈ 858993459 (0x33333333).
+    const uint32_t RECIP_5 = 858993459U;
+    int32_t term5 = (int32_t)(((int64_t)term5_intermediate * RECIP_5) >> 32);
+    sum += term5;
+
+    // Now sum holds the series approximation for exp(r) in Q1.15.
+
+    // Scale the result by 2^n, i.e. compute result = exp(r) * 2^n.
+    int32_t result = sum;
     if (n < 0) {
-        for (int i = 0; i < -n; i++)
-            result32 >>= 1;  // Divide by 2 for negative n.
+        // For negative n, perform a right shift.
+        result = result >> (-n);
     } else {
-        for (int i = 0; i < n; i++) {
-            result32 <<= 1;  // Multiply by 2 for positive n.
-            if (result32 >= Q1_15_ONE)
-                result32 = Q1_15_ONE - 1;  // Saturate.
+        // For positive n, left-shift; if n is large, saturate.
+        if (n >= 16) {  // 2^16 would already overflow Q1.15.
+            result = one - 1;  // Saturate to Q1_15_MAX.
+        } else {
+            result = result << n;
+            if (result >= one)
+                result = one - 1;
         }
     }
-    if (result32 >= Q1_15_ONE)
-         result32 = Q1_15_ONE - 1;
-    return (q1_15_t) result32;
+
+    return (q1_15_t) result;
 }
+
+
 
 /*
  * q1_15_log:
