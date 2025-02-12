@@ -76,6 +76,74 @@ void test_fixp_functions(void) {
     }
 
     printf0("\n");
+    printf0("=== Q8.24 approximate_reciprocal Tests ===\n");
+
+    // Test 1: Reciprocal of 1.0 should be approximately 1.0.
+    {
+        q8_24_t b = q8_24_from_float(1.0f);
+        q8_24_t recip = q8_24_approximate_reciprocal(b);
+        float f_recip = q8_24_to_float(recip);
+        printf0("Reciprocal of 1.0: %f (expected ~1.0)\n", f_recip);
+        assert(fabs(f_recip - 1.0f) < TOLERANCE);
+    }
+
+    // Test 2: Reciprocal of 2.0 should be approximately 0.5.
+    {
+        q8_24_t b = q8_24_from_float(2.0f);
+        q8_24_t recip = q8_24_approximate_reciprocal(b);
+        float f_recip = q8_24_to_float(recip);
+        printf0("Reciprocal of 2.0: %f (expected ~0.5)\n", f_recip);
+        assert(fabs(f_recip - 0.5f) < TOLERANCE);
+    }
+
+    // Test 3: Reciprocal of 0.5 should be approximately 2.0.
+    {
+        q8_24_t b = q8_24_from_float(0.5f);
+        q8_24_t recip = q8_24_approximate_reciprocal(b);
+        float f_recip = q8_24_to_float(recip);
+        printf0("Reciprocal of 0.5: %f (expected ~2.0)\n", f_recip);
+        assert(fabs(f_recip - 2.0f) < TOLERANCE);
+    }
+
+    // Test 4: Reciprocal of -1.0 should be approximately -1.0.
+    {
+        q8_24_t b = q8_24_from_float(-1.0f);
+        q8_24_t recip = q8_24_approximate_reciprocal(b);
+        float f_recip = q8_24_to_float(recip);
+        printf0("Reciprocal of -1.0: %f (expected ~-1.0)\n", f_recip);
+        assert(fabs(f_recip + 1.0f) < TOLERANCE);
+    }
+
+    // Test 5: Reciprocal of -2.0 should be approximately -0.5.
+    {
+        q8_24_t b = q8_24_from_float(-2.0f);
+        q8_24_t recip = q8_24_approximate_reciprocal(b);
+        float f_recip = q8_24_to_float(recip);
+        printf0("Reciprocal of -2.0: %f (expected ~-0.5)\n", f_recip);
+        assert(fabs(f_recip + 0.5f) < TOLERANCE);
+    }
+
+    // Test 6: Reciprocal of 0.001 should saturate to Q8_24_MAX (~127.99999994).
+    {
+        q8_24_t b = q8_24_from_float(0.001f);
+        q8_24_t recip = q8_24_approximate_reciprocal(b);
+        float f_recip = q8_24_to_float(recip);
+        printf0("Reciprocal of 0.001: %f (expected saturated to Q8_24_MAX ~127.99999994)\n", f_recip);
+        // Check that the result is exactly Q8_24_MAX.
+        assert(recip == Q8_24_MAX);
+    }
+
+    // Test 7: Reciprocal of -0.001 should saturate to Q8_24_MIN (-128.0).
+    {
+        q8_24_t b = q8_24_from_float(-0.001f);
+        q8_24_t recip = q8_24_approximate_reciprocal(b);
+        float f_recip = q8_24_to_float(recip);
+        printf0("Reciprocal of -0.001: %f (expected saturated to Q8_24_MIN -128.0)\n", f_recip);
+        // Check that the result is exactly Q8_24_MIN.
+        assert(recip == Q8_24_MIN);
+    }
+
+    printf0("\n");
     printf0("=== Q8.24 Arithmetic Tests with Saturation ===\n");
     // Addition saturation test:
     {
@@ -141,6 +209,14 @@ void test_fixp_functions(void) {
         printf0("Division: MAX / 0.000001 = %f (expected saturation to MAX: %f)\n",
                q8_24_to_float(div_over), q8_24_to_float(Q8_24_MAX));
         assert(div_over == Q8_24_MAX);
+
+        // Division
+        q8_24_t a = q8_24_from_float(42.f);
+        q8_24_t b = q8_24_from_float(23.f);
+        q8_24_t c = q8_24_div(a, b);
+        printf0("Division: 42.0 / 23.0 = %f (expected: %f)\n",
+               q8_24_to_float(c), 42.f/23.f);
+        assert(fabsf(q8_24_to_float(c) - 42.f/23.f) < TOLERANCE);
     }
 
     // Absolute value tests with saturation:
@@ -173,6 +249,8 @@ void test_fixp_functions(void) {
         assert(q8_24_is_saturated(x2) == 1);
         assert(q8_24_is_saturated(x3) == 1);
     }
+
+
 
     printf0("\n");
     printf0("=== Q8.24 exp and log Tests ===\n");
@@ -1245,16 +1323,16 @@ void bench_fixp_functions(void) {
         volatile float val2 = 0.001f;
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
-            val /= val2;
+            val = val / val2;
         }
         elapsed_float = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }
     {
         volatile double val = 0.0876;
-        volatile double val2 = 0.001f;
+        volatile double val2 = 0.001;
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
-            val /= val2;
+            val = val / val2;
         }
         elapsed_double = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
     }

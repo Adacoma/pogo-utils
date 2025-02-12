@@ -89,6 +89,97 @@ static inline q8_24_t q8_24_mul(q8_24_t a, q8_24_t b) {
     return (q8_24_t)prod;
 }
 
+/*
+ * q8_24_approximate_reciprocal:
+ *
+ * Computes an approximate reciprocal 1/b for a Q8.24 number b.
+ *
+ * The method:
+ * 1. Handles negative inputs and asserts if b is zero.
+ * 2. Normalizes b to lie in the range [0.5, 1.0] in Q8.24, while tracking a shift factor.
+ * 3. Uses a linear approximation:
+ *        r0 = (48/17) - (32/17) * norm
+ *    (with constants scaled to Q8.24)
+ * 4. Applies three iterations of the Newton–Raphson update:
+ *        rₙ₊₁ = rₙ * (2 - norm * rₙ)
+ * 5. Adjusts for the normalization: if b was scaled so that b = norm * 2^(shift),
+ *    then 1/b = (1/norm) * 2^(-shift).
+ * 6. Finally, saturates the result to Q8_24_MIN (-128.0) and Q8_24_MAX (~127.99999994).
+ */
+static inline q8_24_t q8_24_approximate_reciprocal(q8_24_t b) {
+    // b must not be zero.
+    if (b == 0) {
+        return Q8_24_MAX;
+    }
+
+    // Handle negative numbers.
+    int sign = 1;
+    if (b < 0) {
+        sign = -1;
+        b = -b;
+    }
+
+    // Early saturation: In Q8.24, 0.0078125 (which is 1/128) is represented as 131072.
+    // For any b <= 131072, the reciprocal 1/b would be >= 128,
+    // which exceeds the representable maximum (~127.99999994).
+    if (b <= (1 << 17)) {  // (1 << 17) == 131072
+        return (sign > 0 ? Q8_24_MAX : Q8_24_MIN);
+    }
+
+    // Normalize b: we want norm in [Q8_24_ONE/2, Q8_24_ONE] (i.e., roughly [0.5, 1.0]).
+    int shift = 0;
+    q8_24_t norm = b;
+    while (norm < (Q8_24_ONE >> 1)) {
+        norm <<= 1;
+        shift--;  // b was too small; will later multiply reciprocal by 2^(-shift)
+    }
+    while (norm > Q8_24_ONE) {
+        norm >>= 1;
+        shift++;  // b was too large
+    }
+
+    // Use a linear approximation to get a better initial guess for 1/norm.
+    // For x in [0.5,1], a good approximation is:
+    //      r0 = (48/17) - (32/17)*x
+    // with constants represented in Q8.24.
+    const int32_t K = (int32_t)((48.0 / 17.0) * Q8_24_ONE + 0.5);
+    const int32_t L = (int32_t)((32.0 / 17.0) * Q8_24_ONE + 0.5);
+    int32_t r = K - (int32_t)(((int64_t)L * norm) >> Q8_24_FRACTIONAL_BITS);
+
+    // Refine the initial guess with three iterations of Newton–Raphson:
+    //     r = r * (2 - norm * r)
+    for (int i = 0; i < 3; i++) {
+        int64_t prod = ((int64_t)norm * r) >> Q8_24_FRACTIONAL_BITS;
+        int64_t diff = (2LL * Q8_24_ONE) - prod;
+        r = (int32_t)(((int64_t)r * diff) >> Q8_24_FRACTIONAL_BITS);
+    }
+
+    // Adjust for the normalization:
+    // If b was scaled as b = norm * 2^(shift), then 1/b = (1/norm) * 2^(-shift)
+    if (shift > 0) {
+        r >>= shift;
+    } else if (shift < 0) {
+        // Before left-shifting, check for potential overflow.
+        if (r > (Q8_24_MAX >> (-shift))) {
+            r = Q8_24_MAX;
+        } else {
+            r <<= -shift;
+        }
+    }
+
+    // Apply the sign.
+    int32_t result = sign * r;
+
+    // Saturate the result to the representable Q8.24 range.
+    if (result > Q8_24_MAX)
+        result = Q8_24_MAX;
+    else if (result < Q8_24_MIN)
+        result = Q8_24_MIN;
+
+    return (q8_24_t)result;
+}
+
+
 /* Division with saturation.
  * If dividing by zero, the function returns Q8_24_MAX for a non-negative numerator
  * and Q8_24_MIN for a negative numerator.
@@ -97,12 +188,22 @@ static inline q8_24_t q8_24_div(q8_24_t a, q8_24_t b) {
     if (b == 0) {
         return (a >= 0) ? Q8_24_MAX : Q8_24_MIN;
     }
-    int64_t res = ((int64_t)a << Q8_24_FRACTIONAL_BITS) / b;
+
+    // Division by using multiplication of 1/b
+    q8_24_t const reciprocal = q8_24_approximate_reciprocal(b);        // Compute reciprocal of b in Q8.24
+    int64_t res = ((int64_t)a * reciprocal) >> Q8_24_FRACTIONAL_BITS;  // Multiply a by the reciprocal
     if (res > Q8_24_MAX)
         return Q8_24_MAX;
     if (res < Q8_24_MIN)
         return Q8_24_MIN;
     return (q8_24_t)res;
+
+//    int64_t res = ((int64_t)a << Q8_24_FRACTIONAL_BITS) / b;
+//    if (res > Q8_24_MAX)
+//        return Q8_24_MAX;
+//    if (res < Q8_24_MIN)
+//        return Q8_24_MIN;
+//    return (q8_24_t)res;
 }
 
 /* Absolute value with saturation.
