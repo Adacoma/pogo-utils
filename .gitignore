@@ -50,3 +50,12 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Lib directories
+pogosim
+pogobot-sdk
+
+# Results directories
+frames/
+build/
+examples/*/build/

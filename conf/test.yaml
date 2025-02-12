@@ -1,0 +1,41 @@
+---
+
+window_width: 600       # In pixels
+window_height: 600      # In pixels
+
+arena_file: arenas/disk.csv
+arena_width: 1200.0     # In mm
+arena_height: 1200.0    # In mm
+
+delete_old_files: true
+enable_data_logging: false
+data_filename: "frames/data.feather"
+enable_console_logging: true
+console_filename: "frames/console.txt"
+
+seed: 0
+nBots: 10
+initial_robot_formation: random
+simulationTime: 500.0
+robot_radius: 26.5      # In mm
+commRadius: 106.5       # In mm
+msgSuccessRate: 0.5
+showComms: false
+GUI: true
+#mm_to_pixels: 0.0
+
+timeStep: 0.01  #0.01667
+GUI_speed_up: 1.0
+
+initial_light_value: 32767
+photo_start_at: 1.0
+photo_start_duration: 1.0
+
+
+save_data_period: -1.0
+save_video_period: -1.0
+frames_name: "frames/f{:010.4f}.png"
+
+# MODELINE "{{{1
+# vim:expandtab:softtabstop=4:shiftwidth=4:fileencoding=utf-8
+# vim:foldmethod=marker
