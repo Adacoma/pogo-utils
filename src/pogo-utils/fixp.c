@@ -3,12 +3,13 @@
 
 #include "fixp.h"
 
-#include <stdio.h>
+//#include <stdio.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 
+#include "pogosim/pogosim.h"
 
 /*
  * print_fixed_q8_24:
@@ -35,9 +36,9 @@ static void print_fixed_q8_24(q8_24_t x) {
     // Convert the fractional part to a decimal value with 6 digits, with rounding.
     uint32_t fracDecimal = (uint32_t)(((uint64_t)fracPart * 1000000 + (1UL << 23)) >> 24);
     if (negative)
-        printf("-%d.%06u", integerPart, fracDecimal);
+        printf("-%ld.%06lu", integerPart, fracDecimal);
     else
-        printf("%d.%06u", integerPart, fracDecimal);
+        printf("%ld.%06lu", integerPart, fracDecimal);
 }
 
 /*
@@ -65,9 +66,9 @@ static void print_fixed_q1_15(q1_15_t x) {
     // Convert the fractional part to 4 decimal digits.
     uint32_t fracDecimal = (uint32_t)(((uint32_t)fracPart * 10000 + (1U << 14)) >> 15);
     if (negative)
-        printf("-%d.%04u", integerPart, fracDecimal);
+        printf("-%ld.%04lu", integerPart, fracDecimal);
     else
-        printf("%d.%04u", integerPart, fracDecimal);
+        printf("%ld.%04lu", integerPart, fracDecimal);
 }
 
 /*
@@ -95,9 +96,9 @@ static void print_fixed_q16_16(q16_16_t x) {
     // Convert the fractional part to 6 decimal digits with rounding.
     uint32_t fracDecimal = (uint32_t)(((uint64_t)fracPart * 1000000 + ((1 << 16) / 2)) / (1 << 16));
     if (negative)
-        printf("-%d.%06u", integerPart, fracDecimal);
+        printf("-%ld.%06lu", integerPart, fracDecimal);
     else
-        printf("%d.%06u", integerPart, fracDecimal);
+        printf("%ld.%06lu", integerPart, fracDecimal);
 }
 
 /*
@@ -125,9 +126,9 @@ static void print_fixed_q6_10(q6_10_t x) {
     // Convert the fractional part to a decimal fraction with 3 digits.
     uint32_t fracDecimal = (uint32_t)(((uint32_t)fracPart * 1000 + (1U << 9)) >> 10);
     if (negative)
-        printf("-%d.%03u", integerPart, fracDecimal);
+        printf("-%ld.%03lu", integerPart, fracDecimal);
     else
-        printf("%d.%03u", integerPart, fracDecimal);
+        printf("%ld.%03lu", integerPart, fracDecimal);
 }
 
 
@@ -159,7 +160,7 @@ void printf_fixp(const char *format, ...) {
     const char *p = format;
     while (*p) {
         if (*p == '%') {
-            const char *start = p; // remember beginning of conversion
+            //const char *start = p; // remember beginning of conversion
             p++; // skip '%'
             // Handle "%%" (literal '%')
             if (*p == '%') {
@@ -194,7 +195,7 @@ void printf_fixp(const char *format, ...) {
                     continue;
                 } else {
                     // Unrecognized fixed–point specifier: print "%Q" literally.
-                    fputs("%Q", stdout);
+                    printf("%s", "%Q");
                     continue;
                 }
             } else {
@@ -238,7 +239,7 @@ void printf_fixp(const char *format, ...) {
                     printf(fmt, arg);
                 } else {
                     // Fallback: print the conversion specifier literally.
-                    fputs(fmt, stdout);
+                    printf("%s", fmt);
                 }
                 continue;
             }
