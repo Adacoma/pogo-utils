@@ -21,8 +21,10 @@ REGISTER_USERDATA(USERDATA)
 
 #ifdef SIMULATOR
 #define printf0(fmt, ...) if (pogobot_helper_getid() == 0) { printf(fmt, ##__VA_ARGS__ ); }
+#define printf_fixp0(fmt, ...) if (pogobot_helper_getid() == 0) { printf_fixp(fmt, ##__VA_ARGS__ ); }
 #else
 #define printf0(fmt, ...) printf(fmt, ##__VA_ARGS__ );
+#define printf_fixp0(fmt, ...) printf_fixp(fmt, ##__VA_ARGS__ );
 #endif
 
 void test_fixp_functions(void);
@@ -625,10 +627,6 @@ void test_fixp_functions(void) {
 
     /* Test Q8.24 <-> Q16.16 */
     {
-        // Assume q8_24_from_float and q8_24_to_float are defined in your Q8.24 library.
-        extern int32_t q8_24_from_float(float);   // from your Q8.24 library
-        extern float q8_24_to_float(int32_t);       // from your Q8.24 library
-
         float f_val = 2.71828f;
         int32_t q8_val = q8_24_from_float(f_val);
         q16_16_t q16_val = q16_16_from_q8_24(q8_val);
@@ -641,10 +639,6 @@ void test_fixp_functions(void) {
 
     /* Test Q1.15 <-> Q16.16 */
     {
-        // Assume q1_15_from_float and q1_15_to_float are defined in your Q1.15 library.
-        extern int16_t q1_15_from_float(float);   // from your Q1.15 library
-        extern float q1_15_to_float(int16_t);       // from your Q1.15 library
-
         float f_val = -0.5f;
         int16_t q1_val = q1_15_from_float(f_val);
         q16_16_t q16_from_q1 = q16_16_from_q1_15(q1_val);
@@ -1204,6 +1198,137 @@ void test_fixp_functions(void) {
                q6_10_to_float(c), q6_10_to_float(a),
                q6_10_to_float(a), q6_10_to_float(d));
         printf0("Q6.10 comparisons passed.\n\n");
+    }
+
+    printf0("\n");
+    printf0("=== printf_fixp tests ===\n");
+    {
+        q8_24_t a = q8_24_from_float(42.5f);
+        q1_15_t b = q1_15_from_float(0.25f);
+        q16_16_t c = q16_16_from_float(123.1f);
+        q6_10_t d = q6_10_from_float(7.5f);
+        printf_fixp0("Q8.24: %Q8.24\n", a);
+        printf_fixp0("Q1.15: %Q1.15\n", b);
+        printf_fixp0("Q16.16: %Q16.16\n", c);
+        printf_fixp0("Q6.10: %Q6.10\n", d);
+        printf_fixp0("float values: %f %f %f %f\n", q8_24_to_float(a), q1_15_to_float(b), q16_16_to_float(c), q6_10_to_float(d));
+    }
+    {
+        q8_24_t a = q8_24_from_float(-42.5f);
+        q1_15_t b = q1_15_from_float(-0.25f);
+        q16_16_t c = q16_16_from_float(-123.1f);
+        q6_10_t d = q6_10_from_float(-7.5f);
+        printf_fixp0("Q8.24: %Q8.24\n", a);
+        printf_fixp0("Q1.15: %Q1.15\n", b);
+        printf_fixp0("Q16.16: %Q16.16\n", c);
+        printf_fixp0("Q6.10: %Q6.10\n", d);
+        printf_fixp0("float values: %f %f %f %f\n", q8_24_to_float(a), q1_15_to_float(b), q16_16_to_float(c), q6_10_to_float(d));
+    }
+
+    {
+        // Test with one set of values.
+        q8_24_t a = Q8_24_FROM_FLOAT(42.5f);
+        q1_15_t b = Q1_15_FROM_FLOAT(-0.25f);
+        q16_16_t c = Q16_16_FROM_FLOAT(123.1f);
+        q6_10_t d = Q6_10_FROM_FLOAT(7.5f);
+
+        printf0("Float -> Fixed -> Float conversions:\n");
+        printf0("Q8.24: %f\n", q8_24_to_float(a));
+        printf0("Q1.15: %f\n", q1_15_to_float(b));
+        printf0("Q16.16: %f\n", q16_16_to_float(c));
+        printf0("Q6.10: %f\n", q6_10_to_float(d));
+
+        // Additional tests with a variety of values.
+        float testValues[] = { 0.0f, 1.0f, -1.0f, 3.14159f, -2.71828f, 0.12345f, -0.98765f };
+        int numTests = sizeof(testValues) / sizeof(testValues[0]);
+        for (int i = 0; i < numTests; i++) {
+            float f = testValues[i];
+            q8_24_t qa = Q8_24_FROM_FLOAT(f);
+            q1_15_t qb = Q1_15_FROM_FLOAT(f);
+            q16_16_t qc = Q16_16_FROM_FLOAT(f);
+            q6_10_t qd = Q6_10_FROM_FLOAT(f);
+            printf0("Original: %f -> Q8.24: %f, Q1.15: %f, Q16.16: %f, Q6.10: %f\n",
+                f, q8_24_to_float(qa), q1_15_to_float(qb), q16_16_to_float(qc), q6_10_to_float(qd));
+        }
+    }
+    // Test Q8.24 conversion.
+    {
+        q8_24_t a = Q8_24_FROM_FLOAT(42.5f);
+        float fa = q8_24_to_float(a);
+        printf0("Q8.24: %f (expected 42.5)\n", fa);
+        assert(fabsf(fa - 42.5f) < TOLERANCE);
+    }
+
+    // Test Q1.15 conversion.
+    {
+        q1_15_t b = Q1_15_FROM_FLOAT(-0.25f);
+        float fb = q1_15_to_float(b);
+        printf0("Q1.15: %f (expected -0.25)\n", fb);
+        assert(fabsf(fb - (-0.25f)) < TOLERANCE);
+    }
+
+    // Test Q16.16 conversion.
+    {
+        q16_16_t c = Q16_16_FROM_FLOAT(123.1f);
+        float fc = q16_16_to_float(c);
+        printf0("Q16.16: %f (expected 123.1)\n", fc);
+        assert(fabsf(fc - 123.1f) < TOLERANCE);
+    }
+
+    // Test Q6.10 conversion.
+    {
+        q6_10_t d = Q6_10_FROM_FLOAT(7.5f);
+        float fd = q6_10_to_float(d);
+        printf0("Q6.10: %f (expected 7.5)\n", fd);
+        assert(fabsf(fd - 7.5f) < TOLERANCE);
+    }
+
+    // Test normal conversions (within range).
+    {
+        q8_24_t a = Q8_24_FROM_FLOAT(42.5f);
+        assert(fabsf(q8_24_to_float(a) - 42.5f) < TOLERANCE);
+
+        q1_15_t b = Q1_15_FROM_FLOAT(-0.25f);
+        assert(fabsf(q1_15_to_float(b) - (-0.25f)) < TOLERANCE);
+
+        q16_16_t c = Q16_16_FROM_FLOAT(123.1f);
+        assert(fabsf(q16_16_to_float(c) - 123.1f) < TOLERANCE);
+
+        q6_10_t d = Q6_10_FROM_FLOAT(7.5f);
+        assert(fabsf(q6_10_to_float(d) - 7.5f) < TOLERANCE);
+    }
+    
+    // Test saturation behavior:
+    // For Q8.24, any x >= 128.0f should produce Q8_24_MAX; any x < -128.0f should produce Q8_24_MIN.
+    {
+        q8_24_t a1 = Q8_24_FROM_FLOAT(128.0f);
+        assert(a1 == Q8_24_MAX);
+        q8_24_t a2 = Q8_24_FROM_FLOAT(-130.0f);
+        assert(a2 == Q8_24_MIN);
+    }
+    
+    // For Q1.15, any x >= 1.0f should saturate.
+    {
+        q1_15_t b1 = Q1_15_FROM_FLOAT(1.0f);
+        assert(b1 == Q1_15_MAX);
+        q1_15_t b2 = Q1_15_FROM_FLOAT(-2.0f);
+        assert(b2 == Q1_15_MIN);
+    }
+    
+    // For Q16.16, any x >= 32768.0f should saturate.
+    {
+        q16_16_t c1 = Q16_16_FROM_FLOAT(32768.0f);
+        assert(c1 == Q16_16_MAX);
+        q16_16_t c2 = Q16_16_FROM_FLOAT(-40000.0f);
+        assert(c2 == Q16_16_MIN);
+    }
+    
+    // For Q6.10, any x >= 32.0f should saturate.
+    {
+        q6_10_t d1 = Q6_10_FROM_FLOAT(32.0f);
+        assert(d1 == Q6_10_MAX);
+        q6_10_t d2 = Q6_10_FROM_FLOAT(-33.0f);
+        assert(d2 == Q6_10_MIN);
     }
 
     printf0("\n");

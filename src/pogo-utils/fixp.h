@@ -4,6 +4,10 @@
 
 #include <stdint.h>
 
+/////////////////////////////////////////////////////////////////
+///                      Q8.24 FUNCTIONS                      /// {{{1
+/////////////////////////////////////////////////////////////////
+
 /* ==== Q8.24 Fixed-Point Definitions and Functions ==== */
 
 #define Q8_24_FRACTIONAL_BITS 24
@@ -28,6 +32,11 @@
 #define Q8_24_MAX ((q8_24_t)0x7FFFFFFF)
 #define Q8_24_MIN ((q8_24_t)0x80000000)
 
+// Q8.24: 1.0 = 2^24 = 16777216.0f; saturate if x >= 128.0 or x < -128.0.
+#define Q8_24_FROM_FLOAT(x)  ((q8_24_t)(((x) >= 128.0f) ? Q8_24_MAX : \
+                                ((x) < -128.0f) ? Q8_24_MIN : \
+                                (((x) * 16777216.0f) + ((x) >= 0 ? 0.5f : -0.5f))))
+
 
 
 typedef int32_t q8_24_t;
@@ -47,13 +56,14 @@ static inline int q8_24_to_int(q8_24_t x) {
 }
 
 /* Convert a float to Q8.24 fixed point with saturation. */
-static inline q8_24_t q8_24_from_float(float x) {
-    if (x >= 128.0f)
-        return Q8_24_MAX;
-    if (x < -128.0f)
-        return Q8_24_MIN;
-    return (q8_24_t)(x * Q8_24_ONE);
-}
+#define q8_24_from_float(x) Q8_24_FROM_FLOAT(x)    // Always use the macro instead of the inline function
+//static inline q8_24_t q8_24_from_float(float x) {
+//    if (x >= 128.0f)
+//        return Q8_24_MAX;
+//    if (x < -128.0f)
+//        return Q8_24_MIN;
+//    return (q8_24_t)(x * Q8_24_ONE);
+//}
 
 /* Convert Q8.24 fixed point to a float. */
 static inline float q8_24_to_float(q8_24_t x) {
@@ -507,6 +517,9 @@ static inline uint32_t q8_24_get_frac(q8_24_t x) {
 
 
 
+/////////////////////////////////////////////////////////////////
+///                      Q1.15 FUNCTIONS                      /// {{{1
+/////////////////////////////////////////////////////////////////
 /* ==== Q1.15 Fixed-Point Definitions and Conversion Functions ==== */
 
 /*
@@ -523,6 +536,12 @@ static inline uint32_t q8_24_get_frac(q8_24_t x) {
 #define Q1_15_MIN ((q1_15_t)0x8000)
 #define Q1_15_SCALE (1 << Q1_15_FRACTIONAL_BITS)  // 32768
 #define Q1_15_LN2_CONST 22713  // ln(2) ≈ 0.693147 * 32768
+
+// Q1.15: 1.0 = 2^15 = 32768.0f; saturate if x >= 1.0 or x < -1.0.
+#define Q1_15_FROM_FLOAT(x)  ((q1_15_t)(((x) >= 1.0f) ? Q1_15_MAX : \
+                                ((x) < -1.0f) ? Q1_15_MIN : \
+                                (((x) * 32768.0f) + ((x) >= 0 ? 0.5f : -0.5f))))
+
 
 
 typedef int16_t q1_15_t;
@@ -556,15 +575,16 @@ static inline q8_24_t q8_24_from_q1_15(q1_15_t x) {
 /* Convert a float to Q1.15 fixed-point with saturation.
    Valid input range is [-1.0, 1.0); values outside saturate.
 */
-static inline q1_15_t q1_15_from_float(float x) {
-    if (x >= 1.0f)
-        return Q1_15_MAX;
-    if (x < -1.0f)
-        return Q1_15_MIN;
-    return (q1_15_t)(x * Q1_15_ONE);
-    //volatile float res = x * 128.0f; // XXX evil hack to avoid double promotion
-    //return (q1_15_t)(res * 256.0f);
-}
+#define q1_15_from_float(x) Q1_15_FROM_FLOAT(x)    // Always use the macro instead of the inline function
+//static inline q1_15_t q1_15_from_float(float x) {
+//    if (x >= 1.0f)
+//        return Q1_15_MAX;
+//    if (x < -1.0f)
+//        return Q1_15_MIN;
+//    return (q1_15_t)(x * Q1_15_ONE);
+//    //volatile float res = x * 128.0f; // XXX evil hack to avoid double promotion
+//    //return (q1_15_t)(res * 256.0f);
+//}
 
 /* Convert Q1.15 fixed-point to a float. */
 static inline float q1_15_to_float(q1_15_t x) {
@@ -825,6 +845,10 @@ static inline uint16_t q1_15_get_frac(q1_15_t x) {
 }
 
 
+
+/////////////////////////////////////////////////////////////////
+///                     Q16.16 FUNCTIONS                      /// {{{1
+/////////////////////////////////////////////////////////////////
 /* === Q16.16 Fixed-Point Definitions === */
 /*
  * Q16.16 uses 32 bits: 16 bits for the integer part and 16 bits for the fractional part.
@@ -844,6 +868,13 @@ static inline uint16_t q1_15_get_frac(q1_15_t x) {
 #define Q16_16_MAX ((q16_16_t)0x7FFFFFFF)
 #define Q16_16_MIN ((q16_16_t)0x80000000)
 
+// Q16.16: 1.0 = 2^16 = 65536.0f; saturate if x >= 32768.0 or x < -32768.0.
+#define Q16_16_FROM_FLOAT(x) ((q16_16_t)(((x) >= 32768.0f) ? Q16_16_MAX : \
+                                ((x) < -32768.0f) ? Q16_16_MIN : \
+                                (((x) * 65536.0f) + ((x) >= 0 ? 0.5f : -0.5f))))
+
+
+
 typedef int32_t q16_16_t;
 
 /* --- Conversions Between int and Q16.16 --- */
@@ -859,9 +890,10 @@ static inline int q16_16_to_int(q16_16_t x) {
 
 /* --- Conversions Between float and Q16.16 --- */
 /* Convert float to Q16.16 */
-static inline q16_16_t q16_16_from_float(float x) {
-    return (q16_16_t)(x * Q16_16_ONE);
-}
+#define q16_16_from_float(x) Q16_16_FROM_FLOAT(x)    // Always use the macro instead of the inline function
+//static inline q16_16_t q16_16_from_float(float x) {
+//    return (q16_16_t)(x * Q16_16_ONE);
+//}
 
 /* Convert Q16.16 to float */
 static inline float q16_16_to_float(q16_16_t x) {
@@ -1338,6 +1370,9 @@ static inline uint16_t q16_16_get_frac(q16_16_t x) {
 
 
 
+/////////////////////////////////////////////////////////////////
+///                      Q6.10 FUNCTIONS                      /// {{{1
+/////////////////////////////////////////////////////////////////
 /* Q6.10 Fixed–Point Definitions */
 #define Q6_10_FRACTIONAL_BITS 10
 #define Q6_10_ONE      ((q6_10_t)(1 << Q6_10_FRACTIONAL_BITS))            // 1.0 in Q6.10 (1024)
@@ -1350,6 +1385,11 @@ static inline uint16_t q16_16_get_frac(q16_16_t x) {
  */
 #define Q6_10_MAX ((q6_10_t)0x7FFF)
 #define Q6_10_MIN ((q6_10_t)0x8000)
+
+// Q6.10: 1.0 = 2^10 = 1024.0f; saturate if x >= 32.0 or x < -32.0.
+#define Q6_10_FROM_FLOAT(x)  ((q6_10_t)(((x) >= 32.0f) ? Q6_10_MAX : \
+                                ((x) < -32.0f) ? Q6_10_MIN : \
+                                (((x) * 1024.0f) + ((x) >= 0 ? 0.5f : -0.5f))))
 
 
 typedef int16_t q6_10_t;
@@ -1373,9 +1413,10 @@ static inline int q6_10_to_int(q6_10_t x) {
 /*--------------------*/
 
 /* Convert a float to Q6.10 */
-static inline q6_10_t q6_10_from_float(float x) {
-    return (q6_10_t)(x * Q6_10_ONE);
-}
+#define q6_10_from_float(x) Q6_10_FROM_FLOAT(x)    // Always use the macro instead of the inline function
+//static inline q6_10_t q6_10_from_float(float x) {
+//    return (q6_10_t)(x * Q6_10_ONE);
+//}
 
 /* Convert a Q6.10 number to float */
 static inline float q6_10_to_float(q6_10_t x) {
@@ -1655,6 +1696,13 @@ static inline uint16_t q6_10_get_frac(q6_10_t x) {
     uint16_t mask = (1 << Q6_10_FRACTIONAL_BITS) - 1;
     return (x >= 0) ? ((uint16_t)x & mask) : (((uint16_t)(-x)) & mask);
 }
+
+
+
+/////////////////////////////////////////////////////////////////
+///                     GENERIC FUNCTIONS                     /// {{{1
+/////////////////////////////////////////////////////////////////
+void printf_fixp(const char *format, ...);
 
 
 #endif
