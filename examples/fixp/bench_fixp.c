@@ -795,7 +795,7 @@ void test_fixp_functions(void) {
     }
 
 #undef TOLERANCE
-#define TOLERANCE 1e-2f
+#define TOLERANCE 1e-3f
 
     /* Test absolute value */
     {
