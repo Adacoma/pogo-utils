@@ -1510,7 +1510,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q1_15_t val = q1_15_from_float(0.0876f);
-        volatile q1_15_t val2 = q1_15_from_float(0.001f);
+        volatile q1_15_t val2 = q1_15_from_float(0.01f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q1_15_add(val, val2);
@@ -1520,7 +1520,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q16_16_t val = q16_16_from_float(-23.0876f);
-        volatile q16_16_t val2 = q16_16_from_float(0.001f);
+        volatile q16_16_t val2 = q16_16_from_float(0.01f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q16_16_add(val, val2);
@@ -1530,7 +1530,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q6_10_t val = q6_10_from_float(-23.0876f);
-        volatile q6_10_t val2 = q6_10_from_float(0.001f);
+        volatile q6_10_t val2 = q6_10_from_float(0.01f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q6_10_add(val, val2);
@@ -1573,7 +1573,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q1_15_t val = q1_15_from_float(0.0876f);
-        volatile q1_15_t val2 = q1_15_from_float(0.001f);
+        volatile q1_15_t val2 = q1_15_from_float(0.01f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q1_15_sub(val, val2);
@@ -1583,7 +1583,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q16_16_t val = q16_16_from_float(-23.0876f);
-        volatile q16_16_t val2 = q16_16_from_float(0.001f);
+        volatile q16_16_t val2 = q16_16_from_float(0.01f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q16_16_sub(val, val2);
@@ -1593,7 +1593,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q6_10_t val = q6_10_from_float(-23.0876f);
-        volatile q6_10_t val2 = q6_10_from_float(0.001f);
+        volatile q6_10_t val2 = q6_10_from_float(0.01f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q6_10_sub(val, val2);
@@ -1608,7 +1608,7 @@ void bench_fixp_functions(void) {
         volatile float val = 23.04435f;
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
-            val *= 42.f;
+            val *= 1.01f;
         }
         elapsed_float = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
         final_float += val;
@@ -1617,14 +1617,14 @@ void bench_fixp_functions(void) {
         volatile double val = 23.04435;
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
-            val *= 42.0;
+            val *= 1.01;
         }
         elapsed_double = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
         final_double += val;
     }
     {
         volatile q8_24_t val = q8_24_from_float(-23.0876f);
-        volatile q8_24_t val2 = q8_24_from_float(0.01f);
+        volatile q8_24_t val2 = q8_24_from_float(1.01f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q8_24_mul(val, val2);
@@ -1634,7 +1634,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q1_15_t val = q1_15_from_float(0.0876f);
-        volatile q1_15_t val2 = q1_15_from_float(0.001f);
+        volatile q1_15_t val2 = q1_15_from_float(1.01f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q1_15_mul(val, val2);
@@ -1644,7 +1644,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q16_16_t val = q16_16_from_float(-23.0876f);
-        volatile q16_16_t val2 = q16_16_from_float(0.001f);
+        volatile q16_16_t val2 = q16_16_from_float(1.01f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q16_16_mul(val, val2);
@@ -1654,7 +1654,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q6_10_t val = q6_10_from_float(-23.0876f);
-        volatile q6_10_t val2 = q6_10_from_float(0.001f);
+        volatile q6_10_t val2 = q6_10_from_float(1.01f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q6_10_mul(val, val2);
@@ -1667,7 +1667,7 @@ void bench_fixp_functions(void) {
     // Div
     {
         volatile float val = 0.0876f;
-        volatile float val2 = 0.001f;
+        volatile float val2 = 0.1f;
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = val / val2;
@@ -1677,7 +1677,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile double val = 0.0876;
-        volatile double val2 = 0.001;
+        volatile double val2 = 0.1;
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = val / val2;
@@ -1687,7 +1687,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q8_24_t val = q8_24_from_float(0.0876);
-        volatile q8_24_t val2 = q8_24_from_float(0.001f);
+        volatile q8_24_t val2 = q8_24_from_float(0.1f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q8_24_div(val, val2);
@@ -1697,7 +1697,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q1_15_t val = q1_15_from_float(0.0876f);
-        volatile q1_15_t val2 = q1_15_from_float(0.001f);
+        volatile q1_15_t val2 = q1_15_from_float(0.1f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q1_15_div(val, val2);
@@ -1707,7 +1707,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q16_16_t val = q16_16_from_float(0.0876f);
-        volatile q16_16_t val2 = q16_16_from_float(0.001f);
+        volatile q16_16_t val2 = q16_16_from_float(0.1f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q16_16_div(val, val2);
@@ -1717,7 +1717,7 @@ void bench_fixp_functions(void) {
     }
     {
         volatile q6_10_t val = q6_10_from_float(0.0876f);
-        volatile q6_10_t val2 = q6_10_from_float(0.001f);
+        volatile q6_10_t val2 = q6_10_from_float(0.1f);
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
             val = q6_10_div(val, val2);
