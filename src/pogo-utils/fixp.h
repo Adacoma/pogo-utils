@@ -975,141 +975,9 @@ static inline q16_16_t q16_16_mul(q16_16_t a, q16_16_t b) {
 }
 
 
-#if 0
-/*
- * q16_16_approximate_reciprocal:
- *
- * Computes an approximate reciprocal 1/b for a Q16.16 number b.
- *
- * The method:
- * 1. Checks that b is nonzero and handles negative inputs.
- * 2. Performs an early saturation check: in Q16.16, the smallest positive number
- *    that can be inverted without overflow is about 1/32768 (0.000030517578125).
- *    In fixed-point that value is Q16_16_ONE/32768, i.e. 65536/32768 = 2.
- *    If |b| <= 2, the reciprocal exceeds the representable range so the function
- *    immediately returns Q16_16_MAX (or Q16_16_MIN for negative b).
- * 3. Normalizes b so that its absolute value (norm) lies in [Q16_16_ONE/2, Q16_16_ONE],
- *    which corresponds roughly to the real interval [0.5, 1.0]. The number of shifts is
- *    recorded in the variable "shift".
- * 4. Computes an initial guess for 1/norm using a linear approximation:
- *
- *       r0 = (48/17) - (32/17) * norm_real
- *
- *    The constants are scaled into Q16.16 format.
- * 5. Refines the guess with three iterations of the Newton–Raphson update:
- *
- *       rₙ₊₁ = rₙ * (2 - norm * rₙ)
- *
- * 6. Adjusts the result back to the original scaling (undoing the normalization),
- *    taking care to check for overflow when left-shifting.
- * 7. Applies the original sign and finally saturates the result to Q16_16_MAX or Q16_16_MIN.
- */
-static inline q16_16_t q16_16_approximate_reciprocal(q16_16_t b) {
-    // b must not be zero.
-    if (b == 0) {
-        return Q16_16_MAX;
-    }
+#ifdef Q16_16_LUT
 
-    // Work with the absolute value; record the sign.
-    int sign = 1;
-    if (b < 0) {
-        sign = -1;
-        b = -b;
-    }
-
-    // Early saturation:
-    // In Q16.16 the smallest positive value that can be inverted without overflow is:
-    //    1/32768 ≈ 0.000030517578125.
-    // In Q16.16, 0.000030517578125 is represented as:
-    //    0.000030517578125 * 65536 = 2.
-    // Thus, if b <= 2, 1/b would be >= 32768 (beyond the Q16.16 maximum ~32767.99998).
-    if (b <= 2) {
-        return (sign > 0 ? Q16_16_MAX : Q16_16_MIN);
-    }
-
-    // Normalize b so that norm is in [Q16_16_ONE/2, Q16_16_ONE] (i.e. [32768, 65536]).
-    int shift = 0;
-    q16_16_t norm = b;
-    while (norm < (Q16_16_ONE >> 1)) {
-        norm <<= 1;
-        shift--;
-    }
-    while (norm > Q16_16_ONE) {
-        norm >>= 1;
-        shift++;
-    }
-
-    // Use a linear approximation for the initial guess on the interval [0.5,1].
-    // In real arithmetic for x in [0.5,1], one effective approximation for 1/x is:
-    //     r0 = (48/17) - (32/17)*x.
-    // Here, x = norm / Q16_16_ONE. We precompute the constants in Q16.16:
-    const int32_t K = (int32_t)((48.0 / 17.0) * Q16_16_ONE + 0.5);
-    const int32_t L = (int32_t)((32.0 / 17.0) * Q16_16_ONE + 0.5);
-    int32_t r = K - (int32_t)(((int64_t)L * norm) >> Q16_16_FRACTIONAL_BITS);
-
-    // Refine the approximation with three Newton–Raphson iterations:
-    //    r = r * (2 - norm * r)
-    for (int i = 0; i < 3; i++) {
-        int64_t prod = ((int64_t)norm * r) >> Q16_16_FRACTIONAL_BITS;
-        int64_t diff = (2LL * Q16_16_ONE) - prod;
-        r = (int32_t)(((int64_t)r * diff) >> Q16_16_FRACTIONAL_BITS);
-    }
-
-    // Adjust for the normalization.
-    // Since we wrote b as: b = norm * 2^(shift), it follows that 1/b = (1/norm) * 2^(-shift).
-    if (shift > 0) {
-        r >>= shift;
-    } else if (shift < 0) {
-        // When left-shifting, check for potential overflow.
-        if (r > (Q16_16_MAX >> (-shift)))
-            r = Q16_16_MAX;
-        else
-            r <<= -shift;
-    }
-
-    int32_t result = sign * r;
-
-    // Final saturation to the representable Q16.16 range.
-    if (result > Q16_16_MAX)
-        result = Q16_16_MAX;
-    else if (result < Q16_16_MIN)
-        result = Q16_16_MIN;
-
-    return (q16_16_t)result;
-}
-
-/*
- * Q16.16 Division with Saturation.
- * Divides a Q16.16 number by another.
- * The numerator is shifted left by 16 bits to maintain precision.
- * Division by zero is handled by returning Q16_16_MAX (if numerator is nonnegative)
- * or Q16_16_MIN (if numerator is negative).
- */
-static inline q16_16_t q16_16_div(q16_16_t a, q16_16_t b) {
-    if(b == 0)
-        return (a >= 0) ? Q16_16_MAX : Q16_16_MIN;
-
-    // Division by using multiplication of 1/b
-    q16_16_t const reciprocal = q16_16_approximate_reciprocal(b);        // Compute reciprocal of b in Q8.24
-    int64_t res = ((int64_t)a * reciprocal) >> Q16_16_FRACTIONAL_BITS;  // Multiply a by the reciprocal
-    if (res > Q16_16_MAX)
-        return Q16_16_MAX;
-    if (res < Q16_16_MIN)
-        return Q16_16_MIN;
-    return (q16_16_t)res;
-
-//    // Slow division
-//    int64_t res = (((int64_t)a) << Q16_16_FRACTIONAL_BITS) / b;
-//    if(res > Q16_16_MAX)
-//        return Q16_16_MAX;
-//    if(res < Q16_16_MIN)
-//        return Q16_16_MIN;
-//    return (q16_16_t)res;
-}
-
-#else
-
-#define Q16_16_RECIP_TABLE_SIZE 4096
+#define Q16_16_RECIP_TABLE_SIZE 1024
 // Global lookup table for approximate reciprocals of normalized Q16.16 numbers.
 // The table covers the range [Q16_16_ONE/2, Q16_16_ONE) i.e. [32768, 65536).
 // Each table entry is a Q16.16 reciprocal approximation.
@@ -1239,7 +1107,162 @@ static inline q16_16_t q16_16_div(q16_16_t a, q16_16_t b) {
     return (q16_16_t)res;
 }
 
+#else
 
+/*
+ * q16_16_approximate_reciprocal:
+ *
+ * Computes an approximate reciprocal 1/b for a Q16.16 number b.
+ *
+ * The method:
+ * 1. Checks that b is nonzero and handles negative inputs.
+ * 2. Performs an early saturation check: in Q16.16, the smallest positive number
+ *    that can be inverted without overflow is about 1/32768 (0.000030517578125).
+ *    In fixed-point that value is Q16_16_ONE/32768, i.e. 65536/32768 = 2.
+ *    If |b| <= 2, the reciprocal exceeds the representable range so the function
+ *    immediately returns Q16_16_MAX (or Q16_16_MIN for negative b).
+ * 3. Normalizes b so that its absolute value (norm) lies in [Q16_16_ONE/2, Q16_16_ONE],
+ *    which corresponds roughly to the real interval [0.5, 1.0]. The number of shifts is
+ *    recorded in the variable "shift".
+ * 4. Computes an initial guess for 1/norm using a linear approximation:
+ *
+ *       r0 = (48/17) - (32/17) * norm_real
+ *
+ *    The constants are scaled into Q16.16 format.
+ * 5. Refines the guess with three iterations of the Newton–Raphson update:
+ *
+ *       rₙ₊₁ = rₙ * (2 - norm * rₙ)
+ *
+ * 6. Adjusts the result back to the original scaling (undoing the normalization),
+ *    taking care to check for overflow when left-shifting.
+ * 7. Applies the original sign and finally saturates the result to Q16_16_MAX or Q16_16_MIN.
+ */
+static inline q16_16_t q16_16_approximate_reciprocal(q16_16_t b) {
+    // b must not be zero.
+    if (b == 0) {
+        return Q16_16_MAX;
+    }
+
+    // Work with the absolute value; record the sign.
+    int sign = 1;
+    if (b < 0) {
+        sign = -1;
+        b = -b;
+    }
+
+    // Early saturation:
+    // In Q16.16 the smallest positive value that can be inverted without overflow is:
+    //    1/32768 ≈ 0.000030517578125.
+    // In Q16.16, 0.000030517578125 is represented as:
+    //    0.000030517578125 * 65536 = 2.
+    // Thus, if b <= 2, 1/b would be >= 32768 (beyond the Q16.16 maximum ~32767.99998).
+    if (b <= 2) {
+        return (sign > 0 ? Q16_16_MAX : Q16_16_MIN);
+    }
+
+    // Normalize b so that norm is in [Q16_16_ONE/2, Q16_16_ONE] (i.e. [32768, 65536]).
+    int shift = 0;
+    q16_16_t norm = b;
+    while (norm < (Q16_16_ONE >> 1)) {
+        norm <<= 1;
+        shift--;
+    }
+    while (norm > Q16_16_ONE) {
+        norm >>= 1;
+        shift++;
+    }
+
+    // Use a linear approximation for the initial guess on the interval [0.5,1].
+    // In real arithmetic for x in [0.5,1], one effective approximation for 1/x is:
+    //     r0 = (48/17) - (32/17)*x.
+    // Here, x = norm / Q16_16_ONE. We precompute the constants in Q16.16:
+    const int32_t K = (int32_t)((48.0 / 17.0) * Q16_16_ONE + 0.5);
+    const int32_t L = (int32_t)((32.0 / 17.0) * Q16_16_ONE + 0.5);
+    int32_t r = K - (int32_t)(((int64_t)L * norm) >> Q16_16_FRACTIONAL_BITS);
+
+    // Refine the approximation with three Newton–Raphson iterations:
+    //    r = r * (2 - norm * r)
+    for (int i = 0; i < 3; i++) {
+        int64_t prod = ((int64_t)norm * r) >> Q16_16_FRACTIONAL_BITS;
+        int64_t diff = (2LL * Q16_16_ONE) - prod;
+        r = (int32_t)(((int64_t)r * diff) >> Q16_16_FRACTIONAL_BITS);
+    }
+
+    // Adjust for the normalization.
+    // Since we wrote b as: b = norm * 2^(shift), it follows that 1/b = (1/norm) * 2^(-shift).
+    if (shift > 0) {
+        r >>= shift;
+    } else if (shift < 0) {
+        // When left-shifting, check for potential overflow.
+        if (r > (Q16_16_MAX >> (-shift)))
+            r = Q16_16_MAX;
+        else
+            r <<= -shift;
+    }
+
+    int32_t result = sign * r;
+
+    // Final saturation to the representable Q16.16 range.
+    if (result > Q16_16_MAX)
+        result = Q16_16_MAX;
+    else if (result < Q16_16_MIN)
+        result = Q16_16_MIN;
+
+    return (q16_16_t)result;
+}
+
+/*
+ * Q16.16 Division with Saturation.
+ * Divides a Q16.16 number by another.
+ * The numerator is shifted left by 16 bits to maintain precision.
+ * Division by zero is handled by returning Q16_16_MAX (if numerator is nonnegative)
+ * or Q16_16_MIN (if numerator is negative).
+ */
+//static inline q16_16_t q16_16_div(q16_16_t a, q16_16_t b) {
+//    if(b == 0)
+//        return (a >= 0) ? Q16_16_MAX : Q16_16_MIN;
+//
+//    // Division by using multiplication of 1/b
+//    q16_16_t const reciprocal = q16_16_approximate_reciprocal(b);        // Compute reciprocal of b in Q8.24
+//    int64_t res = ((int64_t)a * reciprocal) >> Q16_16_FRACTIONAL_BITS;  // Multiply a by the reciprocal
+//    if (res > Q16_16_MAX)
+//        return Q16_16_MAX;
+//    if (res < Q16_16_MIN)
+//        return Q16_16_MIN;
+//    return (q16_16_t)res;
+//
+////    // Slow division
+////    int64_t res = (((int64_t)a) << Q16_16_FRACTIONAL_BITS) / b;
+////    if(res > Q16_16_MAX)
+////        return Q16_16_MAX;
+////    if(res < Q16_16_MIN)
+////        return Q16_16_MIN;
+////    return (q16_16_t)res;
+//}
+//
+static inline q16_16_t q16_16_div(q16_16_t a, q16_16_t b) {
+    if (b == 0)
+        return (a >= 0) ? Q16_16_MAX : Q16_16_MIN;
+
+    // Convert Q16.16 numbers to float.
+    float a_f = (float)a / (float)Q16_16_ONE;
+    float b_f = (float)b / (float)Q16_16_ONE;
+
+    // Perform floating-point division.
+    float div_f = a_f / b_f;
+
+    // Convert the float result back to Q16.16.
+    float res_f = div_f * (float)Q16_16_ONE;
+    // Round appropriately: add 0.5 for positive, subtract 0.5 for negative.
+    int32_t res_int = (int32_t)((res_f >= 0.0f) ? (res_f + 0.5f) : (res_f - 0.5f));
+
+    // Saturate to the Q16.16 range if necessary.
+    if (res_int > Q16_16_MAX)
+        return Q16_16_MAX;
+    if (res_int < Q16_16_MIN)
+        return Q16_16_MIN;
+    return (q16_16_t)res_int;
+}
 
 #endif
 

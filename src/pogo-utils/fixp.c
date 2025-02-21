@@ -12,10 +12,13 @@
 #include "pogobase.h"
 
 void init_fixp(void) {
+#ifdef Q16_16_LUT
     _init_q16_16();
+#endif
 }
 
 
+#ifdef Q16_16_LUT
 q16_16_t q16_16_recip_table[Q16_16_RECIP_TABLE_SIZE];
 
 void _init_q16_16(void) {
@@ -31,6 +34,7 @@ void _init_q16_16(void) {
         q16_16_recip_table[i] = (q16_16_t)(recip + 0.5f);
     }
 }
+#endif
 
 
 
