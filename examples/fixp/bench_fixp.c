@@ -1929,6 +1929,10 @@ void user_init(void) {
     // Set led index to show error codes
     error_codes_led_idx = 3; // Default value, negative values to disable
 
+    // Initialize fixp (e.g. create LUT)
+    init_fixp();
+
+    // Launch tests and benchmarks
     test_fixp_functions();
     bench_fixp_functions();
 }

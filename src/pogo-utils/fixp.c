@@ -11,6 +11,29 @@
 
 #include "pogobase.h"
 
+void init_fixp(void) {
+    _init_q16_16();
+}
+
+
+q16_16_t q16_16_recip_table[Q16_16_RECIP_TABLE_SIZE];
+
+void _init_q16_16(void) {
+    // The normalized values span [Q16_16_ONE/2, Q16_16_ONE) = [32768, 65536).
+    // Let delta = (Q16_16_ONE/2) / Q16_16_RECIP_TABLE_SIZE.
+    float start = 32768.0f;
+    float delta = 32768.0f / Q16_16_RECIP_TABLE_SIZE;
+    for (int i = 0; i < Q16_16_RECIP_TABLE_SIZE; i++) {
+        // Compute the normalized value (as a float).
+        float norm_val = start + i * delta;
+        // Its true reciprocal (in real numbers) is 1.0 / (norm_val / 65536.0).
+        float recip = (65536.0f * 65536.0f) / norm_val;
+        q16_16_recip_table[i] = (q16_16_t)(recip + 0.5f);
+    }
+}
+
+
+
 /*
  * print_fixed_q8_24:
  *
