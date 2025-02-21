@@ -971,7 +971,7 @@ static inline q16_16_t q16_16_mul(q16_16_t a, q16_16_t b) {
 }
 
 
-#if 1
+#if 0
 /*
  * q16_16_approximate_reciprocal:
  *
@@ -1085,22 +1085,22 @@ static inline q16_16_t q16_16_div(q16_16_t a, q16_16_t b) {
     if(b == 0)
         return (a >= 0) ? Q16_16_MAX : Q16_16_MIN;
 
-//    // Division by using multiplication of 1/b
-//    q16_16_t const reciprocal = q16_16_approximate_reciprocal(b);        // Compute reciprocal of b in Q8.24
-//    int64_t res = ((int64_t)a * reciprocal) >> Q16_16_FRACTIONAL_BITS;  // Multiply a by the reciprocal
-//    if (res > Q16_16_MAX)
-//        return Q16_16_MAX;
-//    if (res < Q16_16_MIN)
-//        return Q16_16_MIN;
-//    return (q16_16_t)res;
-
-    // Slow division
-    int64_t res = (((int64_t)a) << Q16_16_FRACTIONAL_BITS) / b;
-    if(res > Q16_16_MAX)
+    // Division by using multiplication of 1/b
+    q16_16_t const reciprocal = q16_16_approximate_reciprocal(b);        // Compute reciprocal of b in Q8.24
+    int64_t res = ((int64_t)a * reciprocal) >> Q16_16_FRACTIONAL_BITS;  // Multiply a by the reciprocal
+    if (res > Q16_16_MAX)
         return Q16_16_MAX;
-    if(res < Q16_16_MIN)
+    if (res < Q16_16_MIN)
         return Q16_16_MIN;
     return (q16_16_t)res;
+
+//    // Slow division
+//    int64_t res = (((int64_t)a) << Q16_16_FRACTIONAL_BITS) / b;
+//    if(res > Q16_16_MAX)
+//        return Q16_16_MAX;
+//    if(res < Q16_16_MIN)
+//        return Q16_16_MIN;
+//    return (q16_16_t)res;
 }
 
 #else
