@@ -1354,6 +1354,13 @@ void bench_fixp_functions(void) {
     uint32_t elapsed_q16_16 = 0;
     uint32_t elapsed_q6_10 = 0;
 
+    float final_float = 0.f;
+    double final_double = 0.0;
+    q8_24_t final_q8_24 = 0;
+    q1_15_t final_q1_15 = 0;
+    q16_16_t final_q16_16 = 0;
+    q6_10_t final_q6_10 = 0;
+
     // Add
     {
         volatile float val = -23.04435f;
@@ -1363,6 +1370,7 @@ void bench_fixp_functions(void) {
             val += val2;
         }
         elapsed_float = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_float += val;
     }
     {
         volatile double val = -23.04435;
@@ -1372,6 +1380,7 @@ void bench_fixp_functions(void) {
             val += val2;
         }
         elapsed_double = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_double += val;
     }
     {
         volatile q8_24_t val = q8_24_from_float(-23.0876f);
@@ -1381,6 +1390,7 @@ void bench_fixp_functions(void) {
             val = q8_24_add(val, val2);
         }
         elapsed_q8_24 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q8_24 += val;
     }
     {
         volatile q1_15_t val = q1_15_from_float(0.0876f);
@@ -1390,6 +1400,7 @@ void bench_fixp_functions(void) {
             val = q1_15_add(val, val2);
         }
         elapsed_q1_15 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q1_15 += val;
     }
     {
         volatile q16_16_t val = q16_16_from_float(-23.0876f);
@@ -1399,6 +1410,7 @@ void bench_fixp_functions(void) {
             val = q16_16_add(val, val2);
         }
         elapsed_q16_16 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q16_16 += val;
     }
     {
         volatile q6_10_t val = q6_10_from_float(-23.0876f);
@@ -1408,6 +1420,7 @@ void bench_fixp_functions(void) {
             val = q6_10_add(val, val2);
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q6_10 += val;
     }
     printf0("add,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
@@ -1420,6 +1433,7 @@ void bench_fixp_functions(void) {
             val -= val2;
         }
         elapsed_float = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_float += val;
     }
     {
         volatile double val = -23.04435;
@@ -1429,6 +1443,7 @@ void bench_fixp_functions(void) {
             val -= val2;
         }
         elapsed_double = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_double += val;
     }
     {
         volatile q8_24_t val = q8_24_from_float(-23.0876f);
@@ -1438,6 +1453,7 @@ void bench_fixp_functions(void) {
             val = q8_24_sub(val, val2);
         }
         elapsed_q8_24 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q8_24 += val;
     }
     {
         volatile q1_15_t val = q1_15_from_float(0.0876f);
@@ -1447,6 +1463,7 @@ void bench_fixp_functions(void) {
             val = q1_15_sub(val, val2);
         }
         elapsed_q1_15 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q1_15 += val;
     }
     {
         volatile q16_16_t val = q16_16_from_float(-23.0876f);
@@ -1456,6 +1473,7 @@ void bench_fixp_functions(void) {
             val = q16_16_sub(val, val2);
         }
         elapsed_q16_16 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q16_16 += val;
     }
     {
         volatile q6_10_t val = q6_10_from_float(-23.0876f);
@@ -1465,6 +1483,7 @@ void bench_fixp_functions(void) {
             val = q6_10_sub(val, val2);
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q6_10 += val;
     }
     printf0("sub,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
@@ -1476,6 +1495,7 @@ void bench_fixp_functions(void) {
             val *= 42.f;
         }
         elapsed_float = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_float += val;
     }
     {
         volatile double val = 23.04435;
@@ -1484,6 +1504,7 @@ void bench_fixp_functions(void) {
             val *= 42.0;
         }
         elapsed_double = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_double += val;
     }
     {
         volatile q8_24_t val = q8_24_from_float(-23.0876f);
@@ -1493,6 +1514,7 @@ void bench_fixp_functions(void) {
             val = q8_24_mul(val, val2);
         }
         elapsed_q8_24 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q8_24 += val;
     }
     {
         volatile q1_15_t val = q1_15_from_float(0.0876f);
@@ -1502,6 +1524,7 @@ void bench_fixp_functions(void) {
             val = q1_15_mul(val, val2);
         }
         elapsed_q1_15 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q1_15 += val;
     }
     {
         volatile q16_16_t val = q16_16_from_float(-23.0876f);
@@ -1511,6 +1534,7 @@ void bench_fixp_functions(void) {
             val = q16_16_mul(val, val2);
         }
         elapsed_q16_16 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q16_16 += val;
     }
     {
         volatile q6_10_t val = q6_10_from_float(-23.0876f);
@@ -1520,6 +1544,7 @@ void bench_fixp_functions(void) {
             val = q6_10_mul(val, val2);
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q6_10 += val;
     }
     printf0("mul,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
@@ -1532,6 +1557,7 @@ void bench_fixp_functions(void) {
             val = val / val2;
         }
         elapsed_float = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_float += val;
     }
     {
         volatile double val = 0.0876;
@@ -1541,6 +1567,7 @@ void bench_fixp_functions(void) {
             val = val / val2;
         }
         elapsed_double = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_double += val;
     }
     {
         volatile q8_24_t val = q8_24_from_float(0.0876);
@@ -1550,6 +1577,7 @@ void bench_fixp_functions(void) {
             val = q8_24_div(val, val2);
         }
         elapsed_q8_24 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q8_24 += val;
     }
     {
         volatile q1_15_t val = q1_15_from_float(0.0876f);
@@ -1559,6 +1587,7 @@ void bench_fixp_functions(void) {
             val = q1_15_div(val, val2);
         }
         elapsed_q1_15 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q1_15 += val;
     }
     {
         volatile q16_16_t val = q16_16_from_float(0.0876f);
@@ -1568,6 +1597,7 @@ void bench_fixp_functions(void) {
             val = q16_16_div(val, val2);
         }
         elapsed_q16_16 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q16_16 += val;
     }
     {
         volatile q6_10_t val = q6_10_from_float(0.0876f);
@@ -1577,6 +1607,7 @@ void bench_fixp_functions(void) {
             val = q6_10_div(val, val2);
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q6_10 += val;
     }
     printf0("div,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
@@ -1588,6 +1619,7 @@ void bench_fixp_functions(void) {
             val = fabsf(val);
         }
         elapsed_float = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_float += val;
     }
     {
         volatile double val = -23.04435;
@@ -1596,6 +1628,7 @@ void bench_fixp_functions(void) {
             val = abs(val);
         }
         elapsed_double = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_double += val;
     }
     {
         volatile q8_24_t val = q8_24_from_float(-23.0876f);
@@ -1604,6 +1637,7 @@ void bench_fixp_functions(void) {
             val = q8_24_abs(val);
         }
         elapsed_q8_24 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q8_24 += val;
     }
     {
         volatile q1_15_t val = q1_15_from_float(0.0876f);
@@ -1612,6 +1646,7 @@ void bench_fixp_functions(void) {
             val = q1_15_abs(val);
         }
         elapsed_q1_15 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q1_15 += val;
     }
     {
         volatile q16_16_t val = q16_16_from_float(-23.0876f);
@@ -1620,6 +1655,7 @@ void bench_fixp_functions(void) {
             val = q16_16_abs(val);
         }
         elapsed_q16_16 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q16_16 += val;
     }
     {
         volatile q6_10_t val = q6_10_from_float(-23.0876f);
@@ -1628,6 +1664,7 @@ void bench_fixp_functions(void) {
             val = q6_10_abs(val);
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q6_10 += val;
     }
     printf0("abs,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
@@ -1640,6 +1677,7 @@ void bench_fixp_functions(void) {
             val = expf(val2);
         }
         elapsed_float = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_float += val;
     }
     {
         volatile double val = 0.0876;
@@ -1649,6 +1687,7 @@ void bench_fixp_functions(void) {
             val = exp(val2);
         }
         elapsed_double = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_double += val;
     }
     {
         volatile q8_24_t val = q8_24_from_float(0.0876f);
@@ -1658,6 +1697,7 @@ void bench_fixp_functions(void) {
             val = q8_24_exp(val2);
         }
         elapsed_q8_24 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q8_24 += val;
     }
     {
         volatile q1_15_t val = q1_15_from_float(0.0876f);
@@ -1667,6 +1707,7 @@ void bench_fixp_functions(void) {
             val = q1_15_exp(val2);
         }
         elapsed_q1_15 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q1_15 += val;
     }
     {
         volatile q16_16_t val = q16_16_from_float(0.0876f);
@@ -1676,6 +1717,7 @@ void bench_fixp_functions(void) {
             val = q16_16_exp(val2);
         }
         elapsed_q16_16 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q16_16 += val;
     }
     {
         volatile q6_10_t val = q6_10_from_float(0.0876f);
@@ -1685,6 +1727,7 @@ void bench_fixp_functions(void) {
             val = q6_10_exp(val2);
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q6_10 += val;
     }
     printf0("exp,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
@@ -1697,6 +1740,7 @@ void bench_fixp_functions(void) {
             val = logf(val2);
         }
         elapsed_float = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_float += val;
     }
     {
         volatile double val = 0.0;
@@ -1706,6 +1750,7 @@ void bench_fixp_functions(void) {
             val = log(val2);
         }
         elapsed_double = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_double += val;
     }
     {
         volatile q8_24_t val = q8_24_from_float(0.0f);
@@ -1715,6 +1760,7 @@ void bench_fixp_functions(void) {
             val = q8_24_log(val2);
         }
         elapsed_q8_24 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q8_24 += val;
     }
     {
         volatile q1_15_t val = q1_15_from_float(0.0f);
@@ -1724,6 +1770,7 @@ void bench_fixp_functions(void) {
             val = q1_15_log(val2);
         }
         elapsed_q1_15 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q1_15 += val;
     }
     {
         volatile q16_16_t val = q16_16_from_float(0.0f);
@@ -1733,6 +1780,7 @@ void bench_fixp_functions(void) {
             val = q16_16_log(val2);
         }
         elapsed_q16_16 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q16_16 += val;
     }
     {
         volatile q6_10_t val = q6_10_from_float(0.0f);
@@ -1742,8 +1790,12 @@ void bench_fixp_functions(void) {
             val = q6_10_log(val2);
         }
         elapsed_q6_10 = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
+        final_q6_10 += val;
     }
     printf0("log,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
+
+    printf0("\n");
+    printf_fixp0("Final vals: %Q16.16 %Q16.16 %Q16.16 %Q16.16 %Q16.16 %Q16.16\n", final_float, final_double, final_q8_24, final_q1_15, final_q16_16, final_q6_10);
 }
 
 
