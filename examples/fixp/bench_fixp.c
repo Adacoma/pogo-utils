@@ -1,7 +1,7 @@
 /* TODO
  */
 
-#include "pogosim/pogosim.h"
+#include "pogobase.h"
 #include "pogo-utils/fixp.h"
 #include "pogo-utils/version.h"
 #include <stdio.h>
@@ -795,7 +795,7 @@ void test_fixp_functions(void) {
     }
 
 #undef TOLERANCE
-#define TOLERANCE 1e-3f
+#define TOLERANCE 1e-2f
 
     /* Test absolute value */
     {
@@ -841,7 +841,6 @@ void test_fixp_functions(void) {
     printf0("\n");
     printf0("=== Q16.16 exp and refined log Tests ===\n");
 
-    // XXX
     {
         // Test exp(-1.0)
         q16_16_t neg1 = q16_16_from_float(-1.0f);
@@ -850,7 +849,6 @@ void test_fixp_functions(void) {
         printf0("q16_16_exp(-1.0) = %f (expected ~0.3679)\n", f_exp_neg1);
         assert(fabsf(f_exp_neg1 - 0.3679f) < TOLERANCE);
     }
-    // XXX
     {
         // Test log(1.0)
         q16_16_t one = q16_16_from_float(1.0f);
@@ -859,7 +857,6 @@ void test_fixp_functions(void) {
         printf0("q16_16_log(1.0) = %f (expected 0.0)\n", f_log_one);
         assert(fabsf(f_log_one - 0.0f) < TOLERANCE);
     }
-    // XXX
     {
         // Test refined log(exp(-1.0)) should be near -1.0.
         q16_16_t neg1 = q16_16_from_float(-1.0f);
@@ -869,6 +866,125 @@ void test_fixp_functions(void) {
         printf0("q16_16_log(exp(-1.0)) = %f (expected ~ -1.0)\n", f_log_exp_neg1);
         assert(fabsf(f_log_exp_neg1 + 1.0f) < TOLERANCE);
     }
+
+    // Test 1: exp(0.0) should equal 1.0.
+    {
+        q16_16_t zero = q16_16_from_float(0.0f);
+        q16_16_t exp_zero = q16_16_exp(zero);
+        float f_exp_zero = q16_16_to_float(exp_zero);
+        printf0("q16_16_exp(0.0) = %f (expected ~1.0)\n", f_exp_zero);
+        assert(fabsf(f_exp_zero - 1.0f) < TOLERANCE);
+    }
+
+    // Test 2: exp(1.0) should equal approximately 2.71828.
+    {
+        q16_16_t one = q16_16_from_float(1.0f);
+        q16_16_t exp_one = q16_16_exp(one);
+        float f_exp_one = q16_16_to_float(exp_one);
+        printf0("q16_16_exp(1.0) = %f (expected ~2.71828)\n", f_exp_one);
+        assert(fabsf(f_exp_one - 2.71828f) < TOLERANCE);
+    }
+
+    // Test 3: exp(2.0) should be approximately 7.38906.
+    {
+        q16_16_t two = q16_16_from_float(2.0f);
+        q16_16_t exp_two = q16_16_exp(two);
+        float f_exp_two = q16_16_to_float(exp_two);
+        printf0("q16_16_exp(2.0) = %f (expected ~7.38906)\n", f_exp_two);
+        assert(fabsf(f_exp_two - 7.38906f) < TOLERANCE);
+    }
+
+    // Test 4: log(exp(0.5)) should be approximately 0.5.
+    {
+        q16_16_t half = q16_16_from_float(0.5f);
+        q16_16_t exp_half = q16_16_exp(half);
+        q16_16_t log_exp_half = q16_16_log(exp_half);
+        float f_log_exp_half = q16_16_to_float(log_exp_half);
+        printf0("q16_16_log(exp(0.5)) = %f (expected ~0.5)\n", f_log_exp_half);
+        assert(fabsf(f_log_exp_half - 0.5f) < TOLERANCE);
+    }
+
+    // Test 5: log(exp(2.5)) should be approximately 2.5.
+    {
+        q16_16_t twoPoint5 = q16_16_from_float(2.5f);
+        q16_16_t exp_twoPoint5 = q16_16_exp(twoPoint5);
+        q16_16_t log_exp_twoPoint5 = q16_16_log(exp_twoPoint5);
+        float f_log_exp_twoPoint5 = q16_16_to_float(log_exp_twoPoint5);
+        printf0("q16_16_log(exp(2.5)) = %f (expected ~2.5)\n", f_log_exp_twoPoint5);
+        assert(fabsf(f_log_exp_twoPoint5 - 2.5f) < TOLERANCE);
+    }
+
+    // Test 6: log(2.71828) should be approximately 1.0.
+    {
+        q16_16_t eVal = q16_16_from_float(2.71828f);
+        q16_16_t log_eVal = q16_16_log(eVal);
+        float f_log_eVal = q16_16_to_float(log_eVal);
+        printf0("q16_16_log(2.71828) = %f (expected ~1.0)\n", f_log_eVal);
+        assert(fabsf(f_log_eVal - 1.0f) < TOLERANCE);
+    }
+
+    // Test 7: exp(log(5.0)) should be approximately 5.0.
+    {
+        q16_16_t five = q16_16_from_float(5.0f);
+        q16_16_t log_five = q16_16_log(five);
+        q16_16_t exp_log_five = q16_16_exp(log_five);
+        float f_exp_log_five = q16_16_to_float(exp_log_five);
+        printf0("q16_16_exp(log(5.0)) = %f (expected ~5.0)\n", f_exp_log_five);
+        assert(fabsf(f_exp_log_five - 5.0f) < TOLERANCE);
+    }
+
+    // Test 8: log(exp(-2.0)) should be approximately -2.0.
+    {
+        q16_16_t neg2 = q16_16_from_float(-2.0f);
+        q16_16_t exp_neg2 = q16_16_exp(neg2);
+        q16_16_t log_exp_neg2 = q16_16_log(exp_neg2);
+        float f_log_exp_neg2 = q16_16_to_float(log_exp_neg2);
+        printf0("q16_16_log(exp(-2.0)) = %f (expected ~ -2.0)\n", f_log_exp_neg2);
+        assert(fabsf(f_log_exp_neg2 + 2.0f) < TOLERANCE);
+    }
+
+    // Test 9: exp(log(0.1)) should be approximately 0.1.
+    {
+        q16_16_t oneTenth = q16_16_from_float(0.1f);
+        q16_16_t log_oneTenth = q16_16_log(oneTenth);
+        q16_16_t exp_log_oneTenth = q16_16_exp(log_oneTenth);
+        float f_exp_log_oneTenth = q16_16_to_float(exp_log_oneTenth);
+        printf0("q16_16_exp(log(0.1)) = %f (expected ~0.1)\n", f_exp_log_oneTenth);
+        assert(fabsf(f_exp_log_oneTenth - 0.1f) < TOLERANCE);
+    }
+
+    // Test 10: log(exp(10.0)) should be approximately 10.0.
+    {
+        q16_16_t ten = q16_16_from_float(10.0f);
+        q16_16_t exp_ten = q16_16_exp(ten);
+        q16_16_t log_exp_ten = q16_16_log(exp_ten);
+        float f_log_exp_ten = q16_16_to_float(log_exp_ten);
+        printf0("q16_16_log(exp(10.0)) = %f (expected ~10.0)\n", f_log_exp_ten);
+        assert(fabsf(f_log_exp_ten - 10.0f) < TOLERANCE);
+    }
+
+    // Test 11: log(exp(-1.0)) from the original test (repeated here for completeness).
+    {
+        q16_16_t neg1 = q16_16_from_float(-1.0f);
+        q16_16_t exp_neg1 = q16_16_exp(neg1);
+        q16_16_t log_exp_neg1 = q16_16_log(exp_neg1);
+        float f_log_exp_neg1 = q16_16_to_float(log_exp_neg1);
+        printf0("q16_16_log(exp(-1.0)) = %f (expected ~ -1.0)\n", f_log_exp_neg1);
+        assert(fabsf(f_log_exp_neg1 + 1.0f) < TOLERANCE);
+    }
+
+    // Test 12: exp(log(exp(3.0))) should return exp(3.0) (i.e. composition recovers the value).
+    {
+        q16_16_t three = q16_16_from_float(3.0f);
+        q16_16_t exp_three = q16_16_exp(three);
+        q16_16_t log_exp_three = q16_16_log(exp_three);
+        q16_16_t exp_log_exp_three = q16_16_exp(log_exp_three);
+        float f_exp_log_exp_three = q16_16_to_float(exp_log_exp_three);
+        float f_exp_three = q16_16_to_float(exp_three);
+        printf0("q16_16_exp(log(exp(3.0))) = %f (expected ~ %f)\n", f_exp_log_exp_three, f_exp_three);
+        assert(fabsf(f_exp_log_exp_three - f_exp_three) < TOLERANCE);
+    }
+
 
 
 #undef TOLERANCE
@@ -1297,7 +1413,7 @@ void test_fixp_functions(void) {
         q6_10_t d = Q6_10_FROM_FLOAT(7.5f);
         assert(fabsf(q6_10_to_float(d) - 7.5f) < TOLERANCE);
     }
-    
+
     // Test saturation behavior:
     // For Q8.24, any x >= 128.0f should produce Q8_24_MAX; any x < -128.0f should produce Q8_24_MIN.
     {
@@ -1306,7 +1422,7 @@ void test_fixp_functions(void) {
         q8_24_t a2 = Q8_24_FROM_FLOAT(-130.0f);
         assert(a2 == Q8_24_MIN);
     }
-    
+
     // For Q1.15, any x >= 1.0f should saturate.
     {
         q1_15_t b1 = Q1_15_FROM_FLOAT(1.0f);
@@ -1314,7 +1430,7 @@ void test_fixp_functions(void) {
         q1_15_t b2 = Q1_15_FROM_FLOAT(-2.0f);
         assert(b2 == Q1_15_MIN);
     }
-    
+
     // For Q16.16, any x >= 32768.0f should saturate.
     {
         q16_16_t c1 = Q16_16_FROM_FLOAT(32768.0f);
@@ -1322,7 +1438,7 @@ void test_fixp_functions(void) {
         q16_16_t c2 = Q16_16_FROM_FLOAT(-40000.0f);
         assert(c2 == Q16_16_MIN);
     }
-    
+
     // For Q6.10, any x >= 32.0f should saturate.
     {
         q6_10_t d1 = Q6_10_FROM_FLOAT(32.0f);

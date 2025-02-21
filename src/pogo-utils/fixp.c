@@ -9,7 +9,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "pogosim/pogosim.h"
+#include "pogobase.h"
 
 /*
  * print_fixed_q8_24:
