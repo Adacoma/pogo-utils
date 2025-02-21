@@ -1109,7 +1109,7 @@ static inline q16_16_t q16_16_div(q16_16_t a, q16_16_t b) {
 
 #else
 
-#define Q16_16_RECIP_TABLE_SIZE 1024
+#define Q16_16_RECIP_TABLE_SIZE 4096
 // Global lookup table for approximate reciprocals of normalized Q16.16 numbers.
 // The table covers the range [Q16_16_ONE/2, Q16_16_ONE) i.e. [32768, 65536).
 // Each table entry is a Q16.16 reciprocal approximation.
