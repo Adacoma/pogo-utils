@@ -1218,51 +1218,28 @@ static inline q16_16_t q16_16_approximate_reciprocal(q16_16_t b) {
  * Division by zero is handled by returning Q16_16_MAX (if numerator is nonnegative)
  * or Q16_16_MIN (if numerator is negative).
  */
-//static inline q16_16_t q16_16_div(q16_16_t a, q16_16_t b) {
-//    if(b == 0)
-//        return (a >= 0) ? Q16_16_MAX : Q16_16_MIN;
-//
-//    // Division by using multiplication of 1/b
-//    q16_16_t const reciprocal = q16_16_approximate_reciprocal(b);        // Compute reciprocal of b in Q8.24
-//    int64_t res = ((int64_t)a * reciprocal) >> Q16_16_FRACTIONAL_BITS;  // Multiply a by the reciprocal
-//    if (res > Q16_16_MAX)
-//        return Q16_16_MAX;
-//    if (res < Q16_16_MIN)
-//        return Q16_16_MIN;
-//    return (q16_16_t)res;
-//
-////    // Slow division
-////    int64_t res = (((int64_t)a) << Q16_16_FRACTIONAL_BITS) / b;
-////    if(res > Q16_16_MAX)
-////        return Q16_16_MAX;
-////    if(res < Q16_16_MIN)
-////        return Q16_16_MIN;
-////    return (q16_16_t)res;
-//}
-//
 static inline q16_16_t q16_16_div(q16_16_t a, q16_16_t b) {
-    if (b == 0)
+    if(b == 0)
         return (a >= 0) ? Q16_16_MAX : Q16_16_MIN;
 
-    // Convert Q16.16 numbers to float.
-    float a_f = (float)a / (float)Q16_16_ONE;
-    float b_f = (float)b / (float)Q16_16_ONE;
-
-    // Perform floating-point division.
-    float div_f = a_f / b_f;
-
-    // Convert the float result back to Q16.16.
-    float res_f = div_f * (float)Q16_16_ONE;
-    // Round appropriately: add 0.5 for positive, subtract 0.5 for negative.
-    int32_t res_int = (int32_t)((res_f >= 0.0f) ? (res_f + 0.5f) : (res_f - 0.5f));
-
-    // Saturate to the Q16.16 range if necessary.
-    if (res_int > Q16_16_MAX)
+    // Division by using multiplication of 1/b
+    q16_16_t const reciprocal = q16_16_approximate_reciprocal(b);        // Compute reciprocal of b in Q8.24
+    int64_t res = ((int64_t)a * reciprocal) >> Q16_16_FRACTIONAL_BITS;  // Multiply a by the reciprocal
+    if (res > Q16_16_MAX)
         return Q16_16_MAX;
-    if (res_int < Q16_16_MIN)
+    if (res < Q16_16_MIN)
         return Q16_16_MIN;
-    return (q16_16_t)res_int;
+    return (q16_16_t)res;
+
+//    // Slow division
+//    int64_t res = (((int64_t)a) << Q16_16_FRACTIONAL_BITS) / b;
+//    if(res > Q16_16_MAX)
+//        return Q16_16_MAX;
+//    if(res < Q16_16_MIN)
+//        return Q16_16_MIN;
+//    return (q16_16_t)res;
 }
+
 
 #endif
 
