@@ -1795,7 +1795,7 @@ void bench_fixp_functions(void) {
     printf0("log,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
     printf0("\n");
-    printf_fixp0("Final vals: %Q16.16 %Q16.16 %Q16.16 %Q16.16 %Q16.16 %Q16.16\n", final_float, final_double, final_q8_24, final_q1_15, final_q16_16, final_q6_10);
+    printf_fixp0("Final vals: %Q16.16 %Q16.16 %Q8.24 %Q1.15 %Q16.16 %Q6.10\n", q16_16_from_float(final_float), q16_16_from_float(final_double), final_q8_24, final_q1_15, final_q16_16, final_q6_10);
 }
 
 
