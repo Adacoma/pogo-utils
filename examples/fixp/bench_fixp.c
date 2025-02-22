@@ -15,9 +15,8 @@
 typedef struct {
     time_reference_t timer_it;
 } USERDATA;
-
-//extern USERDATA *mydata;
-REGISTER_USERDATA(USERDATA)
+DECLARE_USERDATA(USERDATA);
+REGISTER_USERDATA(USERDATA);
 
 #ifdef SIMULATOR
 #define printf0(fmt, ...) if (pogobot_helper_getid() == 0) { printf(fmt, ##__VA_ARGS__ ); }
