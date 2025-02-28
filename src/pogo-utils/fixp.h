@@ -1835,9 +1835,14 @@ static inline int q6_10_to_int(q6_10_t x) {
 //    return (q6_10_t)(x * Q6_10_ONE);
 //}
 
+//static inline float q6_10_to_float(q6_10_t x) {
+//    return (float)x / Q6_10_ONE;
+//}
+//
 /* Convert a Q6.10 number to float */
+#define Q6_10_FLOAT_RECIP    (1.0f / (float)Q6_10_ONE)                  // Reciprocal constant
 static inline float q6_10_to_float(q6_10_t x) {
-    return (float)x / Q6_10_ONE;
+    return (float)x * Q6_10_FLOAT_RECIP;
 }
 
 /*-------------------------------*/
