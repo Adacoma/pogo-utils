@@ -1845,6 +1845,12 @@ static inline float q6_10_to_float(q6_10_t x) {
     return (float)x * Q6_10_FLOAT_RECIP;
 }
 
+/* Convert a Q6.10 number to double */
+#define Q6_10_DOUBLE_RECIP    (1.0 / (double)Q6_10_ONE)                  // Reciprocal constant
+static inline double q6_10_to_double(q6_10_t x) {
+    return (double)x * Q6_10_FLOAT_RECIP;
+}
+
 /*-------------------------------*/
 /* Q8.24 <-> Q6.10 Conversions    */
 /*-------------------------------*/
