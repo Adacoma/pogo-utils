@@ -24,7 +24,7 @@ typedef struct {
     uint8_t motor_dir_left;
     uint8_t motor_dir_right;
     
-    // Wall avoidance - enabled flag is now inside the state
+    // Wall avoidance
     wall_avoidance_state_t wall_avoidance;
 } USERDATA;
 
