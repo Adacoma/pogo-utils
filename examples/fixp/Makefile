@@ -1,14 +1,34 @@
 
 # Get the absolute path of the Makefile
 MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
-
-# Extract the directory name from the path
 MAKEFILE_DIR := $(notdir $(patsubst %/,%,$(dir $(MAKEFILE_PATH))))
 
+##### Detect OS #####
+OS := $(shell uname)
+ifeq ($(OS), Darwin)  # macOS
+    WHOLE_ARCHIVE_FLAG = -Wl,-force_load
+	SIM_LD_FLAGS_BOX2D = -L/usr/local/lib -Wl,-force_load,/usr/local/lib/libbox2d.a
+	SIM_LD_FLAGS_POGOSIM = -Wl,-force_load,/usr/local/lib/libpogosim.a -Wl,-force_load,/usr/local/lib/libpogo-utils.a
+    STDCPP_LIB = -lc++
+	SIM_LD_EXT = -L/usr/local/lib -L/opt/homebrew/lib
+	SIM_INCLUDES_EXT = -I/usr/local/include -I/opt/homebrew/include
+else  # Linux
+	SIM_LD_FLAGS_BOX2D = -lbox2d
+	SIM_LD_FLAGS_POGOSIM = -Wl,--whole-archive -lpogosim -lpogo-utils -Wl,--no-whole-archive -lboost_system
+    WHOLE_ARCHIVE_FLAG = -Wl,--whole-archive
+    STDCPP_LIB = -lstdc++
+	SIM_LD_EXT = -L/usr/local/lib
+	SIM_INCLUDES_EXT = -I/usr/local/include
+endif
+
 ##### Settings for the pogobot binary #####
-BUILD_DIR=./build
-POGO_SDK=../../pogobot-sdk
-POGOSIM_INCLUDE_DIR=../../pogosim/src/
+ROBOT_CATEGORY?=robots
+BUILD_DIR?=./build
+POGO_SDK?=../../pogobot-sdk
+POGOSIM_INCLUDE_DIR?=../../pogosim/src/
+POGOSIM_SRC_DIR?=$(POGOSIM_INCLUDE_DIR)/pogosim/
+POGOBIN_CFLAGS = -flto -ffunction-sections -fdata-sections -finline-small-functions -finline-functions-called-once -fexcess-precision=standard -fsingle-precision-constant # -ffast-math #-fno-math-errno -fno-trapping-math 
+POGOBIN_LDFLAGS = -flto -Wl,--gc-sections -fexcess-precision=standard -fsingle-precision-constant 
 POGOUTILS_INCLUDE_DIR=../../src
 
 POGOSIM_SRC_DIR=$(POGOSIM_INCLUDE_DIR)/pogosim
@@ -32,32 +52,27 @@ endif
 
 TTY?=/dev/ttyUSB0
 
-#SRCS=$(wildcard *.c) $(wildcard $(POGOSIM_INCLUDE_DIR)/*.c)
-#SRCS := $(filter-out %/SDL*.c, $(wildcard *.c) $(wildcard $(POGOSIM_INCLUDE_DIR)/*.c))
 SRCS := $(filter-out SDL_FontCache.c, $(notdir $(wildcard *.c)) $(notdir $(wildcard $(POGOSIM_SRC_DIR)/*.c)) $(notdir $(wildcard $(POGOUTILS_SRC_DIR)/*.c)))
 OBJECTS=$(SRCS:.c=.o)
-#OBJECTS_BUILD = $(addprefix $(BUILD_DIR)/, $(OBJECTS))
-#OBJECTS_BUILD = $(patsubst %.c,build/bin/%.o,$(SRCS))
 OBJECTS_BUILD = $(patsubst %.c,build/bin/%.o,$(notdir $(SRCS)))
 DEP_FILES=$(patsubst %.c,build/bin/%.d,$(notdir $(SRCS)))
-
 
 ##### Compiler settings for the simulator #####
 SIM_CC = cc
 SIM_CXX = c++
-SIM_CFLAGS = -Wall -MMD -MP -O2 -std=c11
-SIM_CXXFLAGS = -Wall -MMD -MP -O2 -std=c++20 `pkg-config --cflags spdlog` -pthread
-SIM_LDFLAGS = -Wl,--whole-archive -lpogosim -lpogo-utils -Wl,--no-whole-archive -lboost_system -lyaml-cpp `pkg-config --libs spdlog` -lSDL2 -lSDL2_gfx -lSDL2_ttf -lbox2d -lstdc++ -lfmt -lm -larrow 
+SIM_CFLAGS = -Wall -MMD -MP -O2 -std=c11 -I$(POGOSIM_INCLUDE_DIR) $(SIM_INCLUDES_EXT)
+SIM_CXXFLAGS = -Wall -MMD -MP -O2 -std=c++20 $(shell pkg-config --cflags spdlog) -pthread -I$(POGOSIM_INCLUDE_DIR) $(SIM_INCLUDES_EXT)
+SIM_LDFLAGS = $(SIM_LD_FLAGS_BOX2D)  $(SIM_LD_FLAGS_POGOSIM) -lyaml-cpp \
+              $(shell pkg-config --libs spdlog) \
+              -lSDL2 -lSDL2_gfx -lSDL2_ttf -lbox2d $(STDCPP_LIB) -lfmt -lm -larrow $(SIM_LD_EXT)
+
 SIM_TARGET = $(MAKEFILE_DIR)
 
 SIM_SRCS_CXX = $(wildcard *.cpp)
 SIM_SRCS_C = $(wildcard *.c)
-#SIM_OBJECTS_CXX = $(SIM_SRCS_CXX:.cpp=.o)
-#SIM_OBJECTS_C = $(SIM_SRCS_C:.c=.o)
 SIM_OBJECTS_CXX = $(patsubst %.cpp,build/sim/%.o,$(SIM_SRCS_CXX))
 SIM_OBJECTS_C = $(patsubst %.c,build/sim/%.o,$(SIM_SRCS_C))
 SIM_OBJECTS = $(SIM_OBJECTS_CXX) $(SIM_OBJECTS_C)
-
 
 all: directories sim bin
 
@@ -67,18 +82,16 @@ $(BUILD_DIR)/bin $(BUILD_DIR)/sim:
 
 ##### Rules for the simulator #####
 
-#%.o: %.cpp
 $(BUILD_DIR)/sim/%.o: %.cpp | $(BUILD_DIR)/sim
 	$(SIM_CXX) $(SIM_CXXFLAGS) -c $< -o $@
 
-#%.o: %.c
 $(BUILD_DIR)/sim/%.o: %.c | $(BUILD_DIR)/sim
 	$(SIM_CC) $(SIM_CFLAGS) -c $< -o $@
 
 sim: directories $(SIM_TARGET)
 
 $(SIM_TARGET): $(SIM_OBJECTS)
-	$(SIM_CXX) $(SIM_CXXFLAGS) -o $@ $(SIM_OBJECTS) $(SIM_LDFLAGS) #-Wl,--wrap=main
+	$(SIM_CXX) $(SIM_CXXFLAGS) -o $@ $(SIM_OBJECTS) $(SIM_LDFLAGS)
 	cp $(SIM_TARGET) $(BUILD_DIR)/sim/$(SIM_TARGET)
 
 ##### Rules for the Pogobot binary #####
@@ -95,7 +108,7 @@ $(BUILD_DIR)/bin/%.bin: $(BUILD_DIR)/bin/%.elf
 	chmod -x $@
 
 $(BUILD_DIR)/bin/firmware.elf: $(OBJECTS_BUILD)
-	$(CC) $(LDFLAGS) -fexcess-precision=standard -fsingle-precision-constant \
+	$(CC) $(LDFLAGS) $(POGOBIN_LDFLAGS) \
 		-T $(POGO_SDK_TOOLS)/linker.ld \
 		-N -o $@ \
 		$(OBJECTS_BUILD) \
@@ -106,10 +119,10 @@ $(BUILD_DIR)/bin/firmware.elf: $(OBJECTS_BUILD)
 
 
 $(BUILD_DIR)/bin/%.o: %.c | $(BUILD_DIR)/bin
-	$(compile) -DREAL_ROBOT -fexcess-precision=standard -fsingle-precision-constant
+	$(compile) $(POGOBIN_CFLAGS) -DREAL_ROBOT -DREAL_ROBOT -DROBOT_CATEGORY=$(ROBOT_CATEGORY)
 
 $(BUILD_DIR)/bin/%.o: $(POGOSIM_SRC_DIR)/%.c | $(BUILD_DIR)/bin
-	$(compile) -DREAL_ROBOT -fexcess-precision=standard -fsingle-precision-constant
+	$(compile) $(POGOBIN_CFLAGS) -DREAL_ROBOT -DROBOT_CATEGORY=$(ROBOT_CATEGORY)
 
 $(BUILD_DIR)/bin/%.o: $(POGOUTILS_SRC_DIR)/%.c |  $(BUILD_DIR)/bin
 	$(compile) -DREAL_ROBOT -fexcess-precision=standard -fsingle-precision-constant
