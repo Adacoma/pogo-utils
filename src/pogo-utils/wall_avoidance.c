@@ -73,8 +73,8 @@ void wall_avoidance_init_default(
     wall_avoidance_config_t default_config = {
         .wall_memory_ms = 300,
         .turn_duration_ms = 300,
-        .forward_commit_ms = 1000,
-        .forward_speed_ratio = 1.0f
+        .forward_commit_ms = 300,
+        .forward_speed_ratio = 0.2f
     };
     wall_avoidance_init(state, &default_config, motors);
 }
