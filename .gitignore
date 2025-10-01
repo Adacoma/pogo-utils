@@ -62,6 +62,7 @@ examples/*/build/
 
 # Examples binaries
 examples/fixp/fixp
+examples/wall_avoidance/wall_avoidance
 
 # Generated figures
 *.pdf
