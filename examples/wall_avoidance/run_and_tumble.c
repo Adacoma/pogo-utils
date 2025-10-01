@@ -105,7 +105,7 @@ void user_init(void) {
 void user_step(void) {
     uint32_t now = current_time_milliseconds();
     
-    // Single line: wall avoidance takes control if needed (with LED updates)
+    // Wall avoidance takes control if needed (with LED updates)
     if (wall_avoidance_step(&mydata->wall_avoidance, true)) {
         return;  // Wall avoidance is handling everything
     }

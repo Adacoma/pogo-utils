@@ -196,7 +196,7 @@ void wall_avoidance_execute(
             pogobot_motor_set(motorR, motorHalf);
             pogobot_motor_dir_set(motorL, (state->motors.dir_left + 1) % 2);
             pogobot_motor_dir_set(motorR, state->motors.dir_right);
-            pogobot_led_setColor(100, 100, 255); // Blue: turning left
+            //pogobot_led_setColor(100, 100, 255); // Blue: turning left
             break;
             
         case WA_ACTION_TURN_RIGHT:
@@ -204,7 +204,7 @@ void wall_avoidance_execute(
             pogobot_motor_set(motorR, motorHalf);
             pogobot_motor_dir_set(motorL, state->motors.dir_left);
             pogobot_motor_dir_set(motorR, (state->motors.dir_right + 1) % 2);
-            pogobot_led_setColor(255, 100, 100); // Red: turning right
+            //pogobot_led_setColor(255, 100, 100); // Red: turning right
             break;
             
         case WA_ACTION_FORWARD_COMMIT:
@@ -213,7 +213,7 @@ void wall_avoidance_execute(
             pogobot_motor_set(motorR, state->motors.motor_right);
             pogobot_motor_dir_set(motorL, state->motors.dir_left);
             pogobot_motor_dir_set(motorR, state->motors.dir_right);
-            pogobot_led_setColor(0, 100, 0); // Dim green: forward
+            //pogobot_led_setColor(0, 100, 0); // Dim green: forward
             break;
             
         case WA_ACTION_NONE:
