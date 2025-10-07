@@ -22,17 +22,6 @@ typedef enum {
     WALL_MIN_TURN = 2 
 } wall_chirality_t;
 
-/**
- * @file wall_avoidance.h
- * @brief Wall avoidance library for Pogobot swarm robots
- * 
- * This library provides a reactive wall avoidance behavior that can be integrated
- * into any robot control program. Robots detect "wall" messages via IR communication
- * and reactively turn away from detected obstacles.
- * 
- * @author Your Name
- * @date 2025
- */
 
 /* -------------------- Configuration Parameters -------------------- */
 
