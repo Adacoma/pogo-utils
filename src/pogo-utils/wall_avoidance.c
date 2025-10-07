@@ -40,6 +40,36 @@ static inline void recompute_forward_speed(wall_avoidance_state_t* state) {
 }
 
 /**
+ * @brief Decide turn direction based on policy and active faces.
+ * @return +1 for right (CW), -1 for left (CCW)
+ */
+static int8_t decide_turn_dir(const wall_avoidance_state_t* state, bool /*front*/, bool right, bool /*back*/, bool left) {
+    switch (state->policy) {
+        case WALL_CW: return +1;
+        case WALL_CCW: return -1;
+        case WALL_RANDOM: {
+            return (rand() & 1) ? +1 : -1;
+        }
+        case WALL_MIN_TURN: {
+            // Prefer turning away from the side that is blocked.
+            if (right && !left) return -1; // turn left
+            if (left && !right) return +1; // turn right
+            // If both sides are blocked or only front is blocked, tie-break:
+            // compare recency: turn away from the most recently seen side if available
+            uint32_t t_right = state->last_wall_seen_ms[1];
+            uint32_t t_left  = state->last_wall_seen_ms[3];
+            if (t_right != t_left) {
+                return (t_right > t_left) ? -1 : +1;
+            }
+            // fallback: alternate to avoid bias
+            int8_t prev = state->last_turn_dir;
+            return (prev >= 0) ? -1 : +1;
+        }
+        default: return +1;
+    }
+}
+
+/**
  * @brief Clamp float value to [0.0, 1.0] range
  * @param value Input value
  * @return Clamped value
@@ -64,6 +94,10 @@ void wall_avoidance_init(
     recompute_forward_speed(state);
     state->current_action = WA_ACTION_FORWARD;
     state->enabled = true;
+    state->policy = WALL_CW;
+    state->last_turn_dir = 0;
+    state->current_chirality = 0;
+
 }
 
 void wall_avoidance_init_default(
@@ -77,6 +111,10 @@ void wall_avoidance_init_default(
         .forward_speed_ratio = 0.2f
     };
     wall_avoidance_init(state, &default_config, motors);
+    state->policy = WALL_CW;
+    state->last_turn_dir = 0;
+    state->current_chirality = 0;
+
 }
 
 bool wall_avoidance_process_message(
@@ -144,8 +182,7 @@ wall_avoidance_action_t wall_avoidance_update(
     // If in committed forward, keep going but react to front walls
     if (state->current_action == WA_ACTION_FORWARD_COMMIT && 
         tnow < state->action_until_ms) {
-        if (front) {
-            state->current_action = (rand() & 1) ? WA_ACTION_TURN_LEFT : WA_ACTION_TURN_RIGHT;
+        if (front) { int8_t d = decide_turn_dir(state, front, right, back, left); state->current_action = (d > 0) ? WA_ACTION_TURN_RIGHT : WA_ACTION_TURN_LEFT;
             state->action_until_ms = tnow + state->config.turn_duration_ms;
         }
         return state->current_action;
@@ -163,24 +200,32 @@ wall_avoidance_action_t wall_avoidance_update(
     // Normal reactive logic
     if (front) {
         if (left && !right) {
-            state->current_action = WA_ACTION_TURN_RIGHT;
+            state->current_action = WA_ACTION_TURN_RIGHT; state->last_turn_dir = +1;
         } else if (right && !left) {
-            state->current_action = WA_ACTION_TURN_LEFT;
+            state->current_action = WA_ACTION_TURN_LEFT; state->last_turn_dir = -1;
         } else {
             state->current_action = (rand() & 1) ? WA_ACTION_TURN_LEFT : WA_ACTION_TURN_RIGHT;
         }
         state->action_until_ms = tnow + state->config.turn_duration_ms;
     }
     else if (left && !right) {
-        state->current_action = WA_ACTION_TURN_RIGHT;
+        int8_t d = (state->policy == WALL_CCW) ? -1 : (state->policy == WALL_CW) ? +1 : decide_turn_dir(state, front, right, back, left);
+        state->current_action = (d > 0) ? WA_ACTION_TURN_RIGHT : WA_ACTION_TURN_LEFT;
         state->action_until_ms = tnow + state->config.turn_duration_ms;
     }
     else if (right && !left) {
-        state->current_action = WA_ACTION_TURN_LEFT;
+        int8_t d = (state->policy == WALL_CCW) ? -1 : (state->policy == WALL_CW) ? +1 : decide_turn_dir(state, front, right, back, left);
+        state->current_action = (d > 0) ? WA_ACTION_TURN_RIGHT : WA_ACTION_TURN_LEFT;
         state->action_until_ms = tnow + state->config.turn_duration_ms;
     }
     else {
-        state->current_action = WA_ACTION_FORWARD;
+        if (front || right || left || back) {
+            int8_t d = decide_turn_dir(state, front, right, back, left);
+            state->current_action = (d > 0) ? WA_ACTION_TURN_RIGHT : WA_ACTION_TURN_LEFT;
+            state->action_until_ms = tnow + state->config.turn_duration_ms;
+        } else {
+            state->current_action = WA_ACTION_FORWARD;
+        }
     }
     
     return state->current_action;
@@ -269,6 +314,16 @@ void wall_avoidance_set_enabled(
 bool wall_avoidance_is_enabled(const wall_avoidance_state_t* state) {
     return state->enabled;
 }
+
+
+void wall_avoidance_set_policy(wall_avoidance_t* wa, wall_chirality_t policy, uint32_t memory_ms) {
+    if (!wa) return;
+    wa->policy = policy;
+    if (memory_ms > 0) {
+        wa->config.wall_memory_ms = memory_ms;
+    }
+}
+
 
 void wall_avoidance_set_forward_speed(
     wall_avoidance_state_t* state,

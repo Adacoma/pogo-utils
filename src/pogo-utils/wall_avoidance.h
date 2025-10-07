@@ -5,6 +5,23 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* -------------------- Wall Avoidance Policy -------------------- */
+/**
+ * @brief Turning policy for wall avoidance maneuvers.
+ * 
+ * WALL_CW: always turn right (clockwise).
+ * WALL_CCW: always turn left (counter-clockwise).
+ * WALL_RANDOM: randomly pick left or right at each new avoidance maneuver.
+ * WALL_MIN_TURN: choose the direction that minimizes turning based on which sides are blocked;
+ *                tie-breakers alternate to avoid bias.
+ */
+typedef enum { 
+    WALL_CW = +1, 
+    WALL_CCW = -1, 
+    WALL_RANDOM = 0, 
+    WALL_MIN_TURN = 2 
+} wall_chirality_t;
+
 /**
  * @file wall_avoidance.h
  * @brief Wall avoidance library for Pogobot swarm robots
@@ -77,8 +94,23 @@ typedef struct {
     uint32_t action_until_ms;            /**< Timestamp when current action should end */
     uint16_t forward_speed;              /**< Computed forward speed (derived from config) */
     bool enabled;                        /**< Enable/disable wall avoidance behavior */
-} wall_avoidance_state_t;
 
+    wall_chirality_t policy;            /**< Turning policy (chirality) for avoidance */ 
+    int8_t last_turn_dir;               /**< Last chosen turn direction: +1=right, -1=left, 0=none */ 
+    int8_t current_chirality;           /**< Current maneuver chirality when RANDOM policy is used */ 
+    } wall_avoidance_state_t;
+
+
+/** Alias for convenience */
+typedef wall_avoidance_state_t wall_avoidance_t;
+
+/**
+ * @brief Set the wall avoidance policy (chirality) and memory duration.
+ * @param wa Pointer to wall avoidance state
+ * @param policy One of WALL_CW, WALL_CCW, WALL_RANDOM, WALL_MIN_TURN
+ * @param memory_ms Wall detection memory in milliseconds (use 0 to keep current)
+ */
+void wall_avoidance_set_policy(wall_avoidance_t* wa, wall_chirality_t policy, uint32_t memory_ms);
 /* -------------------- Core API Functions -------------------- */
 
 /**

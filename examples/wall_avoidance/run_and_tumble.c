@@ -82,6 +82,8 @@ void user_init(void) {
         .dir_right = mydata->motor_dir_right
     };
     wall_avoidance_init_default(&mydata->wall_avoidance, &motors);
+    // Wall avoidance policy
+    wall_avoidance_set_policy(&mydata->wall_avoidance, WALL_MIN_TURN, 0);
     
     // Example: Start at half speed
     wall_avoidance_set_forward_speed(&mydata->wall_avoidance, 0.5f);
