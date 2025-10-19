@@ -8,7 +8,7 @@ arena_file: arenas/disk.csv
 #arena_file: arenas/annulus.csv
 #arena_file: arenas/arena8.csv
 #arena_file: arenas/star.csv
-arena_surface: 1.0e6    # In mm²
+arena_surface: 2.0e6    # In mm²
 
 delete_old_files: true
 enable_data_logging: true
@@ -61,8 +61,9 @@ GUI_speed_up: 1.0         # How much the visualisation in the GUI should be sped
 #       As such, if the distance is enough, the robots will only have max 4 neighbors corresponding to the 4 directions top, left, bottom, right.
 #       The "formation_cluster_at_center" parameter (default=true) specifies whether (true) all robots should put as close as possible to the center of the grid (i.e. center of the arena); or (false) if they should just be placed randomly in the grid.
 #   - aligned_chessboard: similar to formation "chessboard", but all robots have a pi/2 direction.
+initial_formation: disk
 #initial_formation: power_lloyd
-initial_formation: random
+#initial_formation: random
 
 # In the chessboard formations, the euclidean distance between two connected points of the grid.
 chessboard_distance_between_neighbors: 110
