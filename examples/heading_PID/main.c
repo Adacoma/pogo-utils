@@ -49,16 +49,16 @@ static void apply_diff_drive_discrete(double f, double u) {
     // Forward with differential turns
     if (u > tol) {
         // veer right
-        pogobot_motor_set(motorL, motorFull);
+        pogobot_motor_set(motorL, motorFull*f);
         pogobot_motor_set(motorR, motorStop);
     } else if (u < -tol) {
         // veer left
         pogobot_motor_set(motorL, motorStop);
-        pogobot_motor_set(motorR, motorFull);
+        pogobot_motor_set(motorR, motorFull*f);
     } else {
         // straight
-        pogobot_motor_set(motorL, motorFull);
-        pogobot_motor_set(motorR, motorFull);
+        pogobot_motor_set(motorL, motorFull*f);
+        pogobot_motor_set(motorR, motorFull*f);
     }
 }
 
@@ -85,7 +85,7 @@ static void user_init(void) {
     mydata->target_heading_rad = 0.0;
     heading_pid_set_target(&mydata->pid, mydata->target_heading_rad);
 
-    mydata->cruise_speed = 1.0;  // normalized; example uses FULL/STOP mapping anyway
+    mydata->cruise_speed = 0.7;  // normalized; example uses FULL/STOP mapping anyway
 
     heading_pid_enable(&mydata->pid, true);
     //heading_pid_enable(&mydata->pid, false);
