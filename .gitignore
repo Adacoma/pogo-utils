@@ -66,6 +66,7 @@ examples/wall_avoidance/wall_avoidance
 examples/heading_detection/heading_detection
 examples/heading_PID/heading_PID
 examples/wall_avoidance_heading/wall_avoidance_heading
+examples/kinematics/kinematics
 
 # Generated figures
 *.pdf
