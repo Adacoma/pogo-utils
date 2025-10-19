@@ -23,7 +23,7 @@ typedef struct {
     uint8_t tumble_direction;
     uint8_t motor_dir_left;
     uint8_t motor_dir_right;
-    
+
     // Wall avoidance
     wall_avoidance_state_t wall_avoidance;
 } USERDATA;
@@ -46,7 +46,7 @@ void process_message(message_t* msg) {
     if (wall_avoidance_process_message(&mydata->wall_avoidance, msg)) {
         return;
     }
-    
+
     // Not a wall message, handle other message types here
     // ...
 }
@@ -61,19 +61,19 @@ void process_message(message_t* msg) {
  */
 void user_init(void) {
     srand(pogobot_helper_getRandSeed());
-    
+
     main_loop_hz = 60;
     max_nb_processed_msg_per_tick = 100;
     msg_rx_fn = process_message;
     msg_tx_fn = NULL;
     error_codes_led_idx = 3;
-    
+
     // Get calibration
     uint8_t dir_mem[3];
     pogobot_motor_dir_mem_get(dir_mem);
     mydata->motor_dir_left = dir_mem[1];
     mydata->motor_dir_right = dir_mem[0];
-    
+
     // Initialize wall avoidance (enabled by default)
     motor_calibration_t motors = {
         .motor_left = motorFull,
@@ -83,11 +83,12 @@ void user_init(void) {
     };
     wall_avoidance_init_default(&mydata->wall_avoidance, &motors);
     // Wall avoidance policy
+    //wall_avoidance_set_policy(&mydata->wall_avoidance, WALL_MIN_TURN, 0);
     wall_avoidance_set_policy(&mydata->wall_avoidance, WALL_MIN_TURN, 0);
-    
+
     // Example: Start at half speed
     wall_avoidance_set_forward_speed(&mydata->wall_avoidance, 0.5f);
-    
+
     // Initialize run-and-tumble
     mydata->phase = PHASE_TUMBLE;
     mydata->phase_start_time = current_time_milliseconds();
@@ -106,25 +107,25 @@ void user_init(void) {
  */
 void user_step(void) {
     uint32_t now = current_time_milliseconds();
-    
+
     // Wall avoidance takes control if needed (with LED updates)
     if (wall_avoidance_step(&mydata->wall_avoidance, true)) {
         return;  // Wall avoidance is handling everything
     }
-    
-    // Example: Increase speed after 5 seconds
-    if (now > 5000 && wall_avoidance_get_forward_speed(&mydata->wall_avoidance) < 1.0f) {
+
+    // Example: Increase speed after 50 seconds
+    if (now > 50000 && wall_avoidance_get_forward_speed(&mydata->wall_avoidance) < 1.0f) {
         wall_avoidance_set_forward_speed(&mydata->wall_avoidance, 1.0f);
     }
-    
-    // Example: Disable wall avoidance after 10 seconds
-    if (now > 10000 && wall_avoidance_is_enabled(&mydata->wall_avoidance)) {
+
+    // Example: Disable wall avoidance after 100 seconds
+    if (now > 100000 && wall_avoidance_is_enabled(&mydata->wall_avoidance)) {
         wall_avoidance_set_enabled(&mydata->wall_avoidance, false);
         if (pogobot_helper_getid() == 0) {
             printf("Wall avoidance disabled\n");
         }
     }
-    
+
     // Normal run-and-tumble behavior
     if (now - mydata->phase_start_time >= mydata->phase_duration) {
         if (mydata->phase == PHASE_RUN) {
@@ -137,7 +138,7 @@ void user_step(void) {
         }
         mydata->phase_start_time = now;
     }
-    
+
     if (mydata->phase == PHASE_RUN) {
         pogobot_led_setColor(0, 255, 0);
         pogobot_motor_set(motorL, motorFull);
