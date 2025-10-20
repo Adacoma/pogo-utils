@@ -76,7 +76,6 @@ void user_step(void) {
     int16_t r2 = pogobot_photosensors_read(2);
     uint32_t now = current_time_milliseconds();
     if (now - mydata->last_print > 5000) {
-        //printf("[example] norm A/B/C = %.3f  %.3f  %.3f\n", n0, n1, n2);
         printf("[problem] A/B/C = %d  %d  %d\n", r0, r1, r2);
         mydata->last_print = now;
     }
@@ -105,9 +104,18 @@ void user_step(void) {
     int16_t r1 = pogobot_photosensors_read(1);
     int16_t r2 = pogobot_photosensors_read(2);
 
-    float n0 = photostart_normalize(&mydata->ps, 0, r0);
-    float n1 = photostart_normalize(&mydata->ps, 1, r1);
-    float n2 = photostart_normalize(&mydata->ps, 2, r2);
+    float n0;
+    float n1;
+    float n2;
+    if (false) { // Normalization without EWMA
+        n0 = photostart_normalize(&mydata->ps, 0, r0);
+        n1 = photostart_normalize(&mydata->ps, 1, r1);
+        n2 = photostart_normalize(&mydata->ps, 2, r2);
+    } else { // Normalization *with* EWMA
+        n0 = photostart_normalize_ewma(&mydata->ps, 0, r0);
+        n1 = photostart_normalize_ewma(&mydata->ps, 1, r1);
+        n2 = photostart_normalize_ewma(&mydata->ps, 2, r2);
+    }
 
     uint32_t now = current_time_milliseconds();
     if (now - mydata->last_print > 5000) {

@@ -17,6 +17,9 @@ typedef struct {
     double              measured_heading_rad;
     double              target_heading_rad;
     double              cruise_speed;     // normalized [0..1] base forward command
+
+    // Optional Photostart + photosensors calibration
+    photostart_t ps;
 } USERDATA;
 
 DECLARE_USERDATA(USERDATA);
@@ -76,6 +79,16 @@ static void user_init(void) {
     heading_detection_init(&mydata->hd);
     heading_detection_set_chirality(&mydata->hd, HEADING_CCW);
 
+    // Photostart: keep defaults or customize
+    photostart_init(&mydata->ps);
+    photostart_set_ewma_alpha(&mydata->ps, 0.30);
+    // Example of customizing:
+    // photostart_params_t p = { .min_dark_ms=1200, .settle_bright_ms=700, .jump_ratio=2.2f, .jump_delta_abs=120 };
+    // photostart_init_with_params(&mydata->ps, &p);
+
+    // Register photostart, if you want to use calibrated photosensors for heading detection
+    heading_detection_set_photostart(&mydata->hd, &mydata->ps); // or NULL to disable
+
     // PID init + link to heading detection
     heading_pid_init(&mydata->pid, &mydata->hd);
     heading_pid_set_gains(&mydata->pid, 2.0, 0.0, 0.25);     // Kp, Ki, Kd
@@ -92,6 +105,16 @@ static void user_init(void) {
 }
 
 static void user_step(void) {
+    // Optional: if you use photostart, always call photostart_step() first
+    bool ready = photostart_step(&mydata->ps);
+    if (!ready) {
+        // Waiting for the flash; keep still
+        pogobot_led_setColors(20, 0, 20, 0); // Purple hint during waiting
+        pogobot_motor_set(motorL, motorStop);
+        pogobot_motor_set(motorR, motorStop);
+        return;
+    }
+
     // Option A: use live sensors through the linked heading_detection
     double u = heading_pid_update(&mydata->pid);
 
@@ -103,11 +126,11 @@ static void user_step(void) {
     double e = heading_pid_get_error(&mydata->pid);
     double ae = fabs(e);
     if (ae < 10.0 * M_PI / 180.0) {
-        pogobot_led_setColors(0, 0, 255, 0);
+        pogobot_led_setColors(0, 0, 25, 0);
     } else if (ae < 25.0 * M_PI / 180.0) {
-        pogobot_led_setColors(128, 64, 0, 0);
+        pogobot_led_setColors(12, 6, 0, 0);
     } else {
-        pogobot_led_setColors(255, 0, 0, 0);
+        pogobot_led_setColors(25, 0, 0, 0);
     }
 
     // Apply a very simple discrete differential drive using sign of 'u'

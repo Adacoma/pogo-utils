@@ -69,7 +69,7 @@ void user_init(void) {
     // photostart_init_with_params(&mydata->ps, &p);
 
     // Register photostart, if you want to use calibrated photosensors for heading detection
-    //heading_detection_set_photostart(&mydata->heading_detection, &mydata->ps); // or NULL to disable
+    heading_detection_set_photostart(&mydata->heading_detection, &mydata->ps); // or NULL to disable
 
     // Initialize run-and-tumble
     mydata->phase = PHASE_TUMBLE;

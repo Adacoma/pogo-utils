@@ -87,9 +87,12 @@ double heading_detection_estimate_from_samples(const heading_detection_t *hd,
     if (!hd) return 0.0;
 
     // If a photostart is attached, normalize the provided raw samples assuming A/B/C map to indices 0/1/2.
-    double A = (hd->ps) ? (double)photostart_normalize(hd->ps, 0, pA_raw) : (double)pA_raw;
-    double B = (hd->ps) ? (double)photostart_normalize(hd->ps, 1, pB_raw) : (double)pB_raw;
-    double C = (hd->ps) ? (double)photostart_normalize(hd->ps, 2, pC_raw) : (double)pC_raw;
+    //double A = (hd->ps) ? (double)photostart_normalize_ewma(hd->ps, 0, pA_raw) : (double)pA_raw;
+    //double B = (hd->ps) ? (double)photostart_normalize_ewma(hd->ps, 1, pB_raw) : (double)pB_raw;
+    //double C = (hd->ps) ? (double)photostart_normalize_ewma(hd->ps, 2, pC_raw) : (double)pC_raw;
+    double A = (hd->ps) ? (double)photostart_normalize_ewma(hd->ps, 0, pA_raw) * 100.0 : (double)pA_raw;
+    double B = (hd->ps) ? (double)photostart_normalize_ewma(hd->ps, 1, pB_raw) * 100.0 : (double)pB_raw;
+    double C = (hd->ps) ? (double)photostart_normalize_ewma(hd->ps, 2, pC_raw) * 100.0 : (double)pC_raw;
 
     return estimate_heading_math(hd->alpha_rad, hd->robot_radius_m, hd->chirality, A, B, C);
 }
@@ -104,9 +107,12 @@ double heading_detection_estimate(const heading_detection_t *hd) {
     double A, B, C;
     if (hd->ps) {
         // Use caller-managed photostart normalization:
-        A = (double)photostart_normalize(hd->ps, 0, pA_raw);
-        B = (double)photostart_normalize(hd->ps, 1, pB_raw);
-        C = (double)photostart_normalize(hd->ps, 2, pC_raw);
+        //A = (double)photostart_normalize_ewma(hd->ps, 0, pA_raw);
+        //B = (double)photostart_normalize_ewma(hd->ps, 1, pB_raw);
+        //C = (double)photostart_normalize_ewma(hd->ps, 2, pC_raw);
+        A = (double)photostart_normalize_ewma(hd->ps, 0, pA_raw) * 100.0;
+        B = (double)photostart_normalize_ewma(hd->ps, 1, pB_raw) * 100.0;
+        C = (double)photostart_normalize_ewma(hd->ps, 2, pC_raw) * 100.0;
     } else {
         // Raw readings:
         A = (double)pA_raw;

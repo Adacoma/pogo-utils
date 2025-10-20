@@ -55,6 +55,13 @@ void photostart_init_with_params(photostart_t *ps, const photostart_params_t *pa
 
     uint32_t now = current_time_milliseconds();
     ps_enter_state(ps, PS_DARK_TRACKING, now);
+
+    // EWMA defaults: alpha=0.25
+    for (int i = 0; i < PHOTOSTART_NSENS; ++i) {
+        ps->ewma_alpha[i] = 0.25f;
+        ps->ewma_y[i] = 0.0f;
+        ps->ewma_init[i] = false;
+    }
 }
 
 static uint16_t read_and_update_min(photostart_t *ps, int idx) {
@@ -186,4 +193,63 @@ void photostart_reset(photostart_t *ps) {
     if (!ps) return;
     photostart_init_with_params(ps, &ps->p);
 }
+
+void photostart_set_ewma_alpha(photostart_t *ps, float alpha) {
+    if (!ps) return;
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+    for (int i = 0; i < PHOTOSTART_NSENS; ++i) {
+        ps->ewma_alpha[i] = alpha;
+        ps->ewma_init[i] = false; // re-init on next call
+    }
+}
+
+void photostart_set_ewma_alpha_per_sensor(photostart_t *ps, const float alpha[PHOTOSTART_NSENS]) {
+    if (!ps || !alpha) return;
+    for (int i = 0; i < PHOTOSTART_NSENS; ++i) {
+        float a = alpha[i];
+        if (a < 0.0f) a = 0.0f;
+        if (a > 1.0f) a = 1.0f;
+        ps->ewma_alpha[i] = a;
+        ps->ewma_init[i] = false;
+    }
+}
+
+void photostart_reset_ewma(photostart_t *ps) {
+    if (!ps) return;
+    for (int i = 0; i < PHOTOSTART_NSENS; ++i) {
+        ps->ewma_y[i] = 0.0f;
+        ps->ewma_init[i] = false;
+    }
+}
+
+float photostart_normalize_ewma(photostart_t *ps, int idx, int16_t raw) {
+    if (!ps || idx < 0 || idx >= PHOTOSTART_NSENS) return 0.0f;
+
+    // First, compute plain normalized value using calibrated min/max
+    float x = photostart_normalize(ps, idx, raw);
+
+    float a = ps->ewma_alpha[idx];
+    if (a <= 0.0f) {
+        // EWMA disabled for this sensor → return plain normalized
+        return x;
+    }
+
+    // Initialize on first use to avoid startup bias
+    if (!ps->ewma_init[idx]) {
+        ps->ewma_y[idx] = x;
+        ps->ewma_init[idx] = true;
+        return ps->ewma_y[idx];
+    }
+
+    // EWMA: y_t = (1 - a) y_{t-1} + a x_t
+    ps->ewma_y[idx] = (1.0f - a) * ps->ewma_y[idx] + a * x;
+
+//    // small numeric clamp
+//    if (ps->ewma_y[idx] < 0.0f) ps->ewma_y[idx] = 0.0f;
+//    if (ps->ewma_y[idx] > 1.0f) ps->ewma_y[idx] = 1.0f;
+
+    return ps->ewma_y[idx];
+}
+
 

@@ -8,7 +8,7 @@ arena_file: arenas/disk.csv
 #arena_file: arenas/annulus.csv
 #arena_file: arenas/arena8.csv
 #arena_file: arenas/star.csv
-arena_surface: 2.0e6    # In mm²
+arena_surface: 1.0e6    # In mm²
 
 delete_old_files: true
 enable_data_logging: true
@@ -94,7 +94,7 @@ objects:
     # An object category containing the Pogobot robots
     robots:
         type: pogobot       # Category type pertaining to Pogobots
-        nb: 40             # Number of objects (Pogobots) in this category
+        nb: 100             # Number of objects (Pogobots) in this category
         geometry: disk                  # Pogobots are always disk-shaped
         radius: 26.5                    # In mm
 
@@ -108,11 +108,12 @@ objects:
         max_linear_speed: 100.0
         max_angular_speed: 2.0
         linear_noise_stddev: 0
-        angular_noise_stddev: 0
+        angular_noise_stddev: 5.0
+        angular_systematic_bias_domain: [-200, 200]
 
-#        photosensors_systematic_bias_domain: [-10, 100] # Systematic bias to apply to each 3 photosensor of each robot, to simulate real-robot biases.
-#                                                        #  Domain pair between -32767 and 32767.
-#        photosensors_noise_stddev: 0.0  # Stddev of a gaussian noise to apply to photosensor detected light levels.
+        photosensors_systematic_bias_domain: [-30, 30] # Systematic bias to apply to each 3 photosensor of each robot, to simulate real-robot biases.
+                                                        #  Domain pair between -32767 and 32767.
+        #photosensors_noise_stddev: 1.0  # Stddev of a gaussian noise to apply to photosensor detected light levels.
 
         # Communication propeties
         communication_radius: 80.0      # In mm, from each IR emitter. Pogobots typically have 4 IR emitters (front, left, back, right)
@@ -149,14 +150,14 @@ objects:
         body_width: 3000       # Width of the rectangle geometry, in mm
         body_height: 3000      # Height of the rectangle geometry, in mm
         value: 300          # Value of the light between 0 and 32767. Corresponds to the light level detected by the Pogobots (e.g. by the pogobot_photosensors_read function)
-        edge_value: 30      # Value of the light at the edge, in light_mode==gradient. Ignored if light_mode==static
+        edge_value: 40      # Value of the light at the edge, in light_mode==gradient. Ignored if light_mode==static
         plane_angle: 0.785398 # Angle orientating the planar gradient, in rad
         plane_half_span: 2000  # Half span of the planar gradient from ``value`` to ``edge_value``, in mm
-        photo_start_at: 1.0 # Whether to enable a photo start (values ≥ 0) and when (in seconds). 
+        photo_start_at: 2.0 # Whether to enable a photo start (values ≥ 0) and when (in seconds). 
                             # A photo start is a short period of time at the beginning of an experiment where the light is changed so that the robots know they should
                             # start their user program in a synchronous manner.
-        photo_start_duration: 1.0   # Duration of the photo start period, in seconds
-        photo_start_value: 80    # Light value during the photo start period (between 0 and 32767). Should be very different from the normal value of the light
+        photo_start_duration: 2.0   # Duration of the photo start period, in seconds
+        photo_start_value: 200    # Light value during the photo start period (between 0 and 32767). Should be very different from the normal value of the light
 
 ########### Parameters used to directly initialize variables from the C code of the robots ###########
 parameters:

@@ -67,6 +67,16 @@ typedef struct {
 
     // Latch
     bool done;                 /**< Latched to true when calibration finalized. */
+
+    /**
+     * @brief Optional EWMA smoothing state for normalized readings.
+     *
+     * Not used by detection nor by min/max tracking. Only used if you call the
+     * _ewma() API. Disabled by default (alpha <= 0).
+     */
+    float ewma_alpha[PHOTOSTART_NSENS];  /**< Smoothing factors in (0,1]; 0 = disabled. */
+    float ewma_y[PHOTOSTART_NSENS];      /**< Last EWMA outputs (initialized lazily). */
+    bool  ewma_init[PHOTOSTART_NSENS];   /**< Per-sensor EWMA init latch. */
 } photostart_t;
 
 /** @brief Initialize with defaults and reset the state machine to DARK_TRACKING. */
@@ -106,6 +116,38 @@ float photostart_normalize(const photostart_t *ps, int idx, int16_t raw);
 
 /** @brief Reset the module to DARK_TRACKING (allows re-arming in the field). */
 void photostart_reset(photostart_t *ps);
+
+/**
+ * @brief Set the same EWMA alpha for all sensors. Alpha in (0,1]; use 0 to disable.
+ *        Typical values: 0.15–0.35 (lower = smoother).
+ */
+void photostart_set_ewma_alpha(photostart_t *ps, float alpha);
+
+/**
+ * @brief Set per-sensor EWMA alpha. Each alpha in (0,1]; 0 to disable that sensor’s EWMA.
+ */
+void photostart_set_ewma_alpha_per_sensor(photostart_t *ps, const float alpha[PHOTOSTART_NSENS]);
+
+/**
+ * @brief Reset EWMA states (does not affect min/max nor detection state).
+ */
+void photostart_reset_ewma(photostart_t *ps);
+
+/**
+ * @brief Normalize + EWMA-smooth a raw reading to [0,1].
+ *
+ * Behavior:
+ *  - Uses recorded min/max. If range invalid or not done yet → returns 0.0f.
+ *  - If EWMA alpha for this sensor is 0 → returns plain normalized value.
+ *  - On first call (per sensor), EWMA is initialized to the current normalized value.
+ *
+ * @param ps  Photostart handle.
+ * @param idx Sensor index (0..PHOTOSTART_NSENS-1).
+ * @param raw New raw reading (int16).
+ * @return Smoothed normalized value in [0,1].
+ */
+float photostart_normalize_ewma(photostart_t *ps, int idx, int16_t raw);
+
 
 #ifdef __cplusplus
 }

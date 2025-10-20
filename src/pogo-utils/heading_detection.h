@@ -38,7 +38,7 @@ typedef struct {
     double alpha_rad;              ///< Half-angle between photosensors B/C and A (radians)
     double robot_radius_m;         ///< Robot radius (meters)
     heading_chirality_t chirality; ///< CW or CCW angle convention
-    photostart_t *ps;              ///< OPTIONAL: user-provided photostart (NULL = disable normalization)
+    photostart_t *ps;     ///< OPTIONAL: user-provided photostart (NULL = disable normalization)
 } heading_detection_t;
 
 /**
