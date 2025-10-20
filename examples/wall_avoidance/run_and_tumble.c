@@ -86,8 +86,7 @@ void user_init(void) {
     //wall_avoidance_set_policy(&mydata->wall_avoidance, WALL_MIN_TURN, 0);
     wall_avoidance_set_policy(&mydata->wall_avoidance, WALL_MIN_TURN, 0);
 
-    // Example: Start at half speed
-    wall_avoidance_set_forward_speed(&mydata->wall_avoidance, 0.5f);
+    wall_avoidance_set_forward_speed(&mydata->wall_avoidance, 1.0f);
 
     // Initialize run-and-tumble
     mydata->phase = PHASE_TUMBLE;
@@ -110,21 +109,22 @@ void user_step(void) {
 
     // Wall avoidance takes control if needed (with LED updates)
     if (wall_avoidance_step(&mydata->wall_avoidance, true)) {
+        pogobot_led_setColor(0, 0, 255);
         return;  // Wall avoidance is handling everything
     }
 
-    // Example: Increase speed after 50 seconds
-    if (now > 50000 && wall_avoidance_get_forward_speed(&mydata->wall_avoidance) < 1.0f) {
-        wall_avoidance_set_forward_speed(&mydata->wall_avoidance, 1.0f);
-    }
-
-    // Example: Disable wall avoidance after 100 seconds
-    if (now > 100000 && wall_avoidance_is_enabled(&mydata->wall_avoidance)) {
-        wall_avoidance_set_enabled(&mydata->wall_avoidance, false);
-        if (pogobot_helper_getid() == 0) {
-            printf("Wall avoidance disabled\n");
-        }
-    }
+//    // Example: Increase speed after 50 seconds
+//    if (now > 50000 && wall_avoidance_get_forward_speed(&mydata->wall_avoidance) < 1.0f) {
+//        wall_avoidance_set_forward_speed(&mydata->wall_avoidance, 1.0f);
+//    }
+//
+//    // Example: Disable wall avoidance after 100 seconds
+//    if (now > 100000 && wall_avoidance_is_enabled(&mydata->wall_avoidance)) {
+//        wall_avoidance_set_enabled(&mydata->wall_avoidance, false);
+//        if (pogobot_helper_getid() == 0) {
+//            printf("Wall avoidance disabled\n");
+//        }
+//    }
 
     // Normal run-and-tumble behavior
     if (now - mydata->phase_start_time >= mydata->phase_duration) {
