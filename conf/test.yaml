@@ -31,7 +31,7 @@ GUI: true
 # Time
 simulation_time: 500.0    # In s
 time_step: 0.01            # In s
-GUI_speed_up: 5.0         # How much the visualisation in the GUI should be sped up
+GUI_speed_up: 1.0         # How much the visualisation in the GUI should be sped up
 
 # The initial positions of the robot, set as a formation.
 # "initial_formation" can be:
@@ -110,9 +110,9 @@ objects:
         linear_noise_stddev: 0
         angular_noise_stddev: 0
 
-        photosensors_systematic_bias_domain: [-10, 100] # Systematic bias to apply to each 3 photosensor of each robot, to simulate real-robot biases.
-                                                        #  Domain pair between -32767 and 32767.
-        photosensors_noise_stddev: 0.0  # Stddev of a gaussian noise to apply to photosensor detected light levels.
+#        photosensors_systematic_bias_domain: [-10, 100] # Systematic bias to apply to each 3 photosensor of each robot, to simulate real-robot biases.
+#                                                        #  Domain pair between -32767 and 32767.
+#        photosensors_noise_stddev: 0.0  # Stddev of a gaussian noise to apply to photosensor detected light levels.
 
         # Communication propeties
         communication_radius: 80.0      # In mm, from each IR emitter. Pogobots typically have 4 IR emitters (front, left, back, right)
@@ -146,8 +146,8 @@ objects:
         geometry: rectangle   # Shape of the light. Can be 'disk', 'rectangle' or 'global'
         x: 0                # Center of the light spot, X coordinate, in mm
         y: 0                # Center of the light spot, Y coordinate, in mm
-        body_width: 4000       # Width of the rectangle geometry, in mm
-        body_height: 4000      # Height of the rectangle geometry, in mm
+        body_width: 3000       # Width of the rectangle geometry, in mm
+        body_height: 3000      # Height of the rectangle geometry, in mm
         value: 300          # Value of the light between 0 and 32767. Corresponds to the light level detected by the Pogobots (e.g. by the pogobot_photosensors_read function)
         edge_value: 30      # Value of the light at the edge, in light_mode==gradient. Ignored if light_mode==static
         plane_angle: 0.785398 # Angle orientating the planar gradient, in rad
@@ -156,7 +156,7 @@ objects:
                             # A photo start is a short period of time at the beginning of an experiment where the light is changed so that the robots know they should
                             # start their user program in a synchronous manner.
         photo_start_duration: 1.0   # Duration of the photo start period, in seconds
-        photo_start_value: 100    # Light value during the photo start period (between 0 and 32767). Should be very different from the normal value of the light
+        photo_start_value: 80    # Light value during the photo start period (between 0 and 32767). Should be very different from the normal value of the light
 
 ########### Parameters used to directly initialize variables from the C code of the robots ###########
 parameters:

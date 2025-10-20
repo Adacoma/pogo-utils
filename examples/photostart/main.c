@@ -22,6 +22,7 @@ typedef struct {
     // App
     ExampleMode mode;
     bool printed_once;
+    uint32_t last_print;
 } USERDATA;
 
 DECLARE_USERDATA(USERDATA);
@@ -53,6 +54,7 @@ void user_init(void) {
 
     mydata->mode = MODE_WAIT_FLASH;
     mydata->printed_once = false;
+    mydata->last_print = 0;
 
 #ifndef SIMULATOR
     printf("photostart example: init ok. version=%s\n", POGO_UTILS_VERSION_STR);
@@ -68,6 +70,17 @@ void user_step(void) {
         set_led_waiting();
         pogobot_motor_set(motorL, motorStop);
         pogobot_motor_set(motorR, motorStop);
+
+    int16_t r0 = pogobot_photosensors_read(0);
+    int16_t r1 = pogobot_photosensors_read(1);
+    int16_t r2 = pogobot_photosensors_read(2);
+    uint32_t now = current_time_milliseconds();
+    if (now - mydata->last_print > 5000) {
+        //printf("[example] norm A/B/C = %.3f  %.3f  %.3f\n", n0, n1, n2);
+        printf("[problem] A/B/C = %d  %d  %d\n", r0, r1, r2);
+        mydata->last_print = now;
+    }
+
         return;
     }
 
@@ -96,11 +109,10 @@ void user_step(void) {
     float n1 = photostart_normalize(&mydata->ps, 1, r1);
     float n2 = photostart_normalize(&mydata->ps, 2, r2);
 
-    static uint32_t last_print = 0;
     uint32_t now = current_time_milliseconds();
-    if (now - last_print > 5000) {
+    if (now - mydata->last_print > 5000) {
         printf("[example] norm A/B/C = %.3f  %.3f  %.3f\n", n0, n1, n2);
-        last_print = now;
+        mydata->last_print = now;
     }
 
     pogobot_motor_set(motorL, motorFull);

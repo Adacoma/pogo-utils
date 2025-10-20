@@ -1,4 +1,5 @@
 #include "heading_detection.h"
+#include "photostart.h"
 #include <math.h>
 #include <stddef.h> // for NULL
 
@@ -19,6 +20,7 @@ void heading_detection_init(heading_detection_t *hd) {
     hd->alpha_rad       = HEADING_DEFAULT_ALPHA_DEG * M_PI / 180.0;
     hd->robot_radius_m  = HEADING_DEFAULT_ROBOT_RADIUS;
     hd->chirality       = HEADING_CCW;
+    hd->ps              = NULL; // normalization disabled by default
 }
 
 void heading_detection_set_geometry(heading_detection_t *hd,
@@ -33,6 +35,11 @@ void heading_detection_set_chirality(heading_detection_t *hd,
                                      heading_chirality_t chirality) {
     if (!hd) return;
     hd->chirality = chirality;
+}
+
+void heading_detection_set_photostart(heading_detection_t *hd, photostart_t *ps) {
+    if (!hd) return;
+    hd->ps = ps; // caller retains ownership; NULL = disable normalization
 }
 
 // Core math, shared by both estimate functions
@@ -78,10 +85,13 @@ double heading_detection_estimate_from_samples(const heading_detection_t *hd,
                                                int16_t pB_raw,
                                                int16_t pC_raw) {
     if (!hd) return 0.0;
-    return estimate_heading_math(hd->alpha_rad,
-                                 hd->robot_radius_m,
-                                 hd->chirality,
-                                 pA_raw, pB_raw, pC_raw);
+
+    // If a photostart is attached, normalize the provided raw samples assuming A/B/C map to indices 0/1/2.
+    double A = (hd->ps) ? (double)photostart_normalize(hd->ps, 0, pA_raw) : (double)pA_raw;
+    double B = (hd->ps) ? (double)photostart_normalize(hd->ps, 1, pB_raw) : (double)pB_raw;
+    double C = (hd->ps) ? (double)photostart_normalize(hd->ps, 2, pC_raw) : (double)pC_raw;
+
+    return estimate_heading_math(hd->alpha_rad, hd->robot_radius_m, hd->chirality, A, B, C);
 }
 
 double heading_detection_estimate(const heading_detection_t *hd) {
@@ -91,10 +101,20 @@ double heading_detection_estimate(const heading_detection_t *hd) {
     const int16_t pB_raw = pogobot_photosensors_read(1);
     const int16_t pC_raw = pogobot_photosensors_read(2);
 
-    return estimate_heading_math(hd->alpha_rad,
-                                 hd->robot_radius_m,
-                                 hd->chirality,
-                                 pA_raw, pB_raw, pC_raw);
+    double A, B, C;
+    if (hd->ps) {
+        // Use caller-managed photostart normalization:
+        A = (double)photostart_normalize(hd->ps, 0, pA_raw);
+        B = (double)photostart_normalize(hd->ps, 1, pB_raw);
+        C = (double)photostart_normalize(hd->ps, 2, pC_raw);
+    } else {
+        // Raw readings:
+        A = (double)pA_raw;
+        B = (double)pB_raw;
+        C = (double)pC_raw;
+    }
+
+    return estimate_heading_math(hd->alpha_rad, hd->robot_radius_m, hd->chirality, A, B, C);
 }
 
 

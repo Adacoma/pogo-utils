@@ -21,7 +21,7 @@ static inline uint16_t clamp_u16(int v, int lo, int hi) {
 /* ===== Defaults =========================================================== */
 
 static const photostart_params_t PS_DEFAULTS = {
-    .min_dark_ms      = 500,
+    .min_dark_ms      = 300,
     .settle_bright_ms = 80,
     .jump_ratio       = 1.0f,
     .jump_delta_abs   = 40

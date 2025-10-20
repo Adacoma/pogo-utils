@@ -1,6 +1,7 @@
 #include "pogobase.h"
 #include "pogo-utils/heading_detection.h"
 #include "pogo-utils/version.h"
+#include "pogo-utils/photostart.h" // Optional, for photostart + photosensors calibration
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -26,6 +27,9 @@ typedef struct {
     // Heading detection variables
     heading_detection_t heading_detection;
     double current_heading_rad;
+
+    // Optional Photostart + photosensors calibration
+    photostart_t ps;
 } USERDATA;
 
 // Call this macro in the same file (.h or .c) as the declaration of USERDATA
@@ -58,6 +62,15 @@ void user_init(void) {
     heading_detection_init(&mydata->heading_detection);
     heading_detection_set_chirality(&mydata->heading_detection, HEADING_CW);
 
+    // Photostart: keep defaults or customize
+    photostart_init(&mydata->ps);
+    // Example of customizing:
+    // photostart_params_t p = { .min_dark_ms=1200, .settle_bright_ms=700, .jump_ratio=2.2f, .jump_delta_abs=120 };
+    // photostart_init_with_params(&mydata->ps, &p);
+
+    // Register photostart, if you want to use calibrated photosensors for heading detection
+    //heading_detection_set_photostart(&mydata->heading_detection, &mydata->ps); // or NULL to disable
+
     // Initialize run-and-tumble
     mydata->phase = PHASE_TUMBLE;
     mydata->phase_start_time = current_time_milliseconds();
@@ -75,6 +88,16 @@ void user_init(void) {
  * debugging output.
  */
 void user_step(void) {
+    // Optional: if you use photostart, always call photostart_step() first
+    bool ready = photostart_step(&mydata->ps);
+    if (!ready) {
+        // Waiting for the flash; keep still
+        pogobot_led_setColors(20, 0, 20, 0); // Purple hint during waiting
+        pogobot_motor_set(motorL, motorStop);
+        pogobot_motor_set(motorR, motorStop);
+        return;
+    }
+
     uint32_t now = current_time_milliseconds();
 
     // Estimate heading
