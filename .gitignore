@@ -67,6 +67,7 @@ examples/heading_detection/heading_detection
 examples/heading_PID/heading_PID
 examples/wall_avoidance_heading/wall_avoidance_heading
 examples/kinematics/kinematics
+examples/photostart/photostart
 
 # Generated figures
 *.pdf
