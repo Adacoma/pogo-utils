@@ -69,6 +69,7 @@ examples/wall_avoidance_heading/wall_avoidance_heading
 examples/kinematics/kinematics
 examples/photostart/photostart
 examples/oneplusone_es/oneplusone_es
+examples/spsa/spsa
 
 # Generated figures
 *.pdf
