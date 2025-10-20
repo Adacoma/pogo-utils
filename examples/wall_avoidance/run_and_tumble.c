@@ -41,6 +41,7 @@ REGISTER_USERDATA(USERDATA);
  *
  * @param[in] mr Pointer to the message wrapper provided by the firmware.
  */
+void process_message(message_t* msg);
 void process_message(message_t* msg) {
     // Process wall message and return if it was one
     if (wall_avoidance_process_message(&mydata->wall_avoidance, msg)) {

@@ -43,7 +43,9 @@ static inline void recompute_forward_speed(wall_avoidance_state_t* state) {
  * @brief Decide turn direction based on policy and active faces.
  * @return +1 for right (CW), -1 for left (CCW)
  */
-static int8_t decide_turn_dir(const wall_avoidance_state_t* state, bool /*front*/, bool right, bool /*back*/, bool left) {
+static int8_t decide_turn_dir(const wall_avoidance_state_t* state, bool front, bool right, bool back, bool left) {
+    (void)front;
+    (void)back;
     switch (state->policy) {
         case WALL_CW: return +1;
         case WALL_CCW: return -1;
