@@ -8,7 +8,7 @@ arena_file: arenas/disk.csv
 #arena_file: arenas/annulus.csv
 #arena_file: arenas/arena8.csv
 #arena_file: arenas/star.csv
-arena_surface: 1.0e6    # In mm²
+arena_surface: 1.5e6    # In mm²
 
 delete_old_files: true
 enable_data_logging: true
@@ -111,9 +111,9 @@ objects:
         angular_noise_stddev: 5.0
         angular_systematic_bias_domain: [-200, 200]
 
-        #photosensors_systematic_bias_domain: [-30, 30] # Systematic bias to apply to each 3 photosensor of each robot, to simulate real-robot biases.
-                                                        #  Domain pair between -32767 and 32767.
-        #photosensors_noise_stddev: 1.0  # Stddev of a gaussian noise to apply to photosensor detected light levels.
+        photosensors_systematic_bias_domain: [-30, 30] # Systematic bias to apply to each 3 photosensor of each robot, to simulate real-robot biases.
+                                                       #  Domain pair between -32767 and 32767.
+        photosensors_noise_stddev: 1.0  # Stddev of a gaussian noise to apply to photosensor detected light levels.
 
         # Communication propeties
         communication_radius: 80.0      # In mm, from each IR emitter. Pogobots typically have 4 IR emitters (front, left, back, right)

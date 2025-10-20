@@ -120,6 +120,12 @@ void diff_drive_kin_set_config(ddk_t *ddk, const ddk_config_t *cfg) {
     ddk->pwm_epoch_ms = current_time_milliseconds();
 }
 
+// caller retains ownership; NULL = disable normalization
+void diff_drive_kin_set_photostart(ddk_t *ddk, photostart_t *ps) {
+    if (!ddk) return;
+    heading_detection_set_photostart(&ddk->hd, ps);
+}
+
 void diff_drive_kin_set_pid_enabled(ddk_t *ddk, bool enabled) {
     if (!ddk) return;
     ddk->cfg.pid_enabled = enabled;

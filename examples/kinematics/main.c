@@ -12,6 +12,9 @@
 typedef struct {
     ddk_t ddk;
 
+    // Optional Photostart + photosensors calibration
+    photostart_t ps;
+
     /* demo inputs: absolute speed and per-step heading increment */
     float  v_cmd;        /* 0..1 duty-cycle of motorFull */
     double dtheta_inc;   /* radians per tick (already includes dt if you want) */
@@ -55,15 +58,34 @@ static void user_init(void) {
     /* Start at rest */
     mydata->v_cmd      = 0.0f;
     mydata->dtheta_inc = 0.0;
+
+    // Optional: Photostart: keep defaults or customize
+    photostart_init(&mydata->ps);
+    photostart_set_ewma_alpha(&mydata->ps, 0.30);
+    // Example of customizing:
+    // photostart_params_t p = { .min_dark_ms=1200, .settle_bright_ms=700, .jump_ratio=2.2f, .jump_delta_abs=120 };
+    // photostart_init_with_params(&mydata->ps, &p);
+    // Optional: Register photostart, if you want to use calibrated photosensors for heading detection
+    diff_drive_kin_set_photostart(&mydata->ddk, &mydata->ps);
 }
 
 static void user_step(void) {
+    // Optional: if you use photostart, always call photostart_step() first
+    bool ready = photostart_step(&mydata->ps);
+    if (!ready) {
+        // Waiting for the flash; keep still
+        pogobot_led_setColors(20, 0, 20, 0); // Purple hint during waiting
+        pogobot_motor_set(motorL, motorStop);
+        pogobot_motor_set(motorR, motorStop);
+        return;
+    }
+
     /* Visualize behavior state */
     switch (diff_drive_kin_get_behavior(&mydata->ddk)) {
-        case DDK_BEHAVIOR_AVOIDANCE:     pogobot_led_setColor(0, 0, 255);   break; /* blue */
-        case DDK_BEHAVIOR_NORMAL:        pogobot_led_setColor(0, 255, 0);   break; /* green */
-        case DDK_BEHAVIOR_PID_DISABLED:  pogobot_led_setColor(255, 125, 0); break; /* orange */
-        default:                         pogobot_led_setColor(64, 64, 64);  break; /* idle */
+        case DDK_BEHAVIOR_AVOIDANCE:     pogobot_led_setColor(0, 0, 25);   break; /* blue */
+        case DDK_BEHAVIOR_NORMAL:        pogobot_led_setColor(0, 25, 0);   break; /* green */
+        case DDK_BEHAVIOR_PID_DISABLED:  pogobot_led_setColor(25, 12, 0); break; /* orange */
+        default:                         pogobot_led_setColor(6, 6, 6);  break; /* idle */
     }
 
     /* Simple demo: alternate slow arcs left/right every 3s */

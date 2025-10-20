@@ -20,6 +20,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "pogobase.h"
+#include "pogo-utils/photostart.h"
 #include "pogo-utils/heading_detection.h"
 #include "pogo-utils/heading_PID.h"
 #include "pogo-utils/wall_avoidance_heading.h"
@@ -92,6 +93,11 @@ void diff_drive_kin_set_pid(ddk_t *ddk, double Kp, double Ki, double Kd, double 
 /** @brief Access and tweak the underlying avoidance config. */
 wa_heading_config_t diff_drive_kin_get_avoidance_config(const ddk_t *ddk);
 void diff_drive_kin_set_avoidance_config(ddk_t *ddk, const wa_heading_config_t *cfg);
+
+/** Attach/detach an OPTIONAL photostart calibrator.
+ *  Pass NULL to disable normalization. The caller owns the lifetime.
+ */
+void diff_drive_kin_set_photostart(ddk_t *ddk, photostart_t *ps);
 
 /** Runtime control */
 
