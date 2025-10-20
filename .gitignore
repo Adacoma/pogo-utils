@@ -68,6 +68,7 @@ examples/heading_PID/heading_PID
 examples/wall_avoidance_heading/wall_avoidance_heading
 examples/kinematics/kinematics
 examples/photostart/photostart
+examples/oneplusone_es/oneplusone_es
 
 # Generated figures
 *.pdf
