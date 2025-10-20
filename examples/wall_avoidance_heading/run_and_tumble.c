@@ -1,9 +1,9 @@
 // Main include for pogobots, both for real robots and for simulations
 #include "pogobase.h"
 
-// Heading-based wall avoidance (this library)
 #include "pogo-utils/wall_avoidance_heading.h"
 #include "pogo-utils/heading_detection.h"
+#include "pogo-utils/photostart.h"
 #include "pogo-utils/version.h"
 
 #ifndef M_PI
@@ -28,6 +28,9 @@ typedef struct {
 
     /* heading-based wall avoidance */
     wa_heading_state_t wa;
+
+    // Optional Photostart + photosensors calibration
+    photostart_t ps;
 } USERDATA;
 
 DECLARE_USERDATA(USERDATA);
@@ -58,6 +61,15 @@ void user_init(void) {
     /* heading estimator */
     heading_detection_init(&mydata->hd);
     heading_detection_set_chirality(&mydata->hd, HEADING_CW);
+
+    // Optional: Photostart: keep defaults or customize
+    photostart_init(&mydata->ps);
+    photostart_set_ewma_alpha(&mydata->ps, 0.30);
+    // Example of customizing:
+    // photostart_params_t p = { .min_dark_ms=1200, .settle_bright_ms=700, .jump_ratio=2.2f, .jump_delta_abs=120 };
+    // photostart_init_with_params(&mydata->ps, &p);
+    // Optional: Register photostart, if you want to use calibrated photosensors for heading detection
+    heading_detection_set_photostart(&mydata->hd, &mydata->ps); // or NULL to disable
 
     /* avoidance init */
     wa_heading_motors_t motors = {
@@ -91,6 +103,16 @@ void user_init(void) {
 }
 
 void user_step(void) {
+    // Optional: if you use photostart, always call photostart_step() first
+    bool ready = photostart_step(&mydata->ps);
+    if (!ready) {
+        // Waiting for the flash; keep still
+        pogobot_led_setColors(20, 0, 20, 0); // Purple hint during waiting
+        pogobot_motor_set(motorL, motorStop);
+        pogobot_motor_set(motorR, motorStop);
+        return;
+    }
+
     uint32_t now = current_time_milliseconds();
 
     /* estimate heading (radians) */
@@ -98,7 +120,7 @@ void user_step(void) {
 
     /* let heading-based avoidance take over if needed */
     if (wall_avoidance_heading_step(&mydata->wa, true, mydata->heading_rad)) {
-        pogobot_led_setColor(0, 0, 255);
+        pogobot_led_setColor(0, 0, 25);
         return;
     }
 
@@ -126,13 +148,13 @@ void user_step(void) {
     }
 
     if (mydata->phase == PHASE_RUN) {
-        pogobot_led_setColor(0, 255, 0);
+        pogobot_led_setColor(0, 25, 0);
         pogobot_motor_set(motorL, motorFull);
         pogobot_motor_set(motorR, motorFull);
         pogobot_motor_dir_set(motorL, mydata->motor_dir_left);
         pogobot_motor_dir_set(motorR, mydata->motor_dir_right);
     } else {
-        pogobot_led_setColor(255, 0, 0);
+        pogobot_led_setColor(25, 0, 0);
         if (mydata->tumble_direction == 0) {
             pogobot_motor_set(motorL, motorStop);
             pogobot_motor_set(motorR, motorFull);

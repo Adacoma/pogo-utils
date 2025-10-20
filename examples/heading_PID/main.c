@@ -1,6 +1,7 @@
 #include "pogobase.h"
 #include "math.h"
 
+#include "pogo-utils/photostart.h"
 #include "pogo-utils/heading_detection.h"
 #include "pogo-utils/heading_PID.h"
 #include "pogo-utils/version.h"
@@ -79,14 +80,13 @@ static void user_init(void) {
     heading_detection_init(&mydata->hd);
     heading_detection_set_chirality(&mydata->hd, HEADING_CCW);
 
-    // Photostart: keep defaults or customize
+    // Optional: Photostart: keep defaults or customize
     photostart_init(&mydata->ps);
     photostart_set_ewma_alpha(&mydata->ps, 0.30);
     // Example of customizing:
     // photostart_params_t p = { .min_dark_ms=1200, .settle_bright_ms=700, .jump_ratio=2.2f, .jump_delta_abs=120 };
     // photostart_init_with_params(&mydata->ps, &p);
-
-    // Register photostart, if you want to use calibrated photosensors for heading detection
+    // Optional: Register photostart, if you want to use calibrated photosensors for heading detection
     heading_detection_set_photostart(&mydata->hd, &mydata->ps); // or NULL to disable
 
     // PID init + link to heading detection
