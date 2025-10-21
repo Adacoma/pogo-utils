@@ -71,6 +71,7 @@ examples/photostart/photostart
 examples/oneplusone_es/oneplusone_es
 examples/spsa/spsa
 examples/sep_cmaes/sep_cmaes
+examples/pgpe/pgpe
 
 # Generated figures
 *.pdf
