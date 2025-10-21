@@ -1,41 +1,34 @@
 /**
- * @file example_spsa_main.c
- * @brief Example: SPSA inside the Pogobot/Pogosim control loop.
- *
- * Minimizes the Sphere function f(x)=∑ x_i^2 in dimension D.
- * Prints progress every ~2 s. Uses bounds and runs one SPSA iteration per tick.
+ * @brief SPSA example (Sphere minimization) with proper Δ buffer and sane tuning.
  */
 #include "pogobase.h"
 #include "pogo-utils/spsa.h"
 #include <stdio.h>
-#include <math.h>
+#include <stdlib.h>
 
 #ifndef D
-#define D 8
+#define D 6
 #endif
 
 typedef struct {
-    spsa_t opt;
-
-    /* Buffers (no malloc) */
+    spsa_t spsa;
     float x[D];
-    float delta[D];
-    float x_plus[D];
-    float x_minus[D];
+    float x_work[D];
+    int   delta[D];
     float lo[D];
     float hi[D];
-
     uint32_t last_print_ms;
 } USERDATA;
 
 DECLARE_USERDATA(USERDATA);
 REGISTER_USERDATA(USERDATA)
 
-/* Objective: Sphere (minimize) */
-static float sphere_fn(const float *restrict x, int n, void *user) {
-    (void)user;
+static float sphere_fn(const float *x, int n, void *ud) {
+    (void)ud;
     float s = 0.0f;
     for (int i = 0; i < n; ++i) s += x[i] * x[i];
+    /* Optional simulated noise:
+       s += 0.01f * ((float)(rand()%2001) - 1000.0f) / 1000.0f; */
     return s;
 }
 
@@ -48,60 +41,63 @@ void user_init(void) {
     msg_tx_fn = NULL;
     error_codes_led_idx = 3;
 
-    /* Init vector and bounds */
+    /* Init params and bounds ~ [-2, 2] */
     for (int i = 0; i < D; ++i) {
-        mydata->x[i] = 1.5f;   /* start away from optimum */
+        mydata->x[i] = 1.5f;
         mydata->lo[i] = -2.0f;
         mydata->hi[i] =  2.0f;
     }
 
-    spsa_params_t p = {
-        .mode = SPSA_MINIMIZE,
-        .a = 0.2f,           /* step gain (tune to problem scale) */
-        .c = 0.1f,           /* perturbation gain */
-        .alpha = 0.602f,
-        .gamma = 0.101f,
-        .A = 0.0f,           /* can try 0.1 * expected iters */
-        .evals_per_tick = 1, /* 1 iteration => 2 f-evals per tick */
-        .project_after_update = true
-    };
+    /* Tuning: scale a,c to your parameter range. For [-2,2], c≈0.05–0.1, a≈0.1–0.3 works well. */
+    spsa_params_t P = spsa_default_params();
+    P.a = 0.3f;
+    P.c = 0.15f; /* slightly bigger perturbation helps SNR */
+    P.A = 20.0f; /* smoother early steps */
+    P.alpha = 0.602f;
+    P.gamma = 0.101f;
+    P.g_clip = 1.0f;
 
-    spsa_init(&mydata->opt, D,
-              mydata->x,
-              mydata->delta,
-              mydata->x_plus,
-              mydata->x_minus,
+    spsa_init(&mydata->spsa, D,
+              mydata->x, mydata->x_work, mydata->delta,
               mydata->lo, mydata->hi,
-              sphere_fn, NULL, &p);
+              &P, SPSA_MINIMIZE);
 
-    printf("[SPSA] init: f0=%.6f\n", spsa_f(&mydata->opt));
     mydata->last_print_ms = current_time_milliseconds();
+    printf("[SPSA] init: k=%u a0=%.4f c0=%.4f f=%.4f\n",
+           spsa_iterations(&mydata->spsa), spsa_ak(&mydata->spsa),
+           spsa_ck(&mydata->spsa), sphere_fn(mydata->x, D, NULL));
 }
 
 void user_step(void) {
-    float f = spsa_step(&mydata->opt);
+    /* Do one probe per tick (ask–tell). This keeps per-tick cost small. */
+    const float *x_probe = spsa_ask(&mydata->spsa);
+    if (x_probe) {
+        float f = sphere_fn(x_probe, D, NULL);
+        (void)spsa_tell(&mydata->spsa, f);
+    }
 
-    /* LED feedback (optional) */
-    float g = f; if (g < 0.0f) g = 0.0f; if (g > 1.0f) g = 1.0f;
-    uint8_t val = (uint8_t)(25.0f * (1.0f - g));
-    pogobot_led_setColors(val, 0, val, 0);
-
+    /* Telemetry */
     uint32_t now = current_time_milliseconds();
-    if (now - mydata->last_print_ms > 2000) {
-        const float *x = spsa_get_x(&mydata->opt);
-        printf("[SPSA] it=%u  f=%.6f  x[0]=%.4f ... x[%d]=%.4f\n",
-               spsa_iterations(&mydata->opt), f, x[0], D-1, x[D-1]);
+    if (now - mydata->last_print_ms > 1500) {
+        const float *x = spsa_get_x(&mydata->spsa);
+        float f = sphere_fn(x, D, NULL);
+        printf("[SPSA] k=%u a_k=%.5f c_k=%.5f f=%.6f x0=%.4f x%u=%.4f\n",
+               spsa_iterations(&mydata->spsa), spsa_ak(&mydata->spsa),
+               spsa_ck(&mydata->spsa), f, x[0], (unsigned)(D-1), x[D-1]);
         mydata->last_print_ms = now;
     }
+
+    /* Simple LED feedback */
+    float f_now = sphere_fn(spsa_get_x(&mydata->spsa), D, NULL);
+    if (f_now > 1.0f) f_now = 1.0f;
+    if (f_now < 0.0f) f_now = 0.0f;
+    uint8_t val = (uint8_t)(25.0f * (1.0f - (1.0f - f_now)));
+    pogobot_led_setColors(val, 0, val, 0);
 }
 
 int main(void) {
     pogobot_init();
-#ifndef SIMULATOR
-    printf("init ok\n");
-#endif
     pogobot_start(user_init, user_step);
     return 0;
 }
-
 

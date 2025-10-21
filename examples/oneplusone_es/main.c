@@ -1,6 +1,5 @@
 /**
- * @file example_oneplusone_es_main.c
- * @brief Example: 1+1-ES inside the Pogobot/Pogosim control loop.
+ * @brief Example: ask–tell 1+1-ES inside the Pogobot/Pogosim control loop.
  *
  * Minimizes the Sphere function f(x)=sum_i x_i^2 in dimension D.
  * Prints the current best every ~2 s and blinks LEDs (optional).
@@ -30,13 +29,17 @@ DECLARE_USERDATA(USERDATA);
 REGISTER_USERDATA(USERDATA)
 
 /* Objective: Sphere (minimize) */
-static float sphere_fn(const float *restrict x, int n, void *user) {
-    (void)user;
+/* Objective: Sphere (minimize) */
+static float sphere_fn(const float *restrict x, int n) {
     float s = 0.0f;
-    for (int i = 0; i < n; ++i) {
-        s += x[i] * x[i];
-    }
+    for (int i = 0; i < n; ++i) s += x[i] * x[i];
     return s;
+}
+
+/* Adapter for es1p1_step() signature */
+static float sphere_obj_adapter(const float *x, int n, void *userdata) {
+    (void)userdata;
+    return sphere_fn(x, n);
 }
 
 void user_init(void) {
@@ -62,14 +65,17 @@ void user_init(void) {
         .sigma_max = 0.8f,
         .s_target = 0.2f,
         .s_alpha = 0.2f,
-        .c_sigma = 0.0f,         /* 0 => auto = 0.6/sqrt(n) */
-        .evals_per_tick = 1
+        .c_sigma = 0.0f /* 0 => auto = 0.6/sqrt(n) */
     };
 
     es1p1_init(&mydata->es, D,
                mydata->x, mydata->x_try,
                mydata->lo, mydata->hi,
-               sphere_fn, NULL, &p);
+               &p);
+
+    /* Provide the initial fitness */
+    float f0 = sphere_fn(mydata->x, D);
+    es1p1_tell_initial(&mydata->es, f0);
 
     printf("[1+1-ES] init: f0=%.6f, sigma=%.4f\n",
            es1p1_best_f(&mydata->es), es1p1_sigma(&mydata->es));
@@ -78,12 +84,23 @@ void user_init(void) {
 }
 
 void user_step(void) {
-    /* Run one batch of ES iterations */
-    float f = es1p1_step(&mydata->es);
+    /* One or more ask–tell evaluations per control step. */
+    const int evals_per_tick = 1; /* tune as you like */
+    for (int k = 0; k < evals_per_tick; ++k) {
+        /* OPTION A (explicit ask–tell)
+        const float *x_try = es1p1_ask(&mydata->es);
+        if (!x_try) break;
+        float f_try = sphere_fn(x_try, D);
+        (void)es1p1_tell(&mydata->es, f_try);
+        */
 
-    /* Optional: LED intensity proportional to progress (just for feedback) */
-    float g = f; if (g < 0.0f) g = 0.0f;
-    if (g > 1.0f) g = 1.0f;
+        /* OPTION B (convenience one-shot) */
+        (void)es1p1_step(&mydata->es, sphere_obj_adapter, NULL);
+    }
+
+    /* Optional: LED intensity proportional to progress */
+    float f = es1p1_best_f(&mydata->es);
+    float g = f; if (g < 0.0f) g = 0.0f; if (g > 1.0f) g = 1.0f;
     uint8_t val = (uint8_t)(25.0f * (1.0f - g));
     pogobot_led_setColors(val, 0, val, 0);
 
@@ -91,7 +108,7 @@ void user_step(void) {
     if (now - mydata->last_print_ms > 2000) {
         const float *x = es1p1_get_x(&mydata->es);
         printf("[1+1-ES] it=%u  f=%.6f  sigma=%.5f  x[0]=%.4f ... x[%d]=%.4f\n",
-               es1p1_iterations(&mydata->es), f, es1p1_sigma(&mydata->es),
+               es1p1_iterations(&mydata->es), es1p1_best_f(&mydata->es), es1p1_sigma(&mydata->es),
                x[0], D-1, x[D-1]);
         mydata->last_print_ms = now;
     }
@@ -106,4 +123,5 @@ int main(void) {
     pogobot_start(user_init, user_step);
     return 0;
 }
+
 

@@ -1,32 +1,44 @@
 /**
  * @file sep_cmaes.h
- * @brief Separable CMA-ES (diagonal covariance) over float arrays — malloc-free and online-capable.
+ * @brief Lightweight Separable CMA‑ES (diagonal covariance) in strict ask–tell form for float arrays.
  *
  * @details
- * This is a compact, embedded-friendly implementation of **sep-CMA-ES** (Ros & Hansen, 2008),
- * where the covariance matrix is constrained to be diagonal. It runs as a finite-state
- * optimizer suitable for control loops:
+ * **Purpose.** This module implements a minimal-yet-solid *separable* CMA‑ES (diag‑C) that is suitable
+ * for embedded/robotic online optimization. It mirrors the ask–tell workflow used in the provided (1+1)-ES:
  *
- *   - Each call to @ref sep_cmaes_step can generate/evaluate K offspring (K = evals_per_tick).
- *   - When a full generation of λ offspring has been evaluated, the algorithm performs the
- *     usual CMA updates of m, σ, and the diagonal C, then starts the next generation.
+ *   1) Call ::sep_cmaes_init() with caller-provided buffers (no malloc).
+ *   2) Evaluate the initial fitness f(x) of the provided parent vector `x` and call ::sep_cmaes_tell_initial().
+ *   3) Repeatedly for each control step (one or more evaluations per step):
+ *        - const float* x_try = sep_cmaes_ask(&es);
+ *        - float f_try = objective(x_try);
+ *        - sep_cmaes_tell(&es, f_try);
  *
- * Design goals:
- *  - **No malloc**: all memory (mean, offspring, fitness, diagC, paths, scratch, etc.)
- *    is provided by the user at init.
- *  - **Bounds** (optional) are per-coordinate; candidates are clamped.
- *  - **Minimize or maximize** controlled by a mode flag.
- *  - **Online optimization**: partial progress per control tick (like your 1+1-ES flow).
+ * **Algorithm.** This is a (μ/λ) CMA‑ES with diagonal covariance only (SEP‑CMA‑ES).
+ * It uses:
+ *   - Weighted recombination of the best μ out of λ offspring.
+ *   - Cumulative step-size adaptation (CSA) with path `p_sigma`.
+ *   - Diagonal covariance update (rank‑one via `p_c` + rank‑μ on diagonal only).
  *
- * References (for parameter choices and update equations):
- *   N. Hansen & A. Ostermeier (2001), CMA-ES
- *   R. Ros & N. Hansen (2008), "A Simple Modification in CMA-ES..." (Separable CMA-ES)
+ * **Design goals.**
+ *   - C11, deterministic, no dynamic allocation.
+ *   - Same ask–tell style as the 1+1‑ES already used in the codebase.
+ *   - Works for *online* optimization: evaluate 1 candidate per tick; a “generation” is λ tells.
+ *   - Bounds are optional per-dimension (lo/hi). Candidates are clamped if provided.
  *
- * Typical usage:
- *  1) Fill @ref sep_cmaes_params_t (or pass NULL for sensible defaults).
- *  2) Bind buffers and call @ref sep_cmaes_init.
- *  3) In each control step, call @ref sep_cmaes_step.
- *  4) Read current mean with @ref sep_cmaes_mean() and best fitness with @ref sep_cmaes_best_f().
+ * **Coordinate conventions.**
+ *   - We store the *mean* vector `x` in caller memory (in/out).
+ *   - We maintain diag(C) (variances) in `c_diag`. Sampling uses:  x' = x + sigma * sqrt(c_diag) ⊙ z, z~N(0,I).
+ *
+ * **Complexity & buffers.**
+ *   - Per ask: O(n).
+ *   - Per generation update: O(n * μ) where μ ≤ λ is small (typically 2..8 on embedded).
+ *   - Callers must provide buffers for: x, x_try, lo/hi (optional), c_diag, p_sigma, p_c, z_try, y_try,
+ *     store_y (size μ×n), fit_buf (size λ), and idx (size λ). See ::sep_cmaes_init().
+ *
+ * **Min/Max.** Set `mode` to ::SEP_MINIMIZE or ::SEP_MAXIMIZE.
+ *
+ * @note This is a simplified separable CMA‑ES; for large dimensions or ill‑conditioned problems,
+ *       full CMA‑ES may perform better but is more expensive.
  */
 
 #ifndef POGO_UTILS_SEP_CMAES_H
@@ -37,160 +49,161 @@ extern "C" {
 #endif
 
 #include <stdint.h>
-#include <stdbool.h>
-
-/** Objective callback: returns fitness f(x). Lower is better if mode=MIN. */
-typedef float (*sep_cmaes_objective_fn)(const float *restrict x, int n, void *user);
 
 /** Optimization direction. */
 typedef enum {
-    SEP_CMAES_MINIMIZE = 0,
-    SEP_CMAES_MAXIMIZE = 1
-} sep_cmaes_mode_t;
+    SEP_MINIMIZE = 0,
+    SEP_MAXIMIZE = 1
+} sep_mode_t;
 
 /**
- * @brief Tunable high-level parameters. If any field is zero, a robust default is used.
+ * @brief Tunable parameters for SEP‑CMA‑ES.
  *
- * Notes:
- *  - If lambda==0, it defaults to 4 + floor(3 * ln(n)); mu=floor(lambda/2).
- *  - Weights are log-based (Hansen default) and normalized to sum(w)=1.
- *  - Learning rates (cs, ds, cc, c1_sep, cmu_sep) follow CMA defaults adapted to sep-CMA-ES.
+ * Values here follow standard CMA‑ES heuristics. For embedded use, keep λ small (e.g., 4..12)
+ * and choose μ=⌊λ/2⌋ with log‑weights.
  */
 typedef struct {
-    sep_cmaes_mode_t mode;      /**< Minimize or maximize. */
-    int   lambda;               /**< Offspring per generation (0 => default). */
-    int   mu;                   /**< Parents for recombination (0 => default=floor(lambda/2)). */
-    float sigma0;               /**< Initial global step-size σ0 (e.g., 0.3f). */
-    float sigma_min;            /**< σ lower clamp (e.g., 1e-8f). */
-    float sigma_max;            /**< σ upper clamp (e.g., 10.0f). */
-    float cs;                   /**< Cumulation for σ-path (e.g., ~0.3). */
-    float ds;                   /**< Damping for σ (e.g., ~1 + 2*max(0, sqrt(mu_w)-1)+cs). */
-    float cc;                   /**< Cumulation for covariance path (e.g., ~2/(n+2)). */
-    float c1_sep;               /**< Rank-one learning rate for diagC. */
-    float cmu_sep;              /**< Rank-μ learning rate for diagC. */
-    int   evals_per_tick;       /**< How many offspring to evaluate per control step (>=1). */
-} sep_cmaes_params_t;
+    sep_mode_t mode;     /**< Minimize/Maximize. */
+    int lambda;          /**< Population size (offspring per “generation”). */
+    int mu;              /**< Parents for recombination (μ ≤ λ). */
+    float sigma0;        /**< Initial global step‑size (e.g., 0.3f). */
+    float sigma_min;     /**< Lower clamp for sigma (e.g., 1e-8f). */
+    float sigma_max;     /**< Upper clamp for sigma (e.g., 5.0f). */
+
+    /* Recombination weights: length μ, positive and sum to 1.0. */
+    const float *weights; /**< If NULL, defaults to log‑weights normalized. */
+
+    /* Learning rates (defaults if <=0): */
+    float cc;     /**< Cumulation for rank‑one path p_c.      (default ~ 2/(n+√2)) */
+    float cs;     /**< Cumulation for sigma path p_sigma.     (default ~ (μ_w+2)/(n+μ_w+5)) */
+    float c1;     /**< Rank‑one update for covariance.        (default ~ 2/((n+1.3)^2+μ_w)) */
+    float cmu;    /**< Rank‑μ update for diagonal covariance. (default ~ min(1−c1, 2*(μ_w−1)/((n+2)^2+μ_w))) */
+    float damps;  /**< Damping for sigma (default ~ 1 + 2*max(0, √((μ_w−1)/(n+1)) − 1) + cs). */
+
+    /* Bound handling (clamp if provided): */
+    const float *lo; /**< Optional per‑dimension lower bounds (nullable). */
+    const float *hi; /**< Optional per‑dimension upper bounds (nullable). */
+} sep_params_t;
 
 /**
- * @brief Optimizer state — POD with user-bound buffers. No dynamic allocation.
+ * @brief Internal state (POD). Caller owns all buffers.
  *
- * User must provide all buffers listed below. Sizes:
- *  - mean m:                  n
- *  - diagC, invsqrtC, ps, pc: n
- *  - z_work, y_work:          n (scratch)
- *  - cand_X:                  lambda * n  (flattened: candidate k at &cand_X[k*n])
- *  - fitness:                 lambda
- *  - idx:                     lambda      (indices for partial sort)
- *  - weights:                 mu          (precomputed at init)
- *
- * Bounds are optional (per-dimension). If non-NULL, candidates are clamped into [lo, hi].
+ * Memory layout & sizes you must provide to ::sep_cmaes_init():
+ *   - x        : length n  (mean vector, in/out).
+ *   - x_try    : length n  (offspring workspace).
+ *   - c_diag   : length n  (diagonal variances; init to 1.0).
+ *   - p_sigma  : length n  (path for sigma; init to 0).
+ *   - p_c      : length n  (path for covariance; init to 0).
+ *   - z_try    : length n  (standard normal sample storage).
+ *   - y_try    : length n  (scaled step y = sqrt(c_diag) ⊙ z_try).
+ *   - store_y  : length mu*n (buffer to store μ best y vectors of current generation).
+ *   - fit_buf  : length lambda (fitnesses of the λ offspring in current generation).
+ *   - idx      : length lambda (indices 0..lambda-1 used for sorting by fitness).
  */
 typedef struct {
-    /* Problem definition */
     int n;
-    sep_cmaes_objective_fn fn;
-    void *user;
+    sep_params_t p;
 
-    /* Parameters */
-    sep_cmaes_params_t p;
-    sep_cmaes_mode_t mode;
-    int lambda;
-    int mu;
+    /* Buffers (caller‑owned) */
+    float *restrict x;
+    float *restrict x_try;
+    float *restrict c_diag;
+    float *restrict p_sigma;
+    float *restrict p_c;
+    float *restrict z_try;
+    float *restrict y_try;
+    float *restrict store_y; /* μ × n, row‑major: y_i stored at &store_y[i*n] */
+    float *restrict fit_buf;
+    int   *restrict idx;
 
-    /* Recombination weights (sum to 1), effective mu = 1/sum(w^2) */
-    float mu_eff;
-
-    /* Global strategy parameters */
-    float sigma;
-    float chi_n;        /* E||N(0,I)|| in n dims, used in σ update */
-
-    /* Generation bookkeeping */
-    int k;              /* next offspring index to generate/evaluate in current generation */
-    uint32_t gen;       /* completed generations */
-    uint64_t evals;     /* total function evaluations */
-
-    /* RNG (Box–Muller spare) */
-    int   have_spare;
+    /* RNG cache (Box‑Muller) */
+    int have_spare;
     float spare;
 
-    /* ==== User-provided buffers (no malloc) ==== */
-    float *restrict m;          /**< Mean vector (dim n). Updated in-place. */
-    float *restrict diagC;      /**< Diagonal covariance (dim n), initialized to 1. */
-    float *restrict invsqrtC;   /**< 1/sqrt(diagC) (dim n). */
-    float *restrict ps;         /**< σ-path (dim n). */
-    float *restrict pc;         /**< Covariance path (dim n). */
-    float *restrict z_work;     /**< Scratch z ~ N(0,I) (dim n). */
-    float *restrict y_work;     /**< Scratch y = sqrt(diagC) ⊙ z (dim n). */
-
-    /* Offspring storage for current generation */
-    float *restrict cand_X;     /**< Flattened λ×n array (row-major). */
-    float *restrict fitness;    /**< λ fitness values. */
-    int   *restrict idx;        /**< λ indices for sorting/selecting μ-best. */
-
-    /* Recombination weights (length μ). Will be filled at init if non-NULL. */
-    float *restrict weights;
-
-    /* Optional bounds */
-    const float *restrict lo;
-    const float *restrict hi;
-
-    /* Best-so-far (for easy monitoring) */
+    /* State */
+    float sigma;
     float best_f;
+    uint32_t iter_total;      /**< # of ask–tell calls so far. */
+    uint32_t gen;             /**< Generation counter. */
+    int k_in_gen;             /**< How many offspring evaluated in current generation [0..λ]. */
+    int have_initial;         /**< 0 until sep_cmaes_tell_initial() is called. */
+
+    /* Derived */
+    float mu_w;               /**< Effective selection mass: 1/sum w_i^2. */
+    float w_sum;              /**< Sum of weights (should be 1). */
+    float chi_n;              /**< E||N(0,I)|| for CSA. */
+
+    /* μ-best cache (no malloc, μ<=32 assumed) */
+    float best_fit_mu[32];
+    int mu_filled;
 } sep_cmaes_t;
 
+/* ============================= API ===================================== */
+
 /**
- * @brief Initialize sep-CMA-ES with user-provided buffers and parameters.
+ * @brief Initialize SEP‑CMA‑ES with caller‑provided buffers (no malloc).
  *
- * @param es       Optimizer handle (zeroed by caller or stack-allocated).
- * @param n        Dimension (>=1).
- * @param m        Mean vector (length n), will be modified in-place.
- * @param diagC    Diagonal covariance (length n), set to 1 if you pass NULL (but pointer is required).
- * @param invsqrtC 1/sqrt(diagC) (length n), will be filled by init.
- * @param ps, pc   Evolution paths (length n), will be zeroed.
- * @param z_work, y_work Scratch vectors (length n) for sampling and updates.
- * @param cand_X   Offspring matrix (length lambda*n).
- * @param fitness  Fitness array (length lambda).
- * @param idx      Index array (length lambda).
- * @param weights  Recombination weights (length mu). If NULL, defaults will be computed into it (must not be NULL).
- * @param lo, hi   Optional per-dimension bounds (nullable).
- * @param fn, user Objective function and user pointer.
- * @param params   Strategy parameters (nullable -> sensible defaults).
+ * @param es        Handle (zero-/stack‑allocated). Will be fully written.
+ * @param n         Dimension (≥1).
+ * @param x         Mean vector (length n). Will be modified in place.
+ * @param x_try     Offspring workspace (length n).
+ * @param c_diag    Diagonal variances (length n). If NULL, treated as 1.0 and not updated.
+ * @param p_sigma   Path for sigma (length n).
+ * @param p_c       Path for covariance (length n).
+ * @param z_try     Std‑normal sample buffer (length n).
+ * @param y_try     Step buffer y = sqrt(c_diag) ⊙ z (length n).
+ * @param store_y   Buffer for μ best steps of current generation (length μ*n).
+ * @param fit_buf   Fitness buffer for λ offspring (length λ).
+ * @param idx       Index buffer for sorting (length λ).
+ * @param params    Parameters; sensible defaults if NULL or fields ≤0 where relevant.
  */
 void sep_cmaes_init(sep_cmaes_t *es, int n,
-                    float *restrict m,
-                    float *restrict diagC, float *restrict invsqrtC,
-                    float *restrict ps, float *restrict pc,
-                    float *restrict z_work, float *restrict y_work,
-                    float *restrict cand_X, float *restrict fitness, int *restrict idx,
-                    float *restrict weights,
-                    const float *restrict lo, const float *restrict hi,
-                    sep_cmaes_objective_fn fn, void *user,
-                    const sep_cmaes_params_t *params);
+                    float *restrict x, float *restrict x_try,
+                    float *restrict c_diag,
+                    float *restrict p_sigma, float *restrict p_c,
+                    float *restrict z_try, float *restrict y_try,
+                    float *restrict store_y,
+                    float *restrict fit_buf, int *restrict idx,
+                    const sep_params_t *params);
 
 /**
- * @brief Perform one control-tick worth of work: generate/evaluate up to `evals_per_tick` offspring.
- *
- * When a full generation (λ offspring) has been evaluated, this function performs the CMA updates
- * (m, σ, diagC) and starts the next generation. It returns the current best fitness (best-so-far).
- *
- * @return Current best fitness after the batch.
+ * @brief Provide initial fitness f(x) of the mean vector after init.
  */
-float sep_cmaes_step(sep_cmaes_t *es);
+void sep_cmaes_tell_initial(sep_cmaes_t *es, float f0);
 
-/** @brief Current mean vector (the incumbent solution m). */
-static inline const float *sep_cmaes_mean(const sep_cmaes_t *es) { return es->m; }
+/**
+ * @brief Sample and return the next candidate x' (offspring) into `x_try` (clamped to bounds if provided).
+ *
+ * One candidate per call. After λ calls to ::sep_cmaes_tell() (per generation), internal parameters are updated.
+ *
+ * @return Pointer to candidate of length n, or NULL if called before ::sep_cmaes_tell_initial().
+ */
+const float *sep_cmaes_ask(sep_cmaes_t *es);
 
-/** @brief Current step-size σ. */
+/**
+ * @brief Tell SEP‑CMA‑ES the candidate's fitness and perform selection bookkeeping.
+ *
+ * When λ candidates have been told within a generation, this performs the mean, covariance, and sigma updates.
+ *
+ * @param es     Handle.
+ * @param f_try  Fitness of the most recent candidate returned by ask().
+ * @return       Current best fitness after potential improvement.
+ */
+float sep_cmaes_tell(sep_cmaes_t *es, float f_try);
+
+/* Convenience one‑shot step (ask→objective→tell) */
+typedef float (*sep_objective_fn)(const float *x, int n, void *userdata);
+/**
+ * @brief One‑shot evaluation helper around ask–tell (the objective remains outside the library).
+ */
+float sep_cmaes_step(sep_cmaes_t *es, sep_objective_fn fn, void *userdata);
+
+/* Inline getters */
+static inline const float *sep_cmaes_get_x(const sep_cmaes_t *es) { return es->x; }
 static inline float sep_cmaes_sigma(const sep_cmaes_t *es) { return es->sigma; }
-
-/** @brief Best-so-far fitness. */
-static inline float sep_cmaes_best_f(const sep_cmaes_t *es) { return es->best_f; }
-
-/** @brief Current generation number (completed). */
+static inline uint32_t sep_cmaes_iterations(const sep_cmaes_t *es) { return es->iter_total; }
 static inline uint32_t sep_cmaes_generation(const sep_cmaes_t *es) { return es->gen; }
-
-/** @brief Total number of function evaluations. */
-static inline uint64_t sep_cmaes_evals(const sep_cmaes_t *es) { return es->evals; }
+static inline int sep_cmaes_ready(const sep_cmaes_t *es) { return es && es->have_initial; }
 
 #ifdef __cplusplus
 }

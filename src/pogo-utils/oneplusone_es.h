@@ -1,27 +1,23 @@
 /**
  * @file oneplusone_es.h
- * @brief Lightweight (μ+λ) = (1+1) Evolution Strategy for float parameter arrays.
+ * @brief (1+1)-ES in strict ask–tell form for float parameter arrays.
  *
  * @details
- * The 1+1-ES maintains a single parent vector x (dimension n) and a single
- * offspring x' = x + sigma * N(0, I). If the offspring is better, it replaces
- * the parent. Step-size sigma is adapted online via a smoothed 1/5th success
- * rule:
+ * This variant removes any objective callback from the library and enforces
+ * an ask–tell usage:
+ *   1) Call es1p1_init(...), set your initial parent vector in `x`.
+ *   2) Evaluate the initial fitness f(x) in your code and call
+ *      es1p1_tell_initial(es, f0).
+ *   3) Repeatedly:
+ *        - const float* x_try = es1p1_ask(es);
+ *        - float f_try = objective(x_try);
+ *        - es1p1_tell(es, f_try);
  *
- *     s_ewma <- (1 - alpha) * s_ewma + alpha * success
- *     sigma  <- clamp( sigma * exp(c_sigma * (s_ewma - s_target)), [sigma_min, sigma_max] )
- *
- * - No malloc: user binds all buffers at init (parent x, candidate x_try, optional bounds).
- * - Supports minimization or maximization.
- * - Optional variable bounds per coordinate (clamped after mutation).
- * - Uses a Box–Muller normal RNG built on top of `rand()`; seed with `srand()`.
- *
- * Typical usage:
- *  1) Fill params; call es1p1_init().
- *  2) At each control tick, call es1p1_step().
- *  3) Read back current best with es1p1_get_x() and fitness with es1p1_best_f().
+ * Step-size `sigma` is adapted online via an EWMA 1/5th-success rule.
+ * - No malloc: caller provides all buffers (x, x_try, optional lo/hi bounds).
+ * - Supports per-dimension bounds.
+ * - Minimization or maximization via `mode`.
  */
-
 #ifndef POGO_UTILS_ONEPLUSONE_ES_H
 #define POGO_UTILS_ONEPLUSONE_ES_H
 
@@ -32,44 +28,32 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
-/** Objective callback: returns fitness f(x). Lower is better if mode=MIN. */
-typedef float (*es1p1_objective_fn)(const float *restrict x, int n, void *user);
-
 /** Optimization direction. */
 typedef enum {
     ES1P1_MINIMIZE = 0,
     ES1P1_MAXIMIZE = 1
 } es1p1_mode_t;
 
-/** Tunable parameters (choose small c_sigma, e.g., 0.6 / sqrt(n)). */
+/** Tunable parameters. */
 typedef struct {
     es1p1_mode_t mode;     /**< Minimize or maximize. */
     float sigma0;          /**< Initial step-size (e.g., 0.1f). */
     float sigma_min;       /**< Lower bound on sigma (e.g., 1e-6f). */
     float sigma_max;       /**< Upper bound on sigma (e.g., 1.0f). */
     float s_target;        /**< Target success rate (default 0.2f). */
-    float s_alpha;         /**< EWMA smoothing for success (e.g., 0.2f). */
-    float c_sigma;         /**< Step-size learning rate (e.g., 0.6f / sqrt(n)). */
-    int   evals_per_tick;  /**< How many ES iterations per control step (>=1). */
+    float s_alpha;         /**< EWMA smoothing (e.g., 0.2f). */
+    float c_sigma;         /**< Step-size learning rate (0 => auto=0.6/sqrt(n)). */
 } es1p1_params_t;
 
-/**
- * Internal state (POD). Bind user-provided buffers to avoid allocations.
- * Buffers:
- *  - x      : parent vector (length n), owned by caller (will be modified in-place).
- *  - x_try  : offspring workspace (length n).
- *  - lo, hi : optional bounds (length n each) or NULL (no bounds).
- */
+/** Internal state (POD). */
 typedef struct {
     // Problem definition
     int n;
-    es1p1_objective_fn fn;
-    void *user;
 
     // Parameters
     es1p1_params_t p;
 
-    // Buffers (provided by user)
+    // Buffers (owned by caller)
     float *restrict x;       /**< Current solution (parent) — in/out. */
     float *restrict x_try;   /**< Candidate (offspring) — workspace. */
     const float *restrict lo;/**< Optional per-dim lower bounds (nullable). */
@@ -85,58 +69,72 @@ typedef struct {
     float spare;
 
     // Book-keeping
-    uint32_t iter;           /**< Number of ES iterations performed. */
+    uint32_t iter;           /**< Number of ask–tell pairs performed. */
+    int have_initial;        /**< 0 until es1p1_tell_initial() is called. */
+    int have_candidate;      /**< 1 after ask(), consumed by tell(). */
 } es1p1_t;
 
 /**
- * @brief Initialize the 1+1-ES on user-provided buffers.
+ * @brief Initialize the (1+1)-ES on caller-provided buffers.
  *
- * @param es      ES handle (zero- or stack-allocated).
- * @param n       Dimension (>=1).
- * @param x       Parent vector (length n). Will be modified in place.
- * @param x_try   Offspring workspace (length n).
- * @param lo      Optional per-coordinate lower bounds (nullable).
- * @param hi      Optional per-coordinate upper bounds (nullable).
- * @param fn      Objective function pointer (must be non-NULL).
- * @param user    User pointer passed to fn (nullable).
- * @param params  ES parameters; sensible defaults if NULL.
+ * @param es    ES handle (zero-/stack-allocated).
+ * @param n     Dimension (>=1).
+ * @param x     Parent vector (length n). Will be modified in place.
+ * @param x_try Offspring workspace (length n).
+ * @param lo    Optional per-coordinate lower bounds (nullable).
+ * @param hi    Optional per-coordinate upper bounds (nullable).
+ * @param params ES parameters; sensible defaults if NULL.
  *
- * @post  es->best_f is set by one evaluation of x; es->sigma = sigma0.
+ * @post  You MUST call es1p1_tell_initial(es, f0) once before the first ask().
  */
 void es1p1_init(es1p1_t *es, int n,
                 float *restrict x, float *restrict x_try,
                 const float *restrict lo, const float *restrict hi,
-                es1p1_objective_fn fn, void *user,
                 const es1p1_params_t *params);
 
 /**
- * @brief Perform one control-tick worth of optimization.
- *
- * Runs `evals_per_tick` independent (1+1) iterations:
- *  - Sample x' ~ N(x, sigma^2 I)
- *  - Clamp to [lo, hi] if bounds are provided
- *  - Accept if better according to @ref es1p1_params_t::mode
- *  - Update s_ewma and adapt sigma
- *
- * @return The current best fitness after the batch.
+ * @brief Provide the initial fitness f(x) of the parent vector after init.
  */
-float es1p1_step(es1p1_t *es);
+void es1p1_tell_initial(es1p1_t *es, float f0);
 
-/** @brief Get current best vector (parent). */
+/**
+ * @brief Sample and return a new offspring candidate x' into the bound workspace.
+ *
+ * Generates x_try ~ N(x, sigma^2 I), clamps to bounds if provided, stores it
+ * internally, and returns a pointer to `x_try` for evaluation by the caller.
+ *
+ * @return Pointer to the candidate vector to evaluate (length n), or NULL if
+ *         called before es1p1_tell_initial().
+ */
+const float *es1p1_ask(es1p1_t *es);
+
+/**
+ * @brief Tell the ES the candidate's fitness and perform selection + sigma update.
+ *
+ * @param es     ES handle.
+ * @param f_try  Fitness of the last candidate returned by ask().
+ * @return       Current best fitness after potential replacement.
+ */
+float es1p1_tell(es1p1_t *es, float f_try);
+
+/*** Inline getters *********************************************************/
 static inline const float *es1p1_get_x(const es1p1_t *es) { return es->x; }
-
-/** @brief Get current best fitness. */
-static inline float es1p1_best_f(const es1p1_t *es) { return es->best_f; }
-
-/** @brief Get current step-size sigma. */
-static inline float es1p1_sigma(const es1p1_t *es) { return es->sigma; }
-
-/** @brief Total number of ES iterations performed so far. */
-static inline uint32_t es1p1_iterations(const es1p1_t *es) { return es->iter; }
+static inline float        es1p1_best_f(const es1p1_t *es) { return es->best_f; }
+static inline float        es1p1_sigma(const es1p1_t *es)  { return es->sigma; }
+static inline uint32_t     es1p1_iterations(const es1p1_t *es) { return es->iter; }
+static inline int          es1p1_ready(const es1p1_t *es) { return es && es->have_initial; }
 
 #ifdef __cplusplus
 }
 #endif
+
+/**
+ * @brief Convenience one-shot step that performs ask→objective→tell.
+ *
+ * Thin wrapper around ask–tell. The objective remains outside the library.
+ */
+typedef float (*es1p1_objective_fn)(const float *x, int n, void *userdata);
+float es1p1_step(es1p1_t *es, es1p1_objective_fn fn, void *userdata);
 
 #endif /* POGO_UTILS_ONEPLUSONE_ES_H */
 

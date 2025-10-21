@@ -1,184 +1,198 @@
 /**
  * @file pgpe.c
- * @brief PGPE implementation (malloc‑free, C11) for online optimization on float arrays.
+ * @brief Implementation of PGPE (ask–tell, antithetic) over float arrays.
  */
 #include "pgpe.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 
-/* ===== Helpers =========================================================== */
+/* ---------- Helpers ----------------------------------------------------- */
 static inline float clampf(float x, float lo, float hi) {
     return (x < lo) ? lo : (x > hi) ? hi : x;
 }
 
-static inline float reward_from_f(pgpe_mode_t mode, float f) {
-    /* For minimize: reward = -f. For maximize: reward = +f. */
-    return (mode == PGPE_MINIMIZE) ? (-f) : (f);
+static inline float to_reward(pgpe_mode_t mode, float fitness) {
+    return (mode == PGPE_MAXIMIZE) ? fitness : -fitness;
 }
 
-static inline void project_into_bounds(float *restrict x, int n,
-                                       const float *restrict lo,
-                                       const float *restrict hi) {
-    if (!lo && !hi) return;
-    for (int i = 0; i < n; ++i) {
-        if (lo) x[i] = (x[i] < lo[i]) ? lo[i] : x[i];
-        if (hi) x[i] = (x[i] > hi[i]) ? hi[i] : x[i];
+/* Box–Muller with spare */
+static float randn01(pgpe_t *pg) {
+    if (pg->have_spare) {
+        pg->have_spare = 0;
+        return pg->spare;
+    }
+    float u1 = 0.0f, u2 = 0.0f;
+    do { u1 = (float)rand() / (float)RAND_MAX; } while (u1 <= 1e-7f);
+    u2 = (float)rand() / (float)RAND_MAX;
+    float r = sqrtf(-2.0f * logf(u1));
+    float th = 2.0f * (float)M_PI * u2;
+    pg->spare = r * sinf(th);
+    pg->have_spare = 1;
+    return r * cosf(th);
+}
+
+static void clamp_sigma_vec(pgpe_t *pg) {
+    for (int i = 0; i < pg->n; ++i) {
+        if (pg->sigma[i] < pg->p.sigma_min) pg->sigma[i] = pg->p.sigma_min;
+        if (pg->sigma[i] > pg->p.sigma_max) pg->sigma[i] = pg->p.sigma_max;
     }
 }
 
-static void pgpe_default_params(pgpe_params_t *p) {
-    p->mode = PGPE_MINIMIZE;
-    p->lr_mu = 0.1f;         /* tune to problem scale */
-    p->lr_sigma = 0.05f;     /* multiplicative log-\sigma step */
-    p->sigma_min = 1e-4f;
-    p->sigma_max = 1.0f;
-    p->samples_per_tick = 8; /* cost: this many f-evals per tick (x2 if antithetic) */
-    p->antithetic = true;
-    p->baseline_beta = 0.9f; /* EWMA; set 0 to disable */
-    p->project_after_update = true;
+static void clamp_mu_to_bounds(pgpe_t *pg) {
+    if (!pg->lo && !pg->hi) return;
+    for (int i = 0; i < pg->n; ++i) {
+        float mi = pg->mu[i];
+        if (pg->lo) { if (mi < pg->lo[i]) mi = pg->lo[i]; }
+        if (pg->hi) { if (mi > pg->hi[i]) mi = pg->hi[i]; }
+        pg->mu[i] = mi;
+    }
 }
 
-/* Standard Normal via Box–Muller using rand(); adequate for embedded/demo. */
-static inline float randu01(void) { return (float)rand() / (float)RAND_MAX; }
-static float randn(void) {
-    float u1 = randu01(); if (u1 < 1e-7f) u1 = 1e-7f;
-    const float u2 = randu01();
-    const float r = sqrtf(-2.0f * logf(u1));
-    const float z = r * cosf(2.0f * (float)M_PI * u2);
-    return z;
+static void build_candidate(pgpe_t *pg, int sign /*+1 for plus, -1 for minus*/) {
+    for (int i = 0; i < pg->n; ++i) {
+        float xi = pg->mu[i] + (float)sign * pg->sigma[i] * pg->eps[i];
+        if (pg->lo && pg->hi) {
+            xi = clampf(xi, pg->lo[i], pg->hi[i]);
+        } else if (pg->lo) {
+            if (xi < pg->lo[i]) xi = pg->lo[i];
+        } else if (pg->hi) {
+            if (xi > pg->hi[i]) xi = pg->hi[i];
+        }
+        pg->x_try[i] = xi;
+    }
 }
 
-/* ===== API =============================================================== */
-void pgpe_init(pgpe_t *pgpe, int n,
-               float *restrict mu,
-               float *restrict sigma,
-               float *restrict theta,
-               float *restrict eps,
+/* ---------- API --------------------------------------------------------- */
+void pgpe_init(pgpe_t *pg, int n,
+               float *restrict mu, float *restrict sigma,
+               float *restrict x_try, float *restrict eps,
                const float *restrict lo, const float *restrict hi,
-               pgpe_objective_fn fn, void *user,
                const pgpe_params_t *params) {
-    if (!pgpe || !mu || !sigma || !theta || !eps || !fn || n <= 0) return;
+    if (!pg || !mu || !sigma || !x_try || !eps || n <= 0) return;
 
-    memset(pgpe, 0, sizeof(*pgpe));
-    pgpe->n   = n;
-    pgpe->mu  = mu;
-    pgpe->sigma = sigma;
-    pgpe->theta = theta;
-    pgpe->eps   = eps;
-    pgpe->lo  = lo;
-    pgpe->hi  = hi;
-    pgpe->fn  = fn;
-    pgpe->user= user;
+    memset(pg, 0, sizeof(*pg));
+    pg->n     = n;
+    pg->mu    = mu;
+    pg->sigma = sigma;
+    pg->x_try = x_try;
+    pg->eps   = eps;
+    pg->lo    = lo;
+    pg->hi    = hi;
 
-    if (params) {
-        pgpe->p = *params;
-        if (pgpe->p.samples_per_tick < 1) pgpe->p.samples_per_tick = 1;
-        if (pgpe->p.sigma_min <= 0.0f) pgpe->p.sigma_min = 1e-6f;
-    } else {
-        pgpe_default_params(&pgpe->p);
-    }
+    /* Defaults */
+    pg->p.mode           = PGPE_MINIMIZE;
+    pg->p.eta_mu         = 0.05f;
+    pg->p.eta_sigma      = 0.10f;
+    pg->p.sigma_min      = 1e-6f;
+    pg->p.sigma_max      = 1.0f;
+    pg->p.baseline_alpha = 0.10f;
+    pg->p.normalize_pair = 1;
 
-    /* Clamp initial mu within bounds; clamp sigma to [min,max]. */
-    project_into_bounds(pgpe->mu, pgpe->n, pgpe->lo, pgpe->hi);
-    for (int i = 0; i < pgpe->n; ++i)
-        pgpe->sigma[i] = clampf(pgpe->sigma[i], pgpe->p.sigma_min, pgpe->p.sigma_max);
+    if (params) pg->p = *params;
 
-    /* Monitor f(mu) */
-    pgpe->f_curr = pgpe->fn(pgpe->mu, pgpe->n, pgpe->user);
-    pgpe->f_best = pgpe->f_curr;
-    pgpe->baseline = 0.0f;
-    pgpe->k = 0;
+    clamp_sigma_vec(pg);
+    clamp_mu_to_bounds(pg);
+
+    pg->phase      = 0;
+    pg->r_plus     = 0.0f;
+    pg->r_minus    = 0.0f;
+    pg->baseline   = 0.0f;  /* start neutral */
+    pg->have_spare = 0;
+    pg->iters      = 0;
 }
 
-float pgpe_step(pgpe_t *pgpe) {
-    if (!pgpe || !pgpe->fn) return 0.0f;
+const float *pgpe_ask(pgpe_t *pg) {
+    if (!pg) return NULL;
 
-    /* Accumulate gradients over the mini-batch, then update once. */
-    float *mu = pgpe->mu;
-    float *sigma = pgpe->sigma;
-    const int n = pgpe->n;
-
-    const float inv_batch = 1.0f / (float)(pgpe->p.samples_per_tick * (pgpe->p.antithetic ? 2 : 1));
-
-    /* Zero accumulators */
-    float g_mu_acc[n];
-    float g_logs_acc[n];
-    for (int i = 0; i < n; ++i) { g_mu_acc[i] = 0.0f; g_logs_acc[i] = 0.0f; }
-
-    for (int sample = 0; sample < pgpe->p.samples_per_tick; ++sample) {
-        /* Draw eps ~ N(0,I) */
-        for (int i = 0; i < pgpe->n; ++i) pgpe->eps[i] = randn();
-
-        /* Evaluate candidate theta = mu + sigma * eps */
-        for (int i = 0; i < pgpe->n; ++i)
-            pgpe->theta[i] = pgpe->mu[i] + pgpe->sigma[i] * pgpe->eps[i];
-        project_into_bounds(pgpe->theta, pgpe->n, pgpe->lo, pgpe->hi);
-        float f_pos = pgpe->fn(pgpe->theta, pgpe->n, pgpe->user);
-        float R_pos = reward_from_f(pgpe->p.mode, f_pos);
-
-        float f_neg = 0.0f, R_neg = 0.0f;
-        if (pgpe->p.antithetic) {
-            for (int i = 0; i < n; ++i)
-                pgpe->theta[i] = mu[i] - sigma[i] * pgpe->eps[i];
-            project_into_bounds(pgpe->theta, n, pgpe->lo, pgpe->hi);
-            f_neg = pgpe->fn(pgpe->theta, n, pgpe->user);
-            R_neg = reward_from_f(pgpe->p.mode, f_neg);
+    if (pg->phase == 0) {
+        /* Start a new antithetic pair: sample ε and output θ+ */
+        for (int i = 0; i < pg->n; ++i) {
+            pg->eps[i] = randn01(pg);
         }
+        build_candidate(pg, +1);
+        pg->phase = 1; /* next we want θ− */
+        return pg->x_try;
+    } else {
+        /* Second half: θ− with the same ε */
+        build_candidate(pg, -1);
+        pg->phase = 2; /* next we will update after tell() */
+        return pg->x_try;
+    }
+}
 
-        /* Update EWMA baseline with the average reward of this pair (or single). */
-        const float R_avg = pgpe->p.antithetic ? 0.5f*(R_pos + R_neg) : R_pos;
-        if (pgpe->p.baseline_beta > 0.0f && pgpe->p.baseline_beta < 1.0f) {
-            pgpe->baseline = pgpe->p.baseline_beta * pgpe->baseline + (1.0f - pgpe->p.baseline_beta) * R_avg;
-        }
+void pgpe_tell(pgpe_t *pg, float fitness) {
+    if (!pg) return;
 
-        /* Compute advantages and apply updates. */
-        const float A_pos = (pgpe->p.baseline_beta > 0.0f) ? (R_pos - pgpe->baseline) : R_pos;
-        const float A_neg = (pgpe->p.antithetic) ? ((pgpe->p.baseline_beta > 0.0f) ? (R_neg - pgpe->baseline) : R_neg) : 0.0f;
+    float r = to_reward(pg->p.mode, fitness);
 
-        for (int i = 0; i < n; ++i) {
-            const float inv_sigma = 1.0f / sigma[i];
-            float g_mu   = A_pos * pgpe->eps[i] * inv_sigma;
-            float g_logs = A_pos * (pgpe->eps[i]*pgpe->eps[i] - 1.0f);
-            if (pgpe->p.antithetic) {
-                g_mu   += A_neg * (-pgpe->eps[i]) * inv_sigma;
-                g_logs += A_neg * (pgpe->eps[i]*pgpe->eps[i] - 1.0f);
-                g_mu   *= 0.5f; g_logs *= 0.5f;
-            }
-            g_mu_acc[i]   += g_mu;
-            g_logs_acc[i] += g_logs;
-        }
-
-        if (pgpe->p.project_after_update) {
-            project_into_bounds(pgpe->mu, pgpe->n, pgpe->lo, pgpe->hi);
-        }
-
-        pgpe->k++;
+    if (pg->phase == 1) {
+        /* We just evaluated θ+ */
+        pg->r_plus = r;
+        return;
     }
 
-    /* Apply averaged update once per tick (stability). */
-    for (int i = 0; i < n; ++i) {
-        const float gmu   = g_mu_acc[i]   * inv_batch;
-        const float glogs = g_logs_acc[i] * inv_batch;
-        mu[i]    += pgpe->p.lr_mu * gmu;
-        /* multiplicative sigma update with small cap to avoid bursts */
-        float m = pgpe->p.lr_sigma * glogs;
-        if (m > 0.25f) m = 0.25f; else if (m < -0.25f) m = -0.25f;
-        const float new_sigma = sigma[i] * expf(m);
-        sigma[i] = clampf(new_sigma, pgpe->p.sigma_min, pgpe->p.sigma_max);
+    if (pg->phase == 2) {
+        /* We just evaluated θ− — perform update */
+        pg->r_minus = r;
+
+        float r_plus = pg->r_plus;
+        float r_minus = pg->r_minus;
+
+        if (pg->p.normalize_pair) {
+            /* Center the pair to reduce variance (pair baseline) */
+            float m = 0.5f * (r_plus + r_minus);
+            r_plus  -= m;
+            r_minus -= m;
+        }
+
+        /* Update moving baseline (EWMA) using original rewards */
+        float raw_pair_mean = 0.5f * (pg->r_plus + pg->r_minus);
+        pg->baseline = (1.0f - pg->p.baseline_alpha) * pg->baseline
+                       + pg->p.baseline_alpha * raw_pair_mean;
+
+        /* Gradients and updates */
+        const float tiny = 1e-12f;
+        float diff = 0.5f * (r_plus - r_minus);  /* scalar factor for μ gradient */
+        float sumc = 0.5f * ((pg->r_plus + pg->r_minus) - 2.0f * pg->baseline); /* for log σ */
+
+        for (int i = 0; i < pg->n; ++i) {
+            float sig = (pg->sigma[i] > pg->p.sigma_min) ? pg->sigma[i] : pg->p.sigma_min;
+            float eps = pg->eps[i];
+
+            /* ∇_μ J ≈ diff * ε / σ */
+            float g_mu = diff * (eps / (sig + tiny));
+            pg->mu[i] += pg->p.eta_mu * g_mu;
+
+            /* ∇_{log σ} J ≈ sumc * (ε^2 - 1) */
+            float g_logsig = sumc * (eps * eps - 1.0f);
+            float delta_logsig = pg->p.eta_sigma * g_logsig;
+            /* Stable multiplicative update for positivity */
+            pg->sigma[i] *= expf(delta_logsig);
+        }
+
+        clamp_sigma_vec(pg);
+        clamp_mu_to_bounds(pg);
+
+        pg->iters++;
+        pg->phase = 0; /* ready for a new pair */
+        return;
     }
 
-    if (pgpe->p.project_after_update) {
-        project_into_bounds(mu, n, pgpe->lo, pgpe->hi);
-    }
+    /* If phase==0 and tell() is called, it's a user error; ignore gracefully. */
+}
 
-    /* Monitor f(mu) once per tick */
-    pgpe->f_curr = pgpe->fn(pgpe->mu, pgpe->n, pgpe->user);
-    if ((pgpe->p.mode == PGPE_MINIMIZE && pgpe->f_curr < pgpe->f_best) ||
-        (pgpe->p.mode == PGPE_MAXIMIZE && pgpe->f_curr > pgpe->f_best)) {
-        pgpe->f_best = pgpe->f_curr;
-    }
+float pgpe_step(pgpe_t *pg, pgpe_objective_fn fn, void *userdata) {
+    if (!pg || !fn) return 0.0f;
 
-    return pgpe->f_curr;
+    const float *x = pgpe_ask(pg);
+    float f = fn(x, pg->n, userdata);
+    pgpe_tell(pg, f);
+
+    x = pgpe_ask(pg);
+    f = fn(x, pg->n, userdata);
+    pgpe_tell(pg, f);
+
+    return to_reward(pg->p.mode, f);
 }
 
