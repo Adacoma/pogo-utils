@@ -73,6 +73,7 @@ examples/spsa/spsa
 examples/sep_cmaes/sep_cmaes
 examples/pgpe/pgpe
 examples/social_learning/social_learning
+examples/hit/hit
 
 # Generated figures
 *.pdf
