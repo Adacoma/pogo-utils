@@ -128,7 +128,7 @@ void user_init(void){
     sl_params_t p = {
         .mode = SL_MINIMIZE,
         .roulette_random_prob = 0.10f,
-        .loss_mut_gain = 0.5f,
+        .loss_mut_gain = 0.01f,
         .loss_mut_clip = 1.0f,
         .dup_eps = 1e-3f,
         .repo_capacity = REPO_CAP
