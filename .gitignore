@@ -75,6 +75,7 @@ examples/pgpe/pgpe
 examples/social_learning/social_learning
 examples/hit/hit
 examples/optim/optim
+examples/tiny_alloc/tiny_alloc
 
 # Generated figures
 *.pdf
