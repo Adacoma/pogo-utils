@@ -3,6 +3,7 @@
 #define FIXP_H_
 
 #include <stdint.h>
+#include <limits.h>
 
 
 void init_fixp(void);
@@ -13,6 +14,8 @@ void init_fixp(void);
 /////////////////////////////////////////////////////////////////
 
 /* ==== Q8.24 Fixed-Point Definitions and Functions ==== */
+
+typedef int32_t q8_24_t;
 
 #define Q8_24_FRACTIONAL_BITS 24
 //#define Q8_24_ONE (1 << Q8_24_FRACTIONAL_BITS)
@@ -33,17 +36,17 @@ void init_fixp(void);
  * In Q8.24 the maximum representable value is (2^31 - 1) scaled by 2^-24,
  * which is approximately 127.99999994, and the minimum is -128.0.
  */
-#define Q8_24_MAX ((q8_24_t)0x7FFFFFFF)
-#define Q8_24_MIN ((q8_24_t)0x80000000)
+#define Q8_24_MAX ((q8_24_t)INT32_MAX)
+#define Q8_24_MIN ((q8_24_t)INT32_MIN)
 
-// Q8.24: 1.0 = 2^24 = 16777216.0f; saturate if x >= 128.0 or x < -128.0.
-#define Q8_24_FROM_FLOAT(x)  ((q8_24_t)(((x) >= 128.0f) ? Q8_24_MAX : \
-                                ((x) < -128.0f) ? Q8_24_MIN : \
-                                (((x) * 16777216.0f) + ((x) >= 0 ? 0.5f : -0.5f))))
+static inline q8_24_t q8_24_from_float(float x) {
+    if (x >= 128.0f)  return Q8_24_MAX;
+    if (x <  -128.0f) return Q8_24_MIN;
+    float y = x * 16777216.0f + (x >= 0 ? 0.5f : -0.5f);
+    return (q8_24_t)y;
+}
+#define Q8_24_FROM_FLOAT(x)  q8_24_from_float(x)
 
-
-
-typedef int32_t q8_24_t;
 
 /* Convert an integer to Q8.24 fixed point with saturation. */
 static inline q8_24_t q8_24_from_int(int x) {
@@ -60,7 +63,7 @@ static inline int q8_24_to_int(q8_24_t x) {
 }
 
 /* Convert a float to Q8.24 fixed point with saturation. */
-#define q8_24_from_float(x) Q8_24_FROM_FLOAT(x)    // Always use the macro instead of the inline function
+//#define q8_24_from_float(x) Q8_24_FROM_FLOAT(x) 
 //static inline q8_24_t q8_24_from_float(float x) {
 //    if (x >= 128.0f)
 //        return Q8_24_MAX;
@@ -854,6 +857,8 @@ static inline uint16_t q1_15_get_frac(q1_15_t x) {
 ///                     Q16.16 FUNCTIONS                      /// {{{1
 /////////////////////////////////////////////////////////////////
 /* === Q16.16 Fixed-Point Definitions === */
+typedef int32_t q16_16_t;
+
 /*
  * Q16.16 uses 32 bits: 16 bits for the integer part and 16 bits for the fractional part.
  * The scaling factor is 2^16 = 65536.
@@ -869,17 +874,9 @@ static inline uint16_t q1_15_get_frac(q1_15_t x) {
  * The maximum representable value is 0x7FFFFFFF and the minimum is 0x80000000.
  * (These macros are used for saturation in arithmetic operations.)
  */
-#define Q16_16_MAX ((q16_16_t)0x7FFFFFFF)
-#define Q16_16_MIN ((q16_16_t)0x80000000)
+#define Q16_16_MAX ((q16_16_t)INT32_MAX)
+#define Q16_16_MIN ((q16_16_t)INT32_MIN)
 
-// Q16.16: 1.0 = 2^16 = 65536.0f; saturate if x >= 32768.0 or x < -32768.0.
-#define Q16_16_FROM_FLOAT(x) ((q16_16_t)(((x) >= 32768.0f) ? Q16_16_MAX : \
-                                ((x) < -32768.0f) ? Q16_16_MIN : \
-                                (((x) * 65536.0f) + ((x) >= 0 ? 0.5f : -0.5f))))
-
-
-
-typedef int32_t q16_16_t;
 
 /* --- Conversions Between int and Q16.16 --- */
 /* Convert int to Q16.16 (by shifting left 16 bits) */
@@ -893,16 +890,22 @@ static inline int q16_16_to_int(q16_16_t x) {
 }
 
 /* --- Conversions Between float and Q16.16 --- */
-/* Convert float to Q16.16 */
-#define q16_16_from_float(x) Q16_16_FROM_FLOAT(x)    // Always use the macro instead of the inline function
-//static inline q16_16_t q16_16_from_float(float x) {
-//    return (q16_16_t)(x * Q16_16_ONE);
-//}
 
 /* Convert Q16.16 to float */
 static inline float q16_16_to_float(q16_16_t x) {
     return (float)x / Q16_16_ONE;
 }
+
+static inline q16_16_t q16_16_from_float(float x) {
+    if (x >= 32768.0f)   return Q16_16_MAX;   // saturate upper
+    if (x <= -32768.0f)  return Q16_16_MIN;   // saturate lower
+    float xf = x * 65536.0f;
+    xf += (xf >= 0.0f) ? 0.5f : -0.5f;        // round half away from zero
+    return (q16_16_t)(int32_t)xf;
+}
+
+#define Q16_16_FROM_FLOAT(x) q16_16_from_float(x)
+
 
 /* --- Conversions Between Q8.24 and Q16.16 --- */
 /*

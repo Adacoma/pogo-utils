@@ -1433,6 +1433,7 @@ void test_fixp_functions(void) {
     // For Q16.16, any x >= 32768.0f should saturate.
     {
         q16_16_t c1 = Q16_16_FROM_FLOAT(32768.0f);
+        printf_fixp0("Q16.16: %Q16.16 (expected: %Q16.16)\n", c1, Q16_16_MAX);
         assert(c1 == Q16_16_MAX);
         q16_16_t c2 = Q16_16_FROM_FLOAT(-40000.0f);
         assert(c2 == Q16_16_MIN);
