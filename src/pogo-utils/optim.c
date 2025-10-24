@@ -171,7 +171,7 @@ float opt_get_last_advert(const opt_t *opt) {
     if (!opt) return 0.0f;
     if (opt->algo == OPT_SOCIAL_LEARNING) {
         return sl_get_last_advert(&opt->o.sl);
-    } else if (opt->algo == OPT_SOCIAL_LEARNING) {
+    } else if (opt->algo == OPT_HIT) {
         return hit_get_last_advert(&opt->o.hit);
     } else {
         return 0.0f;

@@ -27,7 +27,7 @@
 #endif
 
 #ifndef OPT_EXAMPLE_ALGO
-#define OPT_EXAMPLE_ALGO 0 /* default: OPT_ES1P1 */
+#define OPT_EXAMPLE_ALGO 5 /* default: OPT_ES1P1 */
 #endif
 
 #define LAMBDA_MAX 4
