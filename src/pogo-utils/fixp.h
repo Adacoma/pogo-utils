@@ -529,20 +529,23 @@ static inline uint32_t q8_24_get_frac(q8_24_t x) {
 /////////////////////////////////////////////////////////////////
 /* ==== Q1.15 Fixed-Point Definitions and Conversion Functions ==== */
 
+typedef int16_t q1_15_t;
+
 /*
  * In Q1.15, a 16-bit signed fixed-point format, 15 bits represent the fractional part.
  * The representable range is approximately [-1.0, 0.99997].
  */
 #define Q1_15_FRACTIONAL_BITS 15
-// XXX
-#define Q1_15_ONE 32768L // (1 << Q1_15_FRACTIONAL_BITS)
+#define Q1_15_SCALE (1 << Q1_15_FRACTIONAL_BITS)  // 32768
+#define Q1_15_ONE ((int32_t)Q1_15_SCALE) // (1 << Q1_15_FRACTIONAL_BITS)
 //#define Q1_15_ONE (q1_15_t)(1 << Q1_15_FRACTIONAL_BITS)
 //#define Q1_15_NEG_ONE  ((q1_15_t)(- (1 << Q1_15_FRACTIONAL_BITS)))        // -1.0 in Q1.15 (-32768)
 
 #define Q1_15_MAX ((q1_15_t)0x7FFF)
 #define Q1_15_MIN ((q1_15_t)0x8000)
-#define Q1_15_SCALE (1 << Q1_15_FRACTIONAL_BITS)  // 32768
-#define Q1_15_LN2_CONST 22713  // ln(2) ≈ 0.693147 * 32768
+
+/* ln(2) in Q1.15: round(0.6931471805599453 * 32768) = 22713 */
+#define Q1_15_LN2_CONST 22713
 
 // Q1.15: 1.0 = 2^15 = 32768.0f; saturate if x >= 1.0 or x < -1.0.
 #define Q1_15_FROM_FLOAT(x)  ((q1_15_t)(((x) >= 1.0f) ? Q1_15_MAX : \
@@ -550,8 +553,6 @@ static inline uint32_t q8_24_get_frac(q8_24_t x) {
                                 (((x) * 32768.0f) + ((x) >= 0 ? 0.5f : -0.5f))))
 
 
-
-typedef int16_t q1_15_t;
 
 /* Convert an integer to Q1.15 fixed-point with saturation.
    Only values in the range [-1, 1) are representable.
@@ -595,7 +596,7 @@ static inline q8_24_t q8_24_from_q1_15(q1_15_t x) {
 
 /* Convert Q1.15 fixed-point to a float. */
 static inline float q1_15_to_float(q1_15_t x) {
-    return (float)x / Q1_15_ONE;
+    return (float)x / (float)Q1_15_SCALE;
     //float tmp = (float)x * 1.52587890625e-01f;
     ////for (uint8_t i = 0; i < 1; i++)
     //    tmp /= 10.0f;
@@ -644,15 +645,27 @@ static inline q1_15_t q1_15_sub(q1_15_t a, q1_15_t b) {
     return (q1_15_t)diff;
 }
 
-/* Multiplication with saturation for Q1.15 */
+/* Rounded multiply: returns (a*b)>>15 with rounding, saturated to q1_15_t range */
 static inline q1_15_t q1_15_mul(q1_15_t a, q1_15_t b) {
-    int32_t prod = ((int32_t)a * b) >> Q1_15_FRACTIONAL_BITS;
-    if (prod > Q1_15_MAX)
-        return Q1_15_MAX;
-    if (prod < Q1_15_MIN)
-        return Q1_15_MIN;
-    return (q1_15_t)prod;
+    int32_t p = (int32_t)a * (int32_t)b;               /* Q2.30 */
+    /* add 0.5 ulp for rounding toward nearest */
+    p += (p >= 0 ? (1 << (Q1_15_FRACTIONAL_BITS - 1)) : -(1 << (Q1_15_FRACTIONAL_BITS - 1)));
+    int32_t r = p >> Q1_15_FRACTIONAL_BITS;            /* back to Q1.15 */
+    if (r > Q1_15_MAX) r = Q1_15_MAX;
+    if (r < Q1_15_MIN) r = Q1_15_MIN;
+    return (q1_15_t)r;
 }
+
+/* Multiply two Q1.15 values, but keep full int32 in Q1.15 for intermediate work (with rounding). */
+static inline int32_t q1_15_mul32_r(int32_t a, int32_t b) {
+    int64_t p = (int64_t)a * (int64_t)b;               /* Q2.30 */
+    p += (p >= 0 ? (1LL << (Q1_15_FRACTIONAL_BITS - 1)) : -(1LL << (Q1_15_FRACTIONAL_BITS - 1)));
+    return (int32_t)(p >> Q1_15_FRACTIONAL_BITS);
+}
+
+/* Divide by small integer with rounding using 32-bit “magic reciprocals”. */
+static inline int32_t div3_r32(int32_t x){ return (int32_t)(((int64_t)x * 1431655766LL + (x>=0?1: -1)) >> 32); } /* round(2^32/3) */
+static inline int32_t div5_r32(int32_t x){ return (int32_t)(((int64_t)x *  858993459LL + (x>=0?1: -1)) >> 32); } /* round(2^32/5) */
 
 /* Division with saturation for Q1.15 */
 static inline q1_15_t q1_15_div(q1_15_t a, q1_15_t b) {
@@ -679,176 +692,107 @@ static inline int q1_15_is_saturated(q1_15_t x) {
 }
 
 
-/*
- * q1_15_exp:
- * Computes exp(x) for a Q1.15 number x.
- *
- * For x >= 0, exp(x) is at least 1.0 and we saturate to Q1_15_MAX.
- *
- * For negative x, we use range reduction:
- *      x = n * ln2 + r, with r in [0, ln2),
- * so that exp(x) = 2^n * exp(r).
- *
- * Then exp(r) is approximated by the unrolled Taylor series:
- *      exp(r) ≈ 1 + r + r²/2 + r³/3 + r⁴/4 + r⁵/5
- *
- * To avoid slow 32-bit divisions we:
- *   - Replace division by 2 with a right shift by 1.
- *   - Replace division by 4 with a right shift by 2.
- *   - Replace division by 3 with a multiplication by RECIP_3 (≈ (1<<32)/3)
- *   - Replace division by 5 with a multiplication by RECIP_5 (≈ (1<<32)/5)
- *
- * All intermediate arithmetic is done in 32- or 64-bit integers.
- */
 static inline q1_15_t q1_15_exp(q1_15_t x) {
-    // For any nonnegative input, exp(x) >= 1.0; saturate to Q1_15_MAX.
-    if (x >= 0)
-        return Q1_15_MAX;
+    /* For x >= 0, exp(x) >= 1 and Q1.15 cannot represent >1. Saturate. */
+    if (x >= 0) return Q1_15_MAX;
 
-    // Range reduction: write x = n * ln2 + r, with r in [0, ln2)
-    // x and ln2 are in Q1.15. Since x is negative, we compute floor(x/ln2).
-    int32_t x32 = (int32_t)x;             // e.g., for x = -1.0, x32 = -32768.
-    int32_t L = Q1_15_LN2_CONST;          // ~22713 in Q1.15 units.
-    int n = x32 / L;                     // C division truncates toward 0.
-    if (x32 % L != 0)
-        n--;                           // Adjust to get the mathematical floor for negative x.
-    int32_t n_ln2 = n * L;
-    int32_t r32 = x32 - n_ln2;           // Remainder r in Q1.15.
-    q1_15_t r = (q1_15_t) r32;
-    
-    // Prepare the constant representing 1.0 in Q1.15.
-    int32_t one = Q1_15_ONE;             // 32768
+    /* Range reduction: x = n*ln2 + r, with r in [0, ln2) */
+    int32_t x32 = (int32_t)x;           /* Q1.15 */
+    int32_t L   = Q1_15_LN2_CONST;      /* Q1.15 */
+    int n = x32 / L;                    /* trunc toward 0 */
+    if (x32 % L) n--;                   /* floor for negatives */
+    int32_t r = x32 - n * L;            /* Q1.15, 0 <= r < ln2 */
 
-    // Unroll the Taylor series for exp(r):
-    // exp(r) ≈ 1 + r + r²/2 + r³/3 + r⁴/4 + r⁵/5
-    int32_t sum = one;                   // term0 = 1.0
+    /* exp(r) via 5th-order (tightly rounded) Taylor in Q1.15, Horner form:
+       exp(r) ≈ 1 + r * (1 + r*(1/2 + r*(1/6 + r*(1/24 + r*(1/120)))))
+    */
+    int32_t one = Q1_15_ONE;            /* 32768 */
 
-    // term1 = r
-    int32_t term1 = r;
-    sum += term1;
+    /* Fold from smallest term up, rounding each step */
+    /* c5 = 1/120 */
+    //int32_t t = q1_15_mul32_r(one, div5_r32(div5_r32( one ))); /* 1/25? No—do it explicitly: */
+    /* Better: constants directly in Q1.15 to avoid compounding div rounding */
+    const int32_t C2 = (int32_t)((1.0/2.0)*Q1_15_SCALE + 0.5);   /* 16384 */
+    const int32_t C3 = (int32_t)((1.0/6.0)*Q1_15_SCALE + 0.5);   /*  5461 */
+    const int32_t C4 = (int32_t)((1.0/24.0)*Q1_15_SCALE + 0.5);  /*  1365 */
+    const int32_t C5 = (int32_t)((1.0/120.0)*Q1_15_SCALE + 0.5); /*   273 */
 
-    // term2 = (term1 * r) >> 15, then divided by 2 (division by 2 is a right shift by 1)
-    int64_t prod = (int64_t)term1 * r;
-    int32_t term2 = (int32_t)(prod >> (Q1_15_FRACTIONAL_BITS + 1)); // shift by (15 + 1)
-    sum += term2;
+    int32_t y = C5;                                     /* Q1.15 */
+    y = q1_15_mul32_r(y, r) + C4;
+    y = q1_15_mul32_r(y, r) + C3;
+    y = q1_15_mul32_r(y, r) + C2;
+    y = q1_15_mul32_r(y, r) + one;                      /* now y ≈ 1 + r/.. chain */
+    int32_t exp_r = q1_15_mul32_r(y, r) + one;          /* 1 + r*(...) */
 
-    // term3 = (term2 * r) >> 15, then divided by 3.
-    prod = (int64_t)term2 * r;
-    int32_t term3_intermediate = (int32_t)(prod >> Q1_15_FRACTIONAL_BITS);
-    // Precomputed reciprocal for 3 in Q32: RECIP_3 = floor((1<<32)/3) ≈ 1431655765 (0x55555555).
-    const uint32_t RECIP_3 = 1431655765U;
-    int32_t term3 = (int32_t)(((int64_t)term3_intermediate * RECIP_3) >> 32);
-    sum += term3;
-
-    // term4 = (term3 * r) >> 15, then divided by 4 (division by 4 is a right shift by 2).
-    prod = (int64_t)term3 * r;
-    int32_t term4 = (int32_t)(prod >> (Q1_15_FRACTIONAL_BITS + 2)); // shift by (15 + 2)
-    sum += term4;
-
-    // term5 = (term4 * r) >> 15, then divided by 5.
-    prod = (int64_t)term4 * r;
-    int32_t term5_intermediate = (int32_t)(prod >> Q1_15_FRACTIONAL_BITS);
-    // Precomputed reciprocal for 5 in Q32: RECIP_5 = floor((1<<32)/5) ≈ 858993459 (0x33333333).
-    const uint32_t RECIP_5 = 858993459U;
-    int32_t term5 = (int32_t)(((int64_t)term5_intermediate * RECIP_5) >> 32);
-    sum += term5;
-
-    // Now sum holds the series approximation for exp(r) in Q1.15.
-
-    // Scale the result by 2^n, i.e. compute result = exp(r) * 2^n.
-    int32_t result = sum;
-    if (n < 0) {
-        // For negative n, perform a right shift.
-        result = result >> (-n);
-    } else {
-        // For positive n, left-shift; if n is large, saturate.
-        if (n >= 16) {  // 2^16 would already overflow Q1.15.
-            result = one - 1;  // Saturate to Q1_15_MAX.
-        } else {
-            result = result << n;
-            if (result >= one)
-                result = one - 1;
-        }
+    /* Scale by 2^n (n ≤ 0). For n<0, right-shift with rounding each step. */
+    int32_t result = exp_r;
+    int sh = -n;
+    while (sh-- > 0) {
+        /* round: add sign*0.5 ulp before >>1 */
+        result += (result >= 0 ? 1 : -1) * (1);
+        result >>= 1;
     }
 
-    return (q1_15_t) result;
+    /* Saturate to Q1.15 (should be in (0,1]) */
+    if (result >= Q1_15_ONE) result = Q1_15_ONE - 1;  /* max representable < 1 */
+    if (result < Q1_15_MIN)  result = Q1_15_MIN;      /* shouldn’t happen here */
+    return (q1_15_t)result;
 }
 
 
-
-/*
- * q1_15_log:
- * Computes the natural logarithm (ln) for a Q1.15 number x > 0.
- * Q1.15 represents numbers in approximately [-1.0, 0.99997],
- * so the ideal value 1.0 is not exactly representable (since Q1_15_MAX is 32767,
- * while the ideal 1.0 would be 32768). To work around this,
- * we perform normalization in 32-bit arithmetic.
- *
- * We normalize x as m * 2^n (with m in [Q1_15_SCALE, 2*Q1_15_SCALE), where
- * Q1_15_SCALE is 1<<15 (32768)). Then we set t = m - Q1_15_SCALE and approximate
- * ln(1+t) with a 7-term alternating series. Finally, ln(x) = ln(m) + n * ln2.
- *
- * This revised implementation computes everything in a 32-bit variable and then
- * saturates the final result to the valid Q1.15 range [-32768, 32767].
- */
 static inline q1_15_t q1_15_log(q1_15_t x) {
-    if (x <= 0)
-        return Q1_15_MIN;  // undefined for nonpositive x, so saturate
+    if (x <= 0) return Q1_15_MIN;
 
-    int n = 0;
-    // Use a 32-bit integer for normalization.
-    // If x equals Q1_15_MAX (32767), treat it as the ideal 1.0 (32768)
-    int32_t m32 = (x == Q1_15_MAX) ? (1 << Q1_15_FRACTIONAL_BITS) : (int32_t)x;
+    /* Normalize x to m in [1,2): x = m * 2^n. We do it in Q1.15. */
+    int32_t m = (int32_t)x;
+    int      n = 0;
 
-    // Normalize m32 so that it lies in [32768, 65536)
-    while (m32 < (1 << Q1_15_FRACTIONAL_BITS)) {
-        m32 *= 2;
-        n--;
-    }
-    while (m32 >= ((1 << Q1_15_FRACTIONAL_BITS) << 1)) {
-        m32 /= 2;
-        n++;
-    }
+    /* Treat Q1_15_MAX as exact 1.0 for stability */
+    if (m == Q1_15_MAX) m = Q1_15_ONE;
 
-    // t = m32 - 32768, which represents m - 1.0
-    int32_t t_int = m32 - (1 << Q1_15_FRACTIONAL_BITS);
+    while (m < Q1_15_ONE) { m <<= 1; n--; }              /* scale up */
+    while (m >= (Q1_15_ONE << 1)) { m >>= 1; n++; }      /* scale down */
 
-    // Compute ln(1+t) using a 7-term alternating series in 32-bit arithmetic.
-    int32_t term = t_int;  // first term is t
-    int32_t sum  = t_int;
-    for (int i = 2; i <= 5; i++) {
-        int32_t prod = (term * t_int) >> Q1_15_FRACTIONAL_BITS; // fixed-point multiplication
-        term = prod / i;  // plain 32-bit division (non-saturating)
-        if (i % 2 == 0)
-            sum -= term;
-        else
-            sum += term;
-    }
+    /* y = (m - 1) / (m + 1) in Q1.15 with rounding */
+    int32_t num = m - Q1_15_ONE;                         /* Q1.15 */
+    int32_t den = m + Q1_15_ONE;                         /* Q1.15 */
+    /* y = (num / den). Do a Q1.15 division with rounding: (num<<15)/den */
+    int64_t y64 = ((int64_t)num << Q1_15_FRACTIONAL_BITS);
+    if ( (y64 ^ den) >= 0 ) y64 += (den/2); else y64 -= (den/2);
+    int32_t y = (int32_t)(y64 / den);                    /* Q1.15, |y| <= ~0.333 */
 
-    // ln2 in Q1.15: ideal ln2 ≈ 0.693147, which in Q1.15 is about 22713.
-    int32_t ln2_32 = 22713;
-    int32_t n_ln2 = n * ln2_32;
+    /* S = y + y^3/3 + y^5/5 (+ y^7/7 if you want more accuracy) */
+    int32_t y2 = q1_15_mul32_r(y, y);                    /* y^2 */
+    int32_t y3 = q1_15_mul32_r(y2, y);                   /* y^3 */
+    int32_t y5 = q1_15_mul32_r(y3, y2);                  /* y^5 */
+    int32_t term3 = div3_r32(y3);
+    int32_t term5 = div5_r32(y5);
+    int32_t S = y + term3 + term5;                       /* Q1.15 */
 
-    int32_t ln_x = sum + n_ln2;
+    /* ln(m) ≈ 2*S */
+    int32_t ln_m = (S << 1);                             /* Q1.15 */
 
-    // Saturate ln_x to the valid Q1.15 range: [-32768, 32767]
-    if (ln_x < -32768)
-        ln_x = -32768;
-    if (ln_x > 32767)
-        ln_x = 32767;
+    /* ln(x) = ln(m) + n*ln2 */
+    int32_t ln_x = ln_m + n * Q1_15_LN2_CONST;
 
-    return (q1_15_t) ln_x;
+    /* Saturate */
+    if (ln_x > Q1_15_MAX) ln_x = Q1_15_MAX;
+    if (ln_x < Q1_15_MIN) ln_x = Q1_15_MIN;
+    return (q1_15_t)ln_x;
 }
 
-// Returns the integer part of a Q1.15 number.
+
+/* Signed, human-readable decomposition */
 static inline int16_t q1_15_get_int(q1_15_t x) {
-    return x >> Q1_15_FRACTIONAL_BITS;
+    int16_t s = (x < 0);
+    int32_t ax = s ? -(int32_t)x : (int32_t)x;
+    int16_t ip = (int16_t)(ax >> Q1_15_FRACTIONAL_BITS);
+    return s ? -ip : ip;
 }
 
-// Returns the fractional part of a Q1.15 number as an unsigned 16-bit value.
 static inline uint16_t q1_15_get_frac(q1_15_t x) {
-    uint16_t mask = (1 << Q1_15_FRACTIONAL_BITS) - 1;
-    return (x >= 0) ? ((uint16_t)x & mask) : (((uint16_t)(-x)) & mask);
+    int32_t ax = (x < 0) ? -(int32_t)x : (int32_t)x;
+    return (uint16_t)(ax & (Q1_15_SCALE - 1));
 }
 
 

@@ -567,7 +567,7 @@ void test_fixp_functions(void) {
         // Test 3: exp(-1.0) should be close to exp(-1) ≈ 0.3679.
         q1_15_t const exp_neg1 = q1_15_exp(q1_15_from_float(-1.0f));
         float const exp_neg1_f = q1_15_to_float(exp_neg1);
-        printf0("q1_15_exp(-1.0) = %d.%u (expected ~0.3679)\n", q1_15_get_int(exp_neg1), q1_15_get_frac(exp_neg1));
+        printf0("q1_15_exp(-1.0) = %.6f (expected ~0.367879)\n", exp_neg1_f);
         assert(fabsf(exp_neg1_f - 0.3679f) < TOLERANCE);
     }
 
@@ -584,7 +584,7 @@ void test_fixp_functions(void) {
         // Test 6: log(0.5) should be about ln(0.5) ≈ -0.693147.
         q1_15_t const log05 = q1_15_log(q1_15_from_float(0.5f));
         float const log05_f = q1_15_to_float(log05);
-        printf0("q1_15_log(0.5) = %d.%u (expected ~ -0.693147)\n", (int16_t)q1_15_get_int(log05), (uint16_t)q1_15_get_frac(log05));
+        printf0("q1_15_log(0.5) = %.6f (expected ~ -0.693147)\n", log05_f);
         assert(fabsf(log05_f + 0.693147f) < TOLERANCE);
     }
     // XXX
