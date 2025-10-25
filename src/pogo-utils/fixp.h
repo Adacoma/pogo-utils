@@ -4,6 +4,8 @@
 
 #include <stdint.h>
 #include <limits.h>
+#include <stdbool.h>
+#include <math.h>
 
 
 void init_fixp(void);
@@ -803,6 +805,8 @@ static inline uint16_t q1_15_get_frac(q1_15_t x) {
 /* === Q16.16 Fixed-Point Definitions === */
 typedef int32_t q16_16_t;
 
+extern bool q16_16_inited;
+
 /*
  * Q16.16 uses 32 bits: 16 bits for the integer part and 16 bits for the fractional part.
  * The scaling factor is 2^16 = 65536.
@@ -811,8 +815,6 @@ typedef int32_t q16_16_t;
 #define Q16_16_ONE     ((q16_16_t)(1 << Q16_16_FRACTIONAL_BITS))           // 1.0 in Q16.16 (65536)
 #define Q16_16_NEG_ONE ((q16_16_t)(- (1 << Q16_16_FRACTIONAL_BITS)))       // -1.0 in Q16.16 (-65536)
 
-#define Q16_16_LN2_CONST 45426          // ln2 ≈ 0.693147 * 65536
-
 /*
  * Q16.16 uses a signed 32-bit integer.
  * The maximum representable value is 0x7FFFFFFF and the minimum is 0x80000000.
@@ -820,6 +822,14 @@ typedef int32_t q16_16_t;
  */
 #define Q16_16_MAX ((q16_16_t)INT32_MAX)
 #define Q16_16_MIN ((q16_16_t)INT32_MIN)
+
+/* Useful naturals in Q16.16 */
+#define Q16_16_LN2     ((q16_16_t)45426)   /* ln(2)  ≈ 0.693147 * 65536 */
+#define Q16_16_LOG2E  ((q16_16_t)94548) /* log2(e)=1/ln2 ≈ 1.442695 * 65536 */
+
+/* Recommended exp() safe range (≈ [-16, +10.397]) */
+#define Q16_16_EXP_MAX_ARG ((q16_16_t)681360)              /* 10.397 * 65536 */
+#define Q16_16_EXP_MIN_ARG ((q16_16_t)(-16 * Q16_16_ONE))  /* -16 */
 
 
 /* --- Conversions Between int and Q16.16 --- */
@@ -841,9 +851,10 @@ static inline float q16_16_to_float(q16_16_t x) {
 }
 
 static inline q16_16_t q16_16_from_float(float x) {
-    if (x >= 32768.0f)   return Q16_16_MAX;   // saturate upper
+    if (x >= 32767.99998f) return Q16_16_MAX;
     if (x <= -32768.0f)  return Q16_16_MIN;   // saturate lower
     float xf = x * 65536.0f;
+    /* round half away from zero */
     xf += (xf >= 0.0f) ? 0.5f : -0.5f;        // round half away from zero
     return (q16_16_t)(int32_t)xf;
 }
@@ -887,838 +898,247 @@ static inline int16_t q1_15_from_q16_16(q16_16_t x) {
  * The operation is performed in 64-bit to detect overflow.
  */
 static inline q16_16_t q16_16_add(q16_16_t a, q16_16_t b) {
-    int64_t sum = (int64_t)a + (int64_t)b;
-    if(sum > Q16_16_MAX)
-        return Q16_16_MAX;
-    if(sum < Q16_16_MIN)
-        return Q16_16_MIN;
-    return (q16_16_t)sum;
+    int32_t s = (int32_t)(a + b);
+    /* if overflow: signs of (s^a) and (s^b) differ at sign bit */
+    int32_t ov = ((s ^ a) & (s ^ b)) >> 31;
+    if (ov) return (s < 0) ? Q16_16_MIN : Q16_16_MAX; /* saturated */
+    return s;
+
 }
 
 /*
  * Q16.16 Subtraction with Saturation.
  */
 static inline q16_16_t q16_16_sub(q16_16_t a, q16_16_t b) {
-    int64_t diff = (int64_t)a - (int64_t)b;
-    if(diff > Q16_16_MAX)
-        return Q16_16_MAX;
-    if(diff < Q16_16_MIN)
-        return Q16_16_MIN;
-    return (q16_16_t)diff;
+    int32_t s = (int32_t)(a - b);
+    int32_t ov = ((s ^ a) & (s ^ ~b)) >> 31;
+    if (ov) return (s < 0) ? Q16_16_MIN : Q16_16_MAX;
+    return s;
 }
 
-/*
- * Q16.16 Multiplication with Saturation.
- * Multiply two Q16.16 numbers. The 64-bit product is shifted right by 16 bits.
- */
+/* --- Multiply: one 64-bit product, then down-shift and saturate --- */
 static inline q16_16_t q16_16_mul(q16_16_t a, q16_16_t b) {
-    int64_t prod = (int64_t)a * (int64_t)b;
-    prod = prod >> Q16_16_FRACTIONAL_BITS;
-    if(prod > Q16_16_MAX)
-        return Q16_16_MAX;
-    if(prod < Q16_16_MIN)
-        return Q16_16_MIN;
-    return (q16_16_t)prod;
+    /* 32x32->64 is cheap on RV32IM (MUL + MULH), the rest stays 32-bit. */
+    int64_t p = (int64_t)a * (int64_t)b;
+    /* arithmetic shift down to Q16.16 */
+    int64_t v = p >> Q16_16_FRACTIONAL_BITS;
+    if (v > Q16_16_MAX) return Q16_16_MAX;
+    if (v < Q16_16_MIN) return Q16_16_MIN;
+    return (q16_16_t)v;
 }
 
+/* --- Branch-free saturating abs (handles INT32_MIN -> Q16_16_MAX) --- */
+static inline q16_16_t q16_16_abs(q16_16_t x) {
+    /* Standard branch-free abs, then fix INT_MIN to saturate */
+    int32_t m = x >> 31;                 /* all 1s if negative, else 0 */
+    int32_t v = (x ^ m) - m;             /* abs w/o branch */
+    /* If x == INT_MIN, v overflows back to INT_MIN => saturate to MAX */
+    return (v == Q16_16_MIN) ? Q16_16_MAX : v;
+}
 
-#ifdef Q16_16_LUT
-
-#define Q16_16_RECIP_TABLE_SIZE 1024
+#define Q16_16_RECIP_TABLE_SIZE 256
 // Global lookup table for approximate reciprocals of normalized Q16.16 numbers.
 // The table covers the range [Q16_16_ONE/2, Q16_16_ONE) i.e. [32768, 65536).
 // Each table entry is a Q16.16 reciprocal approximation.
 extern q16_16_t q16_16_recip_table[Q16_16_RECIP_TABLE_SIZE];
 
-/*
- * Initializes the reciprocal lookup table for Q16.16 numbers.
- *
- * The normalized range is [32768, 65536). For each index i in 0..(Q16_16_RECIP_TABLE_SIZE-1):
- *    - We compute a normalized value as:
- *          norm_val = 32768.0 + i * delta
- *      where delta = (65536 - 32768) / Q16_16_RECIP_TABLE_SIZE = 32768.0 / Q16_16_RECIP_TABLE_SIZE.
- *    - The true reciprocal (in Q16.16) is:
- *          recip = Q16_16_ONE / (norm_val / Q16_16_ONE)
- *                = Q16_16_ONE * Q16_16_ONE / norm_val
- *                = 65536.0 * 65536.0 / norm_val.
- *      (We compute this in float and then convert to Q16.16.)
- *
- * If the inputs are compile-time constants, you could precompute this table offline.
- */
 void _init_q16_16(void);
 
-
-/*
- * q16_16_approximate_reciprocal:
- *
- * Computes an approximate reciprocal 1/b for a Q16.16 number b using a lookup table.
- *
- * Steps:
- * 1. Check for b == 0; if so, return Q16_16_MAX.
- * 2. Work with the absolute value of b and record its sign.
- * 3. Early saturation: if |b| <= 2, then 1/b would overflow, so return saturation.
- * 4. Normalize b so that its absolute value (norm) is in [Q16_16_ONE/2, Q16_16_ONE],
- *    i.e. [32768, 65536). This is done via:
- *         clz = __builtin_clz(b)
- *         p = 31 - clz,
- *         shift = p - Q16_16_FRACTIONAL_BITS.
- *    Then if shift > 0, norm = b >> shift; else norm = b << (-shift).
- * 5. Use the top 10 bits of (norm - 32768) to index into the lookup table.
- * 6. Retrieve an initial reciprocal approximation r from the table.
- * 7. Optionally, perform one Newton–Raphson iteration:
- *         r = r * (2 - norm * r)
- * 8. Adjust for normalization: since b = norm * 2^(shift), then 1/b = (1/norm) * 2^(-shift).
- * 9. Reapply the original sign and saturate the result.
+/* --- msb_index: index of highest set bit in 32-bit x (0..31). x!=0.
+ * Few predictable branches; no loops; no CLZ dependency.
  */
-static inline q16_16_t q16_16_approximate_reciprocal(q16_16_t b) {
-    if (b == 0)
-        return Q16_16_MAX;  // Division by zero.
-
-    int sign = 1;
-    if (b < 0) {
-        sign = -1;
-        b = -b;
-    }
-
-    // Early saturation: if |b| <= 2 then the reciprocal is huge.
-    if (b <= 2)
-        return (sign > 0 ? Q16_16_MAX : Q16_16_MIN);
-
-    // Normalize b into [32768, 65536).
-    int clz = __builtin_clz((unsigned) b);
-    int p = 31 - clz; // floor(log2(b))
-    int shift = p - Q16_16_FRACTIONAL_BITS;
-    q16_16_t norm;
-    if (shift > 0)
-        norm = b >> shift;
-    else
-        norm = b << (-shift);
-    // Now, norm is in [32768, 65536).
-
-    // Use the high 10 bits of (norm - 32768) as an index into the table.
-    int index = ((int)norm - 32768) * Q16_16_RECIP_TABLE_SIZE / 32768;
-    if (index < 0)
-        index = 0;
-    if (index >= Q16_16_RECIP_TABLE_SIZE)
-        index = Q16_16_RECIP_TABLE_SIZE - 1;
-    q16_16_t r = q16_16_recip_table[index];
-
-    // Perform one Newton–Raphson iteration: r = r * (2 - norm * r)
-    int32_t prod = ((int64_t)norm * r) >> Q16_16_FRACTIONAL_BITS;
-    int32_t diff = (2 * Q16_16_ONE) - prod;
-    r = (int32_t)(((int64_t)r * diff) >> Q16_16_FRACTIONAL_BITS);
-
-    // Adjust for normalization: since b = norm * 2^(shift), 1/b = (1/norm) * 2^(-shift)
-    if (shift > 0)
-        r >>= shift;
-    else if (shift < 0) {
-        if (r > (Q16_16_MAX >> (-shift)))
-            r = Q16_16_MAX;
-        else
-            r <<= -shift;
-    }
-
-    int32_t result = sign * r;
-    if (result > Q16_16_MAX)
-        result = Q16_16_MAX;
-    else if (result < Q16_16_MIN)
-        result = Q16_16_MIN;
-    return (q16_16_t)result;
+static inline int msb_index(uint32_t x)
+{
+    int n = 0;
+    if (x >= (1u << 16)) { x >>= 16; n += 16; }
+    if (x >= (1u <<  8)) { x >>=  8; n +=  8; }
+    if (x >= (1u <<  4)) { x >>=  4; n +=  4; }
+    if (x >= (1u <<  2)) { x >>=  2; n +=  2; }
+    if (x >= (1u <<  1)) {            n +=  1; }
+    return n;
 }
 
-
-/*
- * q16_16_div:
- *
- * Computes the division a / b for Q16.16 numbers by multiplying a by the
- * approximate reciprocal of b.
- *
- * This method avoids performing an expensive 64-bit division by using the
- * lookup-based reciprocal (which itself may use one Newton–Raphson iteration).
- *
- * Steps:
- * 1. If b is zero, return saturation (Q16_16_MAX or Q16_16_MIN depending on sign).
- * 2. Compute reciprocal = q16_16_approximate_reciprocal(b).
- * 3. Multiply a by the reciprocal, and shift right by 16 bits to account for the Q16.16 scale.
- * 4. Saturate the result if necessary.
+/* ~16b accuracy, 1 NR step */
+/* --- approximate reciprocal 1/b (Q16.16) using:
+ *  1) sign & early saturation
+ *  2) normalize: b = m * 2^k, with m in [1,2)
+ *  3) LUT 1/m (8 bits) + one Newton step r = r*(2 - m*r)
+ *  4) scale back by 2^(-k)
  */
-static inline q16_16_t q16_16_div(q16_16_t a, q16_16_t b) {
-    if (b == 0)
-        return (a >= 0) ? Q16_16_MAX : Q16_16_MIN;
-    q16_16_t reciprocal = q16_16_approximate_reciprocal(b);
-    int64_t res = ((int64_t)a * reciprocal) >> Q16_16_FRACTIONAL_BITS;
-    if (res > Q16_16_MAX)
-        return Q16_16_MAX;
-    if (res < Q16_16_MIN)
-        return Q16_16_MIN;
+static inline q16_16_t q16_16_approximate_reciprocal(q16_16_t b) {
+    if (b == 0) return Q16_16_MAX;
+    if (!q16_16_inited) _init_q16_16();
+
+    int sign = 1;
+    uint32_t ub = (uint32_t)b;
+    if (b < 0) { sign = -1; ub = (uint32_t)(-b); }
+
+    /* If |b| <= 2/65536, reciprocal would overflow in Q16.16 */
+    if (ub <= 2u) return (sign > 0) ? Q16_16_MAX : Q16_16_MIN;
+
+    /* Normalize: b = m * 2^k, with m in [1,2) in Q16.16 */
+    int p = msb_index(ub);
+    int k = p - 16;
+    uint32_t m;
+    if (k >= 0) m = ub >> k; else m = ub << (-k);
+    /* m is now in [65536, 131072) */
+
+    /* LUT index for m in [1,2): take top 8 fractional bits: (m - 1.0) / (1/256) */
+    uint32_t frac = (m - (uint32_t)Q16_16_ONE) >> 8;   /* 0..255 */
+    q16_16_t r = q16_16_recip_table[frac];                     /* ~1/m */
+
+    /* One Newton step in Q16.16: r <- r*(2 - m*r) */
+    int32_t mr   = (int32_t)(((int64_t)m * r) >> 16);
+    int32_t two  = (2 * Q16_16_ONE);
+    int32_t diff = (int32_t)(two - mr);
+    r = (q16_16_t)(((int64_t)r * diff) >> 16);
+
+    /* Scale by 2^(-k) */
+    if (k > 0)      r >>= k;
+    else if (k < 0) {
+        int sh = -k;
+        if (r > (Q16_16_MAX >> sh)) r = Q16_16_MAX;
+        else                        r <<= sh;
+    }
+
+    int32_t res = (sign > 0) ? r : -r;
+    if (res > Q16_16_MAX) res = Q16_16_MAX;
+    if (res < Q16_16_MIN) res = Q16_16_MIN;
     return (q16_16_t)res;
 }
 
-#else
 
-/*
- * q16_16_approximate_reciprocal:
- *
- * Computes an approximate reciprocal 1/b for a Q16.16 number b.
- *
- * The method:
- * 1. Checks that b is nonzero and handles negative inputs.
- * 2. Performs an early saturation check: in Q16.16, the smallest positive number
- *    that can be inverted without overflow is about 1/32768 (0.000030517578125).
- *    In fixed-point that value is Q16_16_ONE/32768, i.e. 65536/32768 = 2.
- *    If |b| <= 2, the reciprocal exceeds the representable range so the function
- *    immediately returns Q16_16_MAX (or Q16_16_MIN for negative b).
- * 3. Normalizes b so that its absolute value (norm) lies in [Q16_16_ONE/2, Q16_16_ONE],
- *    which corresponds roughly to the real interval [0.5, 1.0]. The number of shifts is
- *    recorded in the variable "shift".
- * 4. Computes an initial guess for 1/norm using a linear approximation:
- *
- *       r0 = (48/17) - (32/17) * norm_real
- *
- *    The constants are scaled into Q16.16 format.
- * 5. Refines the guess with three iterations of the Newton–Raphson update:
- *
- *       rₙ₊₁ = rₙ * (2 - norm * rₙ)
- *
- * 6. Adjusts the result back to the original scaling (undoing the normalization),
- *    taking care to check for overflow when left-shifting.
- * 7. Applies the original sign and finally saturates the result to Q16_16_MAX or Q16_16_MIN.
- */
-static inline q16_16_t q16_16_approximate_reciprocal(q16_16_t b) {
-    // b must not be zero.
-    if (b == 0) {
-        return Q16_16_MAX;
-    }
-
-    // Work with the absolute value; record the sign.
-    int sign = 1;
-    if (b < 0) {
-        sign = -1;
-        b = -b;
-    }
-
-    // Early saturation:
-    // In Q16.16 the smallest positive value that can be inverted without overflow is:
-    //    1/32768 ≈ 0.000030517578125.
-    // In Q16.16, 0.000030517578125 is represented as:
-    //    0.000030517578125 * 65536 = 2.
-    // Thus, if b <= 2, 1/b would be >= 32768 (beyond the Q16.16 maximum ~32767.99998).
-    if (b <= 2) {
-        return (sign > 0 ? Q16_16_MAX : Q16_16_MIN);
-    }
-
-    // Normalize b so that norm is in [Q16_16_ONE/2, Q16_16_ONE] (i.e. [32768, 65536]).
-    int shift = 0;
-    q16_16_t norm = b;
-    while (norm < (Q16_16_ONE >> 1)) {
-        norm <<= 1;
-        shift--;
-    }
-    while (norm > Q16_16_ONE) {
-        norm >>= 1;
-        shift++;
-    }
-
-    // Use a linear approximation for the initial guess on the interval [0.5,1].
-    // In real arithmetic for x in [0.5,1], one effective approximation for 1/x is:
-    //     r0 = (48/17) - (32/17)*x.
-    // Here, x = norm / Q16_16_ONE. We precompute the constants in Q16.16:
-    const int32_t K = (int32_t)((48.0 / 17.0) * Q16_16_ONE + 0.5);
-    const int32_t L = (int32_t)((32.0 / 17.0) * Q16_16_ONE + 0.5);
-    int32_t r = K - (int32_t)(((int64_t)L * norm) >> Q16_16_FRACTIONAL_BITS);
-
-    // Refine the approximation with three Newton–Raphson iterations:
-    //    r = r * (2 - norm * r)
-    for (int i = 0; i < 3; i++) {
-        int64_t prod = ((int64_t)norm * r) >> Q16_16_FRACTIONAL_BITS;
-        int64_t diff = (2LL * Q16_16_ONE) - prod;
-        r = (int32_t)(((int64_t)r * diff) >> Q16_16_FRACTIONAL_BITS);
-    }
-
-    // Adjust for the normalization.
-    // Since we wrote b as: b = norm * 2^(shift), it follows that 1/b = (1/norm) * 2^(-shift).
-    if (shift > 0) {
-        r >>= shift;
-    } else if (shift < 0) {
-        // When left-shifting, check for potential overflow.
-        if (r > (Q16_16_MAX >> (-shift)))
-            r = Q16_16_MAX;
-        else
-            r <<= -shift;
-    }
-
-    int32_t result = sign * r;
-
-    // Final saturation to the representable Q16.16 range.
-    if (result > Q16_16_MAX)
-        result = Q16_16_MAX;
-    else if (result < Q16_16_MIN)
-        result = Q16_16_MIN;
-
-    return (q16_16_t)result;
-}
-
-/*
- * Q16.16 Division with Saturation.
- * Divides a Q16.16 number by another.
- * The numerator is shifted left by 16 bits to maintain precision.
- * Division by zero is handled by returning Q16_16_MAX (if numerator is nonnegative)
- * or Q16_16_MIN (if numerator is negative).
- */
+/* saturating, uses reciprocal */
 static inline q16_16_t q16_16_div(q16_16_t a, q16_16_t b) {
-    if(b == 0)
-        return (a >= 0) ? Q16_16_MAX : Q16_16_MIN;
-
-    // Division by using multiplication of 1/b
-    q16_16_t const reciprocal = q16_16_approximate_reciprocal(b);        // Compute reciprocal of b in Q8.24
-    int64_t res = ((int64_t)a * reciprocal) >> Q16_16_FRACTIONAL_BITS;  // Multiply a by the reciprocal
-    if (res > Q16_16_MAX)
-        return Q16_16_MAX;
-    if (res < Q16_16_MIN)
-        return Q16_16_MIN;
-    return (q16_16_t)res;
-
-//    // Slow division
-//    int64_t res = (((int64_t)a) << Q16_16_FRACTIONAL_BITS) / b;
-//    if(res > Q16_16_MAX)
-//        return Q16_16_MAX;
-//    if(res < Q16_16_MIN)
-//        return Q16_16_MIN;
-//    return (q16_16_t)res;
+    if (b == 0) return (a >= 0) ? Q16_16_MAX : Q16_16_MIN;
+    q16_16_t r = q16_16_approximate_reciprocal(b);
+    int64_t v = ((int64_t)a * (int64_t)r) >> 16;
+    if (v > Q16_16_MAX) return Q16_16_MAX;
+    if (v < Q16_16_MIN) return Q16_16_MIN;
+    return (q16_16_t)v;
 }
 
-
-#endif
-
-
-/*
- * Q16.16 Absolute Value with Saturation.
- * If x is Q16_16_MIN (which cannot be negated in two's complement), return Q16_16_MAX.
- */
-static inline q16_16_t q16_16_abs(q16_16_t x) {
-    if(x == Q16_16_MIN)
-        return Q16_16_MAX;
-    return (x < 0) ? -x : x;
-}
 
 static inline int q16_16_is_saturated(q16_16_t x) {
     return (x == Q16_16_MAX || x == Q16_16_MIN);
 }
 
+/* 2^(i/64) table in Q16.16 (64 entries, 256 bytes) */
+extern q16_16_t q16_16_exp2_table[64];
 
-// Saturation arguments (given in Q16.16):
-#define Q16_16_EXP_MAX_ARG ((q16_16_t)681360)           // ~10.397 in Q16.16
-#define Q16_16_EXP_MIN_ARG ((q16_16_t)(-16 * Q16_16_ONE)) // -16.0 in Q16.16
-
-#if 0 // Low precision exp and log
-/*
- * q16_16_exp:
- *
- * Computes e^x for a Q16.16 number x using range reduction and an unrolled Taylor
- * series for e^r, avoiding costly 64-bit divisions.
- *
- * 1. Early saturation:
- *      - if x ≥ Q16_16_EXP_MAX_ARG, returns Q16_16_MAX.
- *      - if x < Q16_16_EXP_MIN_ARG, returns 0.
- *
- * 2. Range reduction:
- *      x = n * ln2 + r,  with r in [0, ln2)
- *   so that e^x = 2^n * e^r.
- *
- * 3. The Taylor series for e^r is approximated as:
- *      e^r ≈ 1 + r + r^2/2 + r^3/6 + r^4/24 + r^5/120
- *
- *    We compute r^2, r^3, r^4, and r^5 in 64-bit arithmetic (with Q16.16 scaling) and
- *    replace the divisions by 6, 24, and 120 with multiplications by precomputed reciprocals.
- *
- *    Precomputed reciprocals in Q32 (i.e., representing 1/i as floor((1<<32)/i)):
- *         RECIP_6   ≈ 715827882    (for division by 6)
- *         RECIP_24  ≈ 178956970    (for division by 24)
- *         RECIP_120 ≈ 35791394     (for division by 120)
- *
- * 4. The result is then scaled by 2^n using shifts.
- *
- * 5. Finally, the result is saturated to the Q16.16 representable range.
+/* exp(x) using exp2 range reduction with 64-bin table + quartic on residual
+ * y = x * log2(e) = k + f,  f in [0,1)
+ * Let i = floor(f*64),  g = f - i/64  (so g in [0,1/64))
+ * 2^f = 2^(i/64) * 2^g, with 2^g ≈ 1 + c1 g + c2 g^2 + c3 g^3 + c4 g^4
  */
 static inline q16_16_t q16_16_exp(q16_16_t x) {
-    // Early saturation.
-    if (x >= Q16_16_EXP_MAX_ARG)
-        return Q16_16_MAX;
-    if (x < Q16_16_EXP_MIN_ARG)
-        return 0;
+    if (x >= Q16_16_EXP_MAX_ARG) return Q16_16_MAX;
+    if (x <= Q16_16_EXP_MIN_ARG) return 0;
+    if (!q16_16_inited) _init_q16_16();
 
-    // Use the precomputed ln2 constant.
-    const q16_16_t ln2 = Q16_16_LN2_CONST;  // ~45426 in Q16.16
+    /* y = x * log2(e) in Q16.16 */
+    int64_t y = ((int64_t)x * (int64_t)Q16_16_LOG2E) >> 16;
 
-    // Range reduction: find n such that x = n * ln2 + r, with r in [0, ln2).
-    // We use 64-bit arithmetic for the division.
-    int64_t x64 = x;
-    int n = (int)(x64 / ln2);
-    if (x64 < 0 && (x64 % ln2) != 0)
-        n--;  // Adjust for floor when x is negative.
+    /* k = floor(y),  f = y - k  (Q16.16) */
+    int32_t k = (int32_t)(y >> 16);
+    q16_16_t f = (q16_16_t)(y - ((int64_t)k << 16)); /* 0..65535 */
 
-    // Compute n * ln2 in Q16.16.
-    int64_t n_ln2 = (int64_t)n * ln2;
-    // Compute the remainder: r = x - n * ln2.
-    q16_16_t r = x - (q16_16_t)n_ln2;
+    /* i = floor(f*64)  => exact: (f * 64) >> 16 == f >> 10  */
+    int32_t i = ((int32_t)f) >> 10;  /* 0..63 */
+    if (i > 63) i = 63;
 
-    // Compute the Taylor series for e^r:
-    // e^r ≈ 1 + r + r^2/2 + r^3/6 + r^4/24 + r^5/120
-    int64_t one = Q16_16_ONE;  // 65536 represents 1.0 in Q16.16
+    /* g = f - i/64  -> i/64 in Q16.16 is (i << 10) */
+    q16_16_t g = (q16_16_t)((int32_t)f - (i << 10)); /* g in [0, 2^16/64) */
 
-    // Compute powers of r in Q16.16:
-    int64_t r2 = (((int64_t)r * r) >> 16);  // r^2 in Q16.16
-    int64_t r3 = (((int64_t)r2 * r) >> 16);   // r^3 in Q16.16
-    int64_t r4 = (((int64_t)r3 * r) >> 16);   // r^4 in Q16.16
-    int64_t r5 = (((int64_t)r4 * r) >> 16);   // r^5 in Q16.16
+    /* base = 2^(i/64) from LUT */
+    q16_16_t base = q16_16_exp2_table[i];
 
-    // Precomputed reciprocals in Q32.
-    const int64_t RECIP_6   = 715827882LL;   // ≈ (1<<32)/6
-    const int64_t RECIP_24  = 178956970LL;    // ≈ (1<<32)/24
-    const int64_t RECIP_120 = 35791394LL;     // ≈ (1<<32)/120
+    /* Quartic for 2^g on g ∈ [0, 1/64).
+     * Coeffs are Taylor of e^{ln2*g} (Q16.16), rounded:
+     *   c1 = ln2
+     *   c2 = (ln2^2)/2
+     *   c3 = (ln2^3)/6
+     *   c4 = (ln2^4)/24
+     */
+    const q16_16_t c1 = (q16_16_t)45426; /* ln2 */
+    const q16_16_t c2 = (q16_16_t)15743; /* 0.240226506959... * 65536 */
+    const q16_16_t c3 = (q16_16_t) 3638; /* 0.055504108664... * 65536 */
+    const q16_16_t c4 = (q16_16_t)  630; /* 0.009618129107... * 65536 */
 
-    int64_t term0 = one;              // 1.0
-    int64_t term1 = r;                // r
-    int64_t term2 = r2 >> 1;          // r^2/2 (division by 2 using a right shift)
-    int64_t term3 = (r3 * RECIP_6) >> 32;   // r^3/6
-    int64_t term4 = (r4 * RECIP_24) >> 32;  // r^4/24
-    int64_t term5 = (r5 * RECIP_120) >> 32; // r^5/120
+    /* Horner: (((c4*g + c3)*g + c2)*g + c1)*g + 1 */
+    int32_t t  = c4;
+    t  = (int32_t)(((int64_t)t * g) >> 16) + c3;
+    t  = (int32_t)(((int64_t)t * g) >> 16) + c2;
+    t  = (int32_t)(((int64_t)t * g) >> 16) + c1;
+    int32_t two_pow_g = (int32_t)(((int64_t)t * g) >> 16) + Q16_16_ONE;
 
-    int64_t series = term0 + term1 + term2 + term3 + term4 + term5;
+    /* 2^f = base * 2^g */
+    int64_t two_pow_f = ((int64_t)base * (int64_t)two_pow_g) >> 16;
 
-    // Scale the series result by 2^n.
-    int64_t result = series;
-    if (n < 0) {
-        result = result >> (-n);
+    /* exp(x) = 2^k * 2^f */
+    int64_t res;
+    if (k >= 0) {
+        if (k >= 31) return Q16_16_MAX;
+        res = two_pow_f << k;
+        if (res > Q16_16_MAX) res = Q16_16_MAX;
     } else {
-        if (n >= 32) {  // A left shift of 32 or more would overflow.
-            result = Q16_16_MAX;
-        } else {
-            result = result << n;
-            if (result > Q16_16_MAX)
-                result = Q16_16_MAX;
-        }
+        res = two_pow_f >> (-k);
     }
-
-    // Final saturation.
-    if (result > Q16_16_MAX)
-        result = Q16_16_MAX;
-    if (result < Q16_16_MIN)
-        result = Q16_16_MIN;
-
-    return (q16_16_t)result;
+    if (res < 0) res = 0;
+    return (q16_16_t)res;
 }
 
-
-/*
- * _q16_16_log_base:
- * Computes the natural logarithm of x (x > 0) in Q16.16 by first normalizing
- * x to the form:   x = m * 2^n,   with m in [Q16_16_ONE, 2*Q16_16_ONE)
- * Then, letting t = m - Q16_16_ONE (so that m = 1+t), we approximate:
- *
- *   ln(1+t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5 - t^6/6 + t^7/7 - t^8/8 + t^9/9.
- *
- * In this version the normalization is done via bit–level operations (using __builtin_clz)
- * and the series is unrolled. Divisions by powers of two are replaced with right shifts,
- * while divisions by 3, 5, 7, and 9 are replaced by multiplications by precomputed reciprocals
- * in Q32 with rounding.
- */
-static inline q16_16_t _q16_16_log_base(q16_16_t x) {
-    if (x <= 0)
-        return Q16_16_MIN;  // Log undefined for nonpositive x; saturate as needed.
-
-    // ----- Step 1: Normalize x using bit-level operations -----
-    // Represent x in Q16.16 as:  x = m * 2^n,  with m in [65536, 131072).
-    int p = 31 - __builtin_clz((unsigned int)x);  // floor(log2(x))
-    int n = p - Q16_16_FRACTIONAL_BITS;            // n = floor(log2(x)) - 16
-    uint32_t m;
-    if (n >= 0)
-        m = x >> n;
-    else
-        m = x << (-n);
-    // m is now the normalized mantissa (in Q16.16) satisfying: 65536 <= m < 131072.
-
-    // ----- Step 2: Compute ln(1+t) via an unrolled alternating series -----
-    // Let t = m - Q16_16_ONE, so that m = 1+t in Q16.16.
-    int32_t t = (int32_t)m - Q16_16_ONE;
-    // Our series is:
-    //   ln(1+t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5 - t^6/6 + t^7/7 - t^8/8 + t^9/9.
-    // All terms are computed in 64-bit arithmetic in Q16.16.
-    int64_t t64 = t;    // Q16.16
-    int64_t sum  = t64;  // First term: t.
-    int64_t term = t64;  // Current term; will be updated iteratively.
-
-    // Precomputed reciprocals in Q32 (i.e. floor((1<<32)/d)):
-    const uint32_t RECIP_3 = 1431655765U;   // ≈ (1<<32)/3
-    const uint32_t RECIP_5 = 858993459U;      // ≈ (1<<32)/5
-    const uint32_t RECIP_7 = 613566756U;      // ≈ (1<<32)/7
-    const uint32_t RECIP_9 = 477218588U;      // ≈ (1<<32)/9
-
-    // For each term i = 2 to 9, update term = term * t (with rounding) then divide by i.
-    // Use a right-shift with rounding for multiplications (round by adding 1<<(16-1)).
-    // Alternate subtracting and adding according to the series sign.
-
-    // i = 2: term = (t^2) / 2.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = term >> 1;  // Division by 2 (power of two).
-    sum -= term;       // Even term: subtract.
-
-    // i = 3: term = (t^3) / 3.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_3 + (1LL << 31)) >> 32;  // Division by 3.
-    sum += term;       // Odd term: add.
-
-    // i = 4: term = (t^4) / 4.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = term >> 2;  // Division by 4.
-    sum -= term;       // Even: subtract.
-
-    // i = 5: term = (t^5) / 5.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_5 + (1LL << 31)) >> 32;  // Division by 5.
-    sum += term;       // Odd: add.
-
-    // i = 6: term = (t^6) / 6.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    // Division by 6: since 6 is not a power of two, use reciprocal.
-    // (1<<32)/6 = 715827882.
-    term = (term * 715827882LL + (1LL << 31)) >> 32;
-    sum -= term;       // Even: subtract.
-
-    // i = 7: term = (t^7) / 7.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_7 + (1LL << 31)) >> 32;  // Division by 7.
-    sum += term;       // Odd: add.
-
-    // i = 8: term = (t^8) / 8.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = term >> 3;  // Division by 8.
-    sum -= term;       // Even: subtract.
-
-    // i = 9: term = (t^9) / 9.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_9 + (1LL << 31)) >> 32;  // Division by 9.
-    sum += term;       // Odd: add.
-
-    // ----- Step 3: Reconstruct ln(x) -----
-    // We have normalized x as:  x = m * 2^n, where m = 1+t.
-    // Thus, ln(x) = ln(m) + n * ln2, and ln(m) ≈ series = sum.
-    int64_t n_ln2 = (int64_t)n * Q16_16_LN2_CONST;
-    int64_t ln_val = sum + n_ln2;
-    
-    // Saturate result if needed.
-    if (ln_val > Q16_16_MAX)
-        ln_val = Q16_16_MAX;
-    if (ln_val < Q16_16_MIN)
-        ln_val = Q16_16_MIN;
-    
-    return (q16_16_t)ln_val;
-}
-
-
-/*
- * q16_16_log:
- * Computes a refined approximation of ln(x) for a Q16.16 number x > 0.
- * It first obtains an initial approximation y0 using the series-based
- * q16_16_log function. Then one Newton–Raphson iteration is applied:
- *
- *    y_new = y_old - (exp(y_old) - x) / exp(y_old)
- *
- * This iteration tends to reduce the error in the initial approximation.
- *
- * Note: All arithmetic uses our Q16.16 functions.
+/* --- log via normalization + one Newton refinement ---
+ * x = m * 2^k, ln(x) = ln(m) + k*ln2, with m in [1,2).
+ * Initial ln(m) uses cubic log1p; then one Newton step refines it.
  */
 static inline q16_16_t q16_16_log(q16_16_t x) {
-    // Initial approximation using the series-based function.
-    q16_16_t y = _q16_16_log_base(x);
+    if (x <= 0) return Q16_16_MIN; /* saturate for invalid */
 
-    // Compute exp(y) using our Q16.16 exp function.
-    q16_16_t exp_y = q16_16_exp(y);
+    /* ---- normalization: x = m * 2^k, with m in [1,2) ---- */
+    uint32_t ux = (uint32_t)x;
+    /* branch-light msb */
+    int p = 0;
+    if (ux >= (1u << 16)) { ux >>= 16; p += 16; }
+    if (ux >= (1u <<  8)) { ux >>=  8; p +=  8; }
+    if (ux >= (1u <<  4)) { ux >>=  4; p +=  4; }
+    if (ux >= (1u <<  2)) { ux >>=  2; p +=  2; }
+    if (ux >= (1u <<  1)) {            p +=  1; }
+    int k = p - 16;
 
-    // Compute the error: error = exp(y) - x.
-    q16_16_t error = q16_16_sub(exp_y, x);
-
-    // Compute the correction: correction = error / exp(y)
-    q16_16_t correction = q16_16_div(error, exp_y);
-
-    // Refine: y_new = y - correction.
-    q16_16_t y_new = q16_16_sub(y, correction);
-
-    return y_new;
-}
-
-#else // High precision exp and log
-
-/*
- * q16_16_exp:
- *
- * Computes e^x for a Q16.16 number x with greatly improved precision.
- *
- * The algorithm is as follows:
- *
- * 1. Early saturation:
- *      - If x ≥ Q16_16_EXP_MAX_ARG (~10.397), return Q16_16_MAX.
- *      - If x < Q16_16_EXP_MIN_ARG (-16.0), return 0.
- *
- * 2. Range reduction:
- *      Express x as x = n * ln2 + r, with r in [0, ln2) (ln2 in Q16.16),
- *      so that e^x = 2^n * e^r.
- *      (n is computed in 64-bit arithmetic; for negative x we adjust to floor.)
- *
- * 3. Compute e^r by expanding the Taylor series:
- *
- *      e^r ≈ 1 + r + r^2/2 + r^3/6 + r^4/24 + r^5/120 + r^6/720 + r^7/5040 + r^8/40320
- *
- *    Here the powers r^k are computed in Q16.16 (with a right shift by 16 after each multiplication).
- *    Divisions by 2, 4, and 8 are performed via right shifts.
- *    Divisions by 6, 24, 120, 720, 5040, and 40320 are performed by multiplying with precomputed
- *    reciprocals in Q32 (i.e. RECIP_d ≈ floor((1<<32)/d)).
- *
- *    Precomputed reciprocals used:
- *         RECIP_6   = 715827882LL    (for division by 6)
- *         RECIP_24  = 178956970LL    (for division by 24)
- *         RECIP_120 = 35791394LL     (for division by 120)
- *         RECIP_720 = 5965238LL      (for division by 720)
- *         RECIP_5040 = 852992LL      (for division by 5040)
- *         RECIP_40320 = 106517LL     (for division by 40320)
- *
- * 4. Scale the computed series by 2^n using shifts.
- *
- * 5. Saturate the result to the Q16.16 representable range.
- */
-static inline q16_16_t q16_16_exp(q16_16_t x) {
-    // Early saturation.
-    if (x >= Q16_16_EXP_MAX_ARG)
-        return Q16_16_MAX;
-    if (x < Q16_16_EXP_MIN_ARG)
-        return 0;
-
-    // Range reduction: x = n*ln2 + r.
-    const q16_16_t ln2 = Q16_16_LN2_CONST;  // 45426 in Q16.16.
-    int64_t x64 = x;
-    int n = (int)(x64 / ln2);
-    if (x64 < 0 && (x64 % ln2) != 0)
-        n--;  // Adjust for floor.
-    int64_t n_ln2 = (int64_t)n * ln2;
-    q16_16_t r = x - (q16_16_t)n_ln2;
-
-    int64_t one = Q16_16_ONE; // 65536 represents 1.0.
-
-    // Compute successive powers of r in Q16.16:
-    int64_t r2 = (((int64_t)r * r) >> 16);   // r^2
-    int64_t r3 = (((int64_t)r2 * r) >> 16);    // r^3
-    int64_t r4 = (((int64_t)r3 * r) >> 16);    // r^4
-    int64_t r5 = (((int64_t)r4 * r) >> 16);    // r^5
-    int64_t r6 = (((int64_t)r5 * r) >> 16);    // r^6
-    int64_t r7 = (((int64_t)r6 * r) >> 16);    // r^7
-    int64_t r8 = (((int64_t)r7 * r) >> 16);    // r^8
-
-    // Precomputed reciprocals (in Q32) for the factorial denominators.
-    const int64_t RECIP_6    = 715827882LL;    // ~ (1<<32)/6
-    const int64_t RECIP_24   = 178956970LL;     // ~ (1<<32)/24
-    const int64_t RECIP_120  = 35791394LL;      // ~ (1<<32)/120
-    const int64_t RECIP_720  = 5965238LL;       // ~ (1<<32)/720
-    const int64_t RECIP_5040 = 852992LL;        // ~ (1<<32)/5040
-    const int64_t RECIP_40320= 106517LL;         // ~ (1<<32)/40320
-
-    // Compute series terms:
-    int64_t term0 = one;                              // 1.0
-    int64_t term1 = r;                                // r
-    int64_t term2 = r2 >> 1;                          // r^2/2
-    int64_t term3 = (r3 * RECIP_6) >> 32;             // r^3/6
-    int64_t term4 = (r4 * RECIP_24) >> 32;            // r^4/24
-    int64_t term5 = (r5 * RECIP_120) >> 32;           // r^5/120
-    int64_t term6 = (r6 * RECIP_720) >> 32;           // r^6/720
-    int64_t term7 = (r7 * RECIP_5040) >> 32;          // r^7/5040
-    int64_t term8 = (r8 * RECIP_40320) >> 32;         // r^8/40320
-
-    int64_t series = term0 + term1 + term2 + term3 + term4 + term5 + term6 + term7 + term8;
-
-    // Scale the series result by 2^n.
-    int64_t result = series;
-    if (n < 0)
-        result = result >> (-n);
-    else {
-        if (n >= 32) {
-            result = Q16_16_MAX;
-        } else {
-            result = result << n;
-            if (result > Q16_16_MAX)
-                result = Q16_16_MAX;
-        }
-    }
-    if (result > Q16_16_MAX)
-        result = Q16_16_MAX;
-    if (result < Q16_16_MIN)
-        result = Q16_16_MIN;
-    return (q16_16_t)result;
-}
-
-/*
- * _q16_16_log_base:
- *
- * Computes the natural logarithm ln(x) for a Q16.16 number x > 0 with greatly improved precision.
- *
- * The algorithm is as follows:
- *
- * 1. Normalize x using bit–level operations:
- *      Represent x in Q16.16 as x = m * 2^n, where m is in [Q16_16_ONE, 2*Q16_16_ONE)
- *      (i.e. m ∈ [65536, 131072)). We compute n via the number of leading zeros.
- *
- * 2. Define t = m - Q16_16_ONE so that m = 1+t (with t in Q16.16 corresponding to a real t in [0,1)).
- *
- * 3. Approximate ln(1+t) using an unrolled alternating Taylor series:
- *
- *      ln(1+t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5 - t^6/6 + t^7/7 - t^8/8 + t^9/9 - t^10/10
- *                + t^11/11 - t^12/12 + t^13/13
- *
- *    Divisions by powers of two (2, 4, 8) are performed using right shifts.
- *    Divisions by 3, 5, 7, 9, 10, 11, 12, and 13 are done by multiplying with precomputed reciprocals in Q32,
- *    with rounding.
- *
- * 4. Reconstruct ln(x) = ln(m) + n * ln2, where ln2 is given in Q16.16.
- *
- * 5. Saturate the final result.
- */
-static inline q16_16_t _q16_16_log_base(q16_16_t x) {
-    if (x <= 0)
-        return Q16_16_MIN;  // Log undefined for nonpositive x; saturate as needed.
-
-    // Step 1: Normalize x to x = m * 2^n with m in [65536, 131072).
-    int p = 31 - __builtin_clz((unsigned int)x);  // floor(log2(x))
-    int n = p - Q16_16_FRACTIONAL_BITS;            // n = floor(log2(x)) - 16
     uint32_t m;
-    if (n >= 0)
-        m = x >> n;
-    else
-        m = x << (-n);
-    // m is now the normalized mantissa in Q16.16.
+    if (k >= 0) m = (uint32_t)x >> k; else m = (uint32_t)x << (-k); /* m in [1,2) Q16.16 */
 
-    // Step 2: Let t = m - Q16_16_ONE, so that m = 1+t.
-    int32_t t = (int32_t)m - Q16_16_ONE;
-    int64_t t64 = t;  // Working in Q16.16.
+    /* ---- cubic log1p on t = m - 1 ----
+       ln(1+t) ≈  t - t^2/2 + t^3/3
+    */
+    int32_t t  = (int32_t)m - Q16_16_ONE;          /* Q16.16 */
+    int64_t t2 = ((int64_t)t * t) >> 16;
+    int64_t t3 = (t2 * t) >> 16;
 
-    // Step 3: Compute the alternating series for ln(1+t):
-    // ln(1+t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5 - t^6/6 + t^7/7 - t^8/8 + t^9/9 - t^10/10 + t^11/11 - t^12/12 + t^13/13.
-    int64_t sum = t64;  // First term: t.
-    int64_t term = t64; // We'll update 'term' for each power.
-    
-    // Precomputed reciprocals in Q32 for divisors:
-    const uint32_t RECIP_3  = 1431655765U;  // ≈ (1<<32)/3
-    const uint32_t RECIP_5  = 858993459U;     // ≈ (1<<32)/5
-    const uint32_t RECIP_7  = 613566756U;     // ≈ (1<<32)/7
-    const uint32_t RECIP_9  = 477218588U;     // ≈ (1<<32)/9
-    const uint32_t RECIP_10 = 429496729U;     // ≈ (1<<32)/10
-    const uint32_t RECIP_11 = 390451572U;     // ≈ (1<<32)/11
-    const uint32_t RECIP_12 = 357913941U;     // ≈ (1<<32)/12
-    const uint32_t RECIP_13 = 330511099U;     // ≈ (1<<32)/13
+    int64_t ln_m = (int64_t)t
+                 - (t2 >> 1)
+                 + ( (t3 * 1431655765LL) >> 32 ); /* 1/3 in Q32 */
 
-    // i = 2: term = t^2, then divide by 2.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = term >> 1;  // Division by 2.
-    sum -= term;       // Subtract even term.
+    /* initial y0 = ln(m) + k*ln2 */
+    q16_16_t y = (q16_16_t)ln_m;
+    y = (q16_16_t)q16_16_add(y, (q16_16_t)((int64_t)k * (int64_t)Q16_16_LN2));
 
-    // i = 3: term = t^3, then divide by 3.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_3 + (1LL << 31)) >> 32;
-    sum += term;       // Add odd term.
-
-    // i = 4: term = t^4, then divide by 4.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = term >> 2;  // Division by 4.
-    sum -= term;       // Subtract even term.
-
-    // i = 5: term = t^5, then divide by 5.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_5 + (1LL << 31)) >> 32;
-    sum += term;       // Add odd term.
-
-    // i = 6: term = t^6, then divide by 6.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    // Division by 6 using reciprocal: RECIP_6 = 715827882.
-    term = (term * 715827882LL + (1LL << 31)) >> 32;
-    sum -= term;       // Subtract even term.
-
-    // i = 7: term = t^7, then divide by 7.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_7 + (1LL << 31)) >> 32;
-    sum += term;       // Add odd term.
-
-    // i = 8: term = t^8, then divide by 8.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = term >> 3;  // Division by 8.
-    sum -= term;       // Subtract even term.
-
-    // i = 9: term = t^9, then divide by 9.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_9 + (1LL << 31)) >> 32;
-    sum += term;       // Add odd term.
-
-    // i = 10: term = t^10, then divide by 10.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_10 + (1LL << 31)) >> 32;
-    sum -= term;       // Subtract even term.
-
-    // i = 11: term = t^11, then divide by 11.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_11 + (1LL << 31)) >> 32;
-    sum += term;       // Add odd term.
-
-    // i = 12: term = t^12, then divide by 12.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_12 + (1LL << 31)) >> 32;
-    sum -= term;       // Subtract even term.
-
-    // i = 13: term = t^13, then divide by 13.
-    term = ((term * t64) + (1LL << (Q16_16_FRACTIONAL_BITS - 1))) >> Q16_16_FRACTIONAL_BITS;
-    term = (term * RECIP_13 + (1LL << 31)) >> 32;
-    sum += term;       // Add odd term.
-
-    // Step 4: Reconstruct ln(x) = ln(m) + n * ln2.
-    int64_t n_ln2 = (int64_t)n * Q16_16_LN2_CONST;
-    int64_t ln_val = sum + n_ln2;
-
-    // Step 5: Saturate the result if needed.
-    if (ln_val > Q16_16_MAX)
-        ln_val = Q16_16_MAX;
-    if (ln_val < Q16_16_MIN)
-        ln_val = Q16_16_MIN;
-
-    return (q16_16_t)ln_val;
-}
-
-/*
- * q16_16_log:
- *
- * Computes a refined approximation of ln(x) for a Q16.16 number x > 0.
- * It first obtains an initial approximation using _q16_16_log_base and then
- * refines it with one Newton–Raphson iteration:
- *
- *    y_new = y_old - (exp(y_old) - x) / exp(y_old)
- *
- * This correction greatly reduces the error in the initial series approximation.
- * All arithmetic is done using the Q16.16 functions.
- */
-static inline q16_16_t q16_16_log(q16_16_t x) {
-    // Initial approximation.
-    q16_16_t y = _q16_16_log_base(x);
-    // Compute exp(y) using our high-precision q16_16_exp.
+    /* ---- one Newton refinement: y <- y - (exp(y) - x)/exp(y) ---- */
     q16_16_t exp_y = q16_16_exp(y);
-    // Compute the error: error = exp(y) - x.
-    // (Assuming q16_16_sub is defined as subtraction in Q16.16.)
-    q16_16_t error = exp_y - x;
-    // Correction = error / exp(y). (Assuming q16_16_div is defined.)
-    // For this example, we use a simple division operator.
-    // In a full implementation, you would use a fixed-point division function.
-    q16_16_t correction = (q16_16_t)(((int64_t)error << Q16_16_FRACTIONAL_BITS) / exp_y);
-    // Refine the result.
-    q16_16_t y_new = y - correction;
-    return y_new;
+    /* guard against tiny exp_y (shouldn't happen for valid y) */
+    if (exp_y != 0) {
+        q16_16_t num = q16_16_sub(exp_y, x);          /* exp(y) - x */
+        q16_16_t den = exp_y;
+        q16_16_t corr = q16_16_div(num, den);         /* (exp(y)-x)/exp(y) */
+        y = q16_16_sub(y, corr);
+    }
+
+    /* clamp to range */
+    if (y > Q16_16_MAX) return Q16_16_MAX;
+    if (y < Q16_16_MIN) return Q16_16_MIN;
+    return y;
 }
-
-#endif
-
-
 
 
 // Returns the integer part of a Q16.16 number.
