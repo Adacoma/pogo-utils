@@ -9,18 +9,18 @@
 
 // ---- helpers ---------------------------------------------------------------
 
-static inline double wrap_pi(double x) {
+static inline float wrap_pi(float x) {
     // Wrap to (-pi, pi]
-    const double pi = M_PI;
-    const double t  = fmod(x + pi, 2.0 * pi);
+    const float pi = M_PI;
+    const float t  = fmod(x + pi, 2.0 * pi);
     return (t <= 0.0) ? (t + pi) : (t - pi);
 }
 
-static inline double clamp(double x, double a, double b) {
+static inline float clamp(float x, float a, float b) {
     return (x < a) ? a : (x > b ? b : x);
 }
 
-static inline double angle_diff(double a, double b) {
+static inline float angle_diff(float a, float b) {
     // Return wrapped a - b
     return wrap_pi(a - b);
 }
@@ -59,14 +59,14 @@ void heading_pid_reset(heading_pid_t *pid) {
     pid->t_prev_ms    = current_time_milliseconds();
 }
 
-void heading_pid_set_gains(heading_pid_t *pid, double Kp, double Ki, double Kd) {
+void heading_pid_set_gains(heading_pid_t *pid, float Kp, float Ki, float Kd) {
     if (!pid) return;
     pid->Kp = Kp;
     pid->Ki = Ki;
     pid->Kd = Kd;
 }
 
-void heading_pid_set_limits(heading_pid_t *pid, double u_max, double I_max) {
+void heading_pid_set_limits(heading_pid_t *pid, float u_max, float I_max) {
     if (!pid) return;
     pid->u_max = (u_max > 0.0) ? u_max : 0.0;
     pid->I_max = (I_max > 0.0) ? I_max : 0.0;
@@ -75,33 +75,33 @@ void heading_pid_set_limits(heading_pid_t *pid, double u_max, double I_max) {
     pid->u = clamp(pid->u, -pid->u_max, +pid->u_max);
 }
 
-void heading_pid_set_target(heading_pid_t *pid, double target_rad) {
+void heading_pid_set_target(heading_pid_t *pid, float target_rad) {
     if (!pid) return;
     pid->target_rad = wrap_pi(target_rad);
 }
 
 // Core compute given measured heading
-static inline double step_pid(heading_pid_t *pid, double measured_heading_rad) {
+static inline float step_pid(heading_pid_t *pid, float measured_heading_rad) {
     if (!pid) return 0.0;
 
     const uint32_t now_ms = current_time_milliseconds();
-    double dt = (now_ms - pid->t_prev_ms) / 1000.0;       // seconds
+    float dt = (now_ms - pid->t_prev_ms) / 1000.0;       // seconds
     if (dt <= 0.0) { dt = 1e-3; }                         // safety
     pid->t_prev_ms = now_ms;
 
     // error in (-pi, pi]
-    const double e = angle_diff(pid->target_rad, measured_heading_rad);
+    const float e = angle_diff(pid->target_rad, measured_heading_rad);
 
     // Integrate with anti-windup pre-clamp
     pid->I += e * dt;
     pid->I  = clamp(pid->I, -pid->I_max, +pid->I_max);
 
     // Derivative (discrete). On first update, skip D kick.
-    const double dedt = pid->first_update ? 0.0 : (e - pid->e_prev) / dt;
+    const float dedt = pid->first_update ? 0.0 : (e - pid->e_prev) / dt;
     pid->first_update = false;
 
     // PID
-    double u = pid->Kp * e + pid->Ki * pid->I + pid->Kd * dedt;
+    float u = pid->Kp * e + pid->Ki * pid->I + pid->Kd * dedt;
 
     // Saturation
     u = clamp(u, -pid->u_max, +pid->u_max);
@@ -112,13 +112,13 @@ static inline double step_pid(heading_pid_t *pid, double measured_heading_rad) {
     return u;
 }
 
-double heading_pid_update(heading_pid_t *pid) {
+float heading_pid_update(heading_pid_t *pid) {
     if (!pid || !pid->enabled || !pid->hd) return 0.0;
-    const double psi = heading_detection_estimate(pid->hd);
+    const float psi = heading_detection_estimate(pid->hd);
     return step_pid(pid, psi);
 }
 
-double heading_pid_update_from_heading(heading_pid_t *pid, double measured_heading_rad) {
+float heading_pid_update_from_heading(heading_pid_t *pid, float measured_heading_rad) {
     if (!pid || !pid->enabled) return 0.0;
     return step_pid(pid, wrap_pi(measured_heading_rad));
 }

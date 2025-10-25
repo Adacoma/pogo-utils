@@ -17,7 +17,7 @@ typedef struct {
 
     /* demo inputs: absolute speed and per-step heading increment */
     float  v_cmd;        /* 0..1 duty-cycle of motorFull */
-    double dtheta_inc;   /* radians per tick (already includes dt if you want) */
+    float dtheta_inc;   /* radians per tick (already includes dt if you want) */
 } USERDATA;
 
 DECLARE_USERDATA(USERDATA);
@@ -99,11 +99,11 @@ static void user_step(void) {
     }
 
     /* Option A: let module read heading internally (pass NaN) */
-    const double NaN = 0.0/0.0;
+    const float NaN = 0.0/0.0;
     diff_drive_kin_step(&mydata->ddk, mydata->v_cmd, mydata->dtheta_inc, NaN);
 
     /* Option B: if you maintain your own heading estimate:
-       double hd = heading_detection_estimate(&mydata->ddk.hd);
+       float hd = heading_detection_estimate(&mydata->ddk.hd);
        diff_drive_kin_step(&mydata->ddk, mydata->v_cmd, mydata->dtheta_inc, hd);
     */
 }

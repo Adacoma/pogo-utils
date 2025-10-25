@@ -65,7 +65,7 @@ typedef struct {
     ddk_motors_t         motors;
 
     float                v_cmd;          /**< Last commanded absolute speed [0..1]. */
-    double               psi_target;     /**< Target heading (rad), wrapped (-pi,pi]. */
+    float               psi_target;     /**< Target heading (rad), wrapped (-pi,pi]. */
     uint32_t             t_prev_ms;      /**< Last update timestamp (ms). */
     ddk_behavior_t       behavior;       /**< Current behavior. */
 
@@ -88,7 +88,7 @@ void diff_drive_kin_set_pid_enabled(ddk_t *ddk, bool enabled);
 void diff_drive_kin_set_avoidance_enabled(ddk_t *ddk, bool enabled);
 
 /** @brief Set PID gains and limits; forwarded to the internal heading_pid_t. */
-void diff_drive_kin_set_pid(ddk_t *ddk, double Kp, double Ki, double Kd, double u_max, double I_max);
+void diff_drive_kin_set_pid(ddk_t *ddk, float Kp, float Ki, float Kd, float u_max, float I_max);
 
 /** @brief Access and tweak the underlying avoidance config. */
 wa_heading_config_t diff_drive_kin_get_avoidance_config(const ddk_t *ddk);
@@ -117,7 +117,7 @@ bool diff_drive_kin_process_message(ddk_t *ddk, message_t *msg);
  *
  * @return Current behavior after this step.
  */
-ddk_behavior_t diff_drive_kin_step(ddk_t *ddk, float v_cmd, double dtheta, double measured_heading_rad);
+ddk_behavior_t diff_drive_kin_step(ddk_t *ddk, float v_cmd, float dtheta, float measured_heading_rad);
 
 /** @brief Current behavior mode. */
 static inline ddk_behavior_t diff_drive_kin_get_behavior(const ddk_t *ddk) {

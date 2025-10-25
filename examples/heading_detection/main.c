@@ -26,7 +26,7 @@ typedef struct {
 
     // Heading detection variables
     heading_detection_t heading_detection;
-    double current_heading_rad;
+    float current_heading_rad;
 
     // Optional Photostart + photosensors calibration
     photostart_t ps;

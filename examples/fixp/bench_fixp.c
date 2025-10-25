@@ -579,7 +579,6 @@ void test_fixp_functions(void) {
         printf0("q1_15_log(1.0) = %f (expected 0)\n", log1_f);
         assert(fabsf(log1_f) < TOLERANCE);
     }
-    // XXX
     {
         // Test 6: log(0.5) should be about ln(0.5) ≈ -0.693147.
         q1_15_t const log05 = q1_15_log(q1_15_from_float(0.5f));
@@ -587,7 +586,6 @@ void test_fixp_functions(void) {
         printf0("q1_15_log(0.5) = %.6f (expected ~ -0.693147)\n", log05_f);
         assert(fabsf(log05_f + 0.693147f) < TOLERANCE);
     }
-    // XXX
     {
         // Test 7: log(0.3679) should be about ln(0.3679) ≈ -1.0.
         q1_15_t log037 = q1_15_log(q1_15_from_float(0.3679f));

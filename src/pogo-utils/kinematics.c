@@ -8,9 +8,9 @@
 
 #define DDK_V_STOP_EPS   0.02f   /* Below this, hard-stop both motors. */
 
-static inline double wrap_pi(double x) {
-    const double pi = M_PI;
-    const double t  = fmod(x + pi, 2.0 * pi);
+static inline float wrap_pi(float x) {
+    const float pi = M_PI;
+    const float t  = fmod(x + pi, 2.0 * pi);
     return (t <= 0.0) ? (t + pi) : (t - pi);
 }
 
@@ -18,7 +18,7 @@ static inline float clampf(float x, float a, float b) {
     return (x < a) ? a : (x > b ? b : x);
 }
 
-static inline double isnan_local(double x) { return x != x; }
+static inline float isnan_local(float x) { return x != x; }
 
 /* Compute current subphase in [0,1) inside a PWM window. */
 static inline float pwm_phase01(uint32_t now_ms, uint32_t epoch_ms, uint16_t period_ms) {
@@ -51,7 +51,7 @@ static inline void apply_motor_ratio(motor_id msel, uint8_t dir, uint16_t pow_on
  *   vR = v_cmd * clamp(1 + steer_mix * steer_u, 0, 1)
  * Positive steer_u makes right wheel faster (turn left), negative → turn right.
  */
-static void apply_diff_drive_pwm(const ddk_t *ddk, double steer_u, float v_cmd,
+static void apply_diff_drive_pwm(const ddk_t *ddk, float steer_u, float v_cmd,
                                  float subphase01) {
     const float mix = clampf(ddk->cfg.steer_mix, 0.0f, 1.0f);
 
@@ -138,7 +138,7 @@ void diff_drive_kin_set_avoidance_enabled(ddk_t *ddk, bool enabled) {
     wall_avoidance_heading_set_enabled(&ddk->wa, enabled);
 }
 
-void diff_drive_kin_set_pid(ddk_t *ddk, double Kp, double Ki, double Kd, double u_max, double I_max) {
+void diff_drive_kin_set_pid(ddk_t *ddk, float Kp, float Ki, float Kd, float u_max, float I_max) {
     if (!ddk) return;
     heading_pid_set_gains(&ddk->pid, Kp, Ki, Kd);
     heading_pid_set_limits(&ddk->pid, u_max, I_max);
@@ -159,7 +159,7 @@ bool diff_drive_kin_process_message(ddk_t *ddk, message_t *msg) {
     return wall_avoidance_heading_process_message(&ddk->wa, msg);
 }
 
-ddk_behavior_t diff_drive_kin_step(ddk_t *ddk, float v_cmd, double dtheta, double measured_heading_rad) {
+ddk_behavior_t diff_drive_kin_step(ddk_t *ddk, float v_cmd, float dtheta, float measured_heading_rad) {
     if (!ddk) return DDK_BEHAVIOR_IDLE;
 
     /* Timekeeping */
@@ -170,7 +170,7 @@ ddk_behavior_t diff_drive_kin_step(ddk_t *ddk, float v_cmd, double dtheta, doubl
     const float subphase = pwm_phase01(now_ms, ddk->pwm_epoch_ms, ddk->cfg.pwm_period_ms);
 
     /* Avoidance may preempt */
-    const double heading_for_wa = isnan_local(measured_heading_rad)
+    const float heading_for_wa = isnan_local(measured_heading_rad)
                                 ? heading_detection_estimate(&ddk->hd)
                                 : measured_heading_rad;
     if (ddk->cfg.avoidance_enabled) {
@@ -186,7 +186,7 @@ ddk_behavior_t diff_drive_kin_step(ddk_t *ddk, float v_cmd, double dtheta, doubl
     heading_pid_set_target(&ddk->pid, ddk->psi_target);
 
     /* Steering command (PID or sign-based) */
-    double steer_u = 0.0;
+    float steer_u = 0.0;
     if (ddk->cfg.pid_enabled) {
         if (isnan_local(measured_heading_rad)) {
             steer_u = heading_pid_update(&ddk->pid);

@@ -115,16 +115,16 @@ static void roulette_pick(const sl_t *sl, float *out){
         memcpy(out, sl->x, (size_t)sl->n * sizeof(float));
         return;
     }
-    double total = 0.0;
-    for (uint16_t i=0; i<sl->rsize; ++i) total += (double)roulette_weight(sl->mode, sl->repo_F[i]);
+    float total = 0.0;
+    for (uint16_t i=0; i<sl->rsize; ++i) total += (float)roulette_weight(sl->mode, sl->repo_F[i]);
     if (!(total > 0.0)){
         memcpy(out, sl->x, (size_t)sl->n * sizeof(float));
         return;
     }
-    double rpick = ((double)rand() / (double)RAND_MAX) * total;
-    double acc = 0.0;
+    float rpick = ((float)rand() / (float)RAND_MAX) * total;
+    float acc = 0.0;
     for (uint16_t i=0; i<sl->rsize; ++i){
-        acc += (double)roulette_weight(sl->mode, sl->repo_F[i]);
+        acc += (float)roulette_weight(sl->mode, sl->repo_F[i]);
         if (rpick <= acc){
             memcpy(out, repo_row_ro(sl,i), (size_t)sl->n * sizeof(float));
             return;

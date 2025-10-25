@@ -15,9 +15,9 @@
 typedef struct {
     heading_detection_t hd;
     heading_pid_t       pid;
-    double              measured_heading_rad;
-    double              target_heading_rad;
-    double              cruise_speed;     // normalized [0..1] base forward command
+    float              measured_heading_rad;
+    float              target_heading_rad;
+    float              cruise_speed;     // normalized [0..1] base forward command
 
     // Optional Photostart + photosensors calibration
     photostart_t ps;
@@ -28,13 +28,13 @@ REGISTER_USERDATA(USERDATA);
 
 // --- small utils ------------------------------------------------------------
 
-static inline double clamp01(double x) { return (x < 0.0) ? 0.0 : (x > 1.0 ? 1.0 : x); }
+static inline float clamp01(float x) { return (x < 0.0) ? 0.0 : (x > 1.0 ? 1.0 : x); }
 
 // Map normalized forward (f in [0,1]) and steer (u in [-1,1]) to simple motor commands.
 // This sample uses only FULL / STOP.
-static void apply_diff_drive_discrete(double f, double u) {
+static void apply_diff_drive_discrete(float f, float u) {
     // Simple ternary steering: left/right/straight
-    const double tol = 0.15;
+    const float tol = 0.15;
     if (f <= 0.05) {
         // If no forward speed requested, rotate in place by steer sign
         if (u > tol) {
@@ -116,15 +116,15 @@ static void user_step(void) {
     }
 
     // Option A: use live sensors through the linked heading_detection
-    double u = heading_pid_update(&mydata->pid);
+    float u = heading_pid_update(&mydata->pid);
 
     // Option B (comment A/enable B): use an externally provided heading
     // mydata->measured_heading_rad = heading_detection_estimate(&mydata->hd);
-    // double u = heading_pid_update_from_heading(&mydata->pid, mydata->measured_heading_rad);
+    // float u = heading_pid_update_from_heading(&mydata->pid, mydata->measured_heading_rad);
 
     // Show heading error on LEDs (blue when aligned, red when large error)
-    double e = heading_pid_get_error(&mydata->pid);
-    double ae = fabs(e);
+    float e = heading_pid_get_error(&mydata->pid);
+    float ae = fabs(e);
     if (ae < 10.0 * M_PI / 180.0) {
         pogobot_led_setColors(0, 0, 25, 0);
     } else if (ae < 25.0 * M_PI / 180.0) {

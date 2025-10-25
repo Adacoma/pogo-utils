@@ -35,8 +35,8 @@ typedef enum {
  * All angles returned are in radians, wrapped to (-pi, pi].
  */
 typedef struct {
-    double alpha_rad;              ///< Half-angle between photosensors B/C and A (radians)
-    double robot_radius_m;         ///< Robot radius (meters)
+    float alpha_rad;              ///< Half-angle between photosensors B/C and A (radians)
+    float robot_radius_m;         ///< Robot radius (meters)
     heading_chirality_t chirality; ///< CW or CCW angle convention
     photostart_t *ps;     ///< OPTIONAL: user-provided photostart (NULL = disable normalization)
 } heading_detection_t;
@@ -48,8 +48,8 @@ void heading_detection_init(heading_detection_t *hd);
 
 /** Set geometry in degrees/meters. */
 void heading_detection_set_geometry(heading_detection_t *hd,
-                                    double alpha_deg,
-                                    double robot_radius_m);
+                                    float alpha_deg,
+                                    float robot_radius_m);
 
 /** Set chirality policy. */
 void heading_detection_set_chirality(heading_detection_t *hd,
@@ -68,13 +68,13 @@ void heading_detection_set_photostart(heading_detection_t *hd, photostart_t *ps)
  * Requires a platform function:
  *    int16_t pogobot_photosensors_read(uint8_t idx);
  */
-double heading_detection_estimate(const heading_detection_t *hd);
+float heading_detection_estimate(const heading_detection_t *hd);
 
 /**
  * Estimate heading (radians) from provided raw samples.
  * pA_raw is the "front" reference; pB_raw/pC_raw are the two laterals at ±alpha.
  */
-double heading_detection_estimate_from_samples(const heading_detection_t *hd,
+float heading_detection_estimate_from_samples(const heading_detection_t *hd,
                                                int16_t pA_raw,
                                                int16_t pB_raw,
                                                int16_t pC_raw);

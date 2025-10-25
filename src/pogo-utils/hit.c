@@ -88,8 +88,8 @@ static int pick_donor_idx(const hit_t *h){
     /* Acceptance probability ~ sigmoid(beta * Δ), with a floor pmin.
        For MIN: Δ = (f_self - f_donor). For MAX: Δ = (f_donor - f_self). */
     float f_self = h->last_adv_f;
-    double total = 0.0;
-    static double w[256]; /* small stack buffer for typical capacities */
+    float total = 0.0;
+    static float w[256]; /* small stack buffer for typical capacities */
     const uint16_t cap = h->rsize;
     if (cap > 256) {
         /* Fallback: unweighted uniform if very large (unlikely on tiny robots) */
@@ -104,7 +104,7 @@ static int pick_donor_idx(const hit_t *h){
         total += paccept;
     }
     if (!(total > 0.0)) return (int)((rand() % cap));
-    double r = ((double)rand() / (double)RAND_MAX) * total, acc = 0.0;
+    float r = ((float)rand() / (float)RAND_MAX) * total, acc = 0.0;
     for (uint16_t i=0; i<cap; ++i){ acc += w[i]; if (r <= acc) return (int)i; }
     return (int)(cap - 1);
 }
