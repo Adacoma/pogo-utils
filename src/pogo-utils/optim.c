@@ -93,7 +93,7 @@ opt_cfg_t opt_default_cfg(opt_algo_t algo, int n){
         c.P.pgpe.eta_mu = 0.05f; c.P.pgpe.eta_sigma = 0.10f;
         c.P.pgpe.sigma_min = 1e-5f; c.P.pgpe.sigma_max = 0.8f;
         c.P.pgpe.baseline_alpha = 0.10f;
-        c.P.pgpe.normalize_pair = 1;
+        c.P.pgpe.normalize_pair = true;
         break;
 
     case OPT_SEP_CMAES: {
