@@ -53,7 +53,7 @@ typedef struct {
     float sigma_min;      /**< Lower bound on σ (e.g., 1e-6f). */
     float sigma_max;      /**< Upper bound on σ (e.g., 1.0f). */
     float baseline_alpha; /**< EWMA smoothing for baseline b (0..1, e.g., 0.1f). */
-    int   normalize_pair; /**< If non-zero, center the pair: r←r - mean({r+,r−}). */
+    bool   normalize_pair;/**< If true center the pair: r←r - mean({r+,r−}). */
 } pgpe_params_t;
 
 /** Internal state (POD; no heap). */

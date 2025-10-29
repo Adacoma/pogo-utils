@@ -87,7 +87,7 @@ void pgpe_init(pgpe_t *pg, int n,
     pg->p.sigma_min      = 1e-6f;
     pg->p.sigma_max      = 1.0f;
     pg->p.baseline_alpha = 0.10f;
-    pg->p.normalize_pair = 1;
+    pg->p.normalize_pair = true;
 
     if (params) pg->p = *params;
 
