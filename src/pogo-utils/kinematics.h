@@ -20,10 +20,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "pogobase.h"
-#include "pogo-utils/photostart.h"
-#include "pogo-utils/heading_detection.h"
-#include "pogo-utils/heading_PID.h"
-#include "pogo-utils/wall_avoidance_heading.h"
+#include "photostart.h"
+#include "heading_detection.h"
+#include "heading_PID.h"
+#include "wall_avoidance_heading.h"
 
 #ifdef __cplusplus
 extern "C" {
