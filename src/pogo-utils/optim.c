@@ -118,9 +118,17 @@ opt_cfg_t opt_default_cfg(opt_algo_t algo, int n){
 
     case OPT_HIT:
         memset(&c.P.hit, 0, sizeof(c.P.hit));
-        c.P.hit.mode  = HIT_MINIMIZE;
-        c.P.hit.alpha = 0.35f;  /* fraction of coordinates copied */
-        c.P.hit.sigma = 0.15f;  /* mutation stddev */
+        c.P.hit.mode        = HIT_MINIMIZE;
+        c.P.hit.alpha       = 0.35f;   /* initial transfer rate α           */
+        c.P.hit.sigma       = 0.15f;   /* mutation stddev on genome coords  */
+
+        /* CEC2020-like defaults for our HIT implementation */
+        c.P.hit.eval_T      = 50;     /* sliding-window length / maturation */
+        c.P.hit.evolve_alpha= true;    /* α is evolvable                     */
+        c.P.hit.alpha_sigma = 1e-3f;   /* mutation stddev on α               */
+        c.P.hit.alpha_min   = 0.0f;    /* clamp α to [0, 0.9]                */
+        c.P.hit.alpha_max   = 0.9f;
+
         break;
     }
     return c;
@@ -392,13 +400,20 @@ opt_algo_t    opt_algo(const opt_t *self){ return self ? self->algo : OPT_ES1P1;
 int           opt_dim (const opt_t *self){ return self ? self->n    : 0; }
 
 void opt_observe_remote(opt_t *self, uint16_t from_id, uint32_t epoch,
-                        const float *x_remote, float f_adv){
+                        const float *x_remote, float f_adv, float alpha_remote){
     if (!self) return;
     if (self->algo == OPT_SOCIAL_LEARNING){
         sl_observe_remote(&self->o.sl, from_id, epoch, x_remote, f_adv);
     } else if (self->algo == OPT_HIT){
-        hit_observe_remote(&self->o.hit, from_id, epoch, x_remote, f_adv);
+        /* HIT uses neighbor’s α to evolve the transfer rate */
+        hit_observe_remote(&self->o.hit, from_id, epoch, x_remote, f_adv, alpha_remote);
     }
+}
+
+float opt_get_alpha(const opt_t *self){
+    if (!self) return 0.0f;
+    if (self->algo == OPT_HIT) return hit_get_alpha(&self->o.hit);
+    return 0.0f;
 }
 
 float opt_get_last_advert(const opt_t *self){

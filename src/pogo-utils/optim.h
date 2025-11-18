@@ -91,7 +91,11 @@ int           opt_dim(const opt_t *self);
 
 /* Social learning hooks (no-op for non-SL/HIT). */
 void  opt_observe_remote(opt_t *self, uint16_t from_id, uint32_t epoch,
-                         const float *x_remote, float f_adv);
+                         const float *x_remote, float f_adv, float alpha_remote);
+
+/* Current transfer rate α (only meaningful for OPT_HIT). */
+float opt_get_alpha(const opt_t *self);
+
 /* Last advertised fitness (SL/HIT), 0 otherwise. */
 float opt_get_last_advert(const opt_t *self);
 

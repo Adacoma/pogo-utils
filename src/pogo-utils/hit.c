@@ -1,16 +1,20 @@
 /**
  * @file hit.c
- * @brief Strict Horizontal Information Transfer (HIT) implementation.
+ * @brief Horizontal Information Transfer (HIT) implementation (CEC 2020).
  *
- * This follows the core of the CEC 2020 HIT algorithm:
- *   - Deterministic acceptance: neighbour is used iff it is strictly
- *     better than the current genome (according to mode).
- *   - Horizontal transfer: copy exactly α·n coordinates from neighbour.
- *   - Mutation: additive Gaussian mutation (stddev σ) on all coordinates.
+ * Main differences compared to the previous "strict HIT" implementation:
+ *   - Sliding-window score: hit_tell() now takes an instantaneous reward
+ *     (or cost), and HIT maintains a window of length T to compute the
+ *     score f = G_t = sum_{k=0}^{T-1} r_{t-k}.
+ *   - Maturation: communication is disabled until the window is full after
+ *     initialisation or after each successful transfer. During maturation,
+ *     hit_observe_remote() ignores all messages, which matches Algorithm 1.
+ *   - Optional evolving α: when evolve_alpha==true, the transfer rate α is
+ *     itself an evolvable parameter copied from better neighbours and
+ *     mutated with Gaussian noise alpha_sigma.
  *
- * The ask/tell interface is deliberately simple: ask() just returns the
- * current genome, and tell() just updates its fitness. All “evolution”
- * happens inside hit_observe_remote().
+ * We keep a simple ask/tell/observe_remote structure so that the optimiser
+ * can be used as a drop-in component on Pogobot/Pogosim.
  */
 #include "hit.h"
 #include <math.h>
@@ -45,24 +49,55 @@ static float randn01(hit_t *h){
     u2 = (float)rand() / (float)RAND_MAX;
 
     float r  = sqrtf(-2.0f * logf(u1));
-    float th = 2.0f * (float)M_PI * u2;
+    float th = 2.0f * 3.14159265358979323846f * u2;
 
     h->spare      = r * sinf(th);
     h->have_spare = 1;
     return r * cosf(th);
 }
 
+/* Reset maturation and sliding-window state */
+static void hit_reset_maturation(hit_t *h){
+    if (!h) return;
+    h->step   = 0;
+    h->f      = 0.0f;
+    h->have_f = 0;
+    if (h->reward_buf && h->T > 1){
+        memset(h->reward_buf, 0, (size_t)h->T * sizeof(float));
+    }
+}
+
 /* ===== Core adoption operator =========================================== */
 
 /**
- * @brief Apply strict HIT transfer + mutation from remote to local genome.
+ * @brief Apply HIT transfer + mutation from remote to local genome.
  *
- * Assumes that f_remote is strictly better than current f (according to mode).
+ * Assumes that f_remote is strictly better than current f (according to mode),
+ * and that the agent is mature (window full).
  */
-static void hit_adopt_from_remote(hit_t *h, const float *x_remote){
+static void hit_adopt_from_remote(hit_t *h,
+                                  const float *x_remote,
+                                  float alpha_remote)
+{
     if (!h || !x_remote || h->n <= 0) return;
 
     int n = h->n;
+
+    /* Optionally copy and mutate α from the neighbour */
+    if (h->evolve_alpha){
+        float a = alpha_remote;
+        if (!isfinite(a)) a = h->alpha;
+        if (a < h->alpha_min) a = h->alpha_min;
+        if (a > h->alpha_max) a = h->alpha_max;
+
+        float as = h->alpha_sigma;
+        if (isfinite(as) && as > 0.0f){
+            a += as * randn01(h);
+            if (a < h->alpha_min) a = h->alpha_min;
+            if (a > h->alpha_max) a = h->alpha_max;
+        }
+        h->alpha = a;
+    }
 
     /* Determine number of transferred coordinates: k = round(alpha * n). */
     float a = h->alpha;
@@ -136,9 +171,9 @@ static void hit_adopt_from_remote(hit_t *h, const float *x_remote){
         memcpy(h->x_buf, h->x, (size_t)n * sizeof(float));
     }
 
-    /* Mark that this genome must be re-evaluated. */
-    h->have_f = 0;
+    /* Successful transfer: increase epoch and reset maturation window. */
     h->epoch += 1;
+    hit_reset_maturation(h);
 }
 
 /* ===== Public API ======================================================== */
@@ -153,72 +188,118 @@ void hit_init(hit_t *h, int n,
     }
     memset(h, 0, sizeof(*h));
 
-    h->n   = n;
-    h->x   = x;
-    h->x_buf = x_buf;
-    h->lo  = lo;
-    h->hi  = hi;
+    h->n    = n;
+    h->x    = x;
+    h->x_buf= x_buf;
+    h->lo   = lo;
+    h->hi   = hi;
 
-    /* Defaults consistent with HIT behaviour. */
-    h->mode  = HIT_MINIMIZE;
-    h->alpha = 0.3f;
-    h->sigma = 0.1f;
+    /* Reasonable HIT-like defaults. */
+    h->mode        = HIT_MINIMIZE;
+    h->alpha       = 0.3f;
+    h->sigma       = 0.001f;
+    h->T           = 50;
+    h->evolve_alpha= false;
+    h->alpha_sigma = 0.001f;
+    h->alpha_min   = 0.0f;
+    h->alpha_max   = 0.9f;
 
     if (params){
-        h->mode  = params->mode;
-        h->alpha = params->alpha;
-        h->sigma = params->sigma;
+        h->mode        = params->mode;
+        h->alpha       = params->alpha;
+        h->sigma       = params->sigma;
+        if (params->eval_T > 0){
+            h->T = params->eval_T;
+        }
+        h->evolve_alpha= params->evolve_alpha;
+        h->alpha_sigma = params->alpha_sigma;
+        h->alpha_min   = params->alpha_min;
+        h->alpha_max   = params->alpha_max;
     }
 
-    h->f        = 0.0f;
-    h->have_f   = 0;
-    h->epoch    = 0;
+    if (h->T < 1) h->T = 1;
+
+    h->reward_buf = NULL;
+    if (h->T > 1){
+        h->reward_buf = (float *)calloc((size_t)h->T, sizeof(float));
+    }
+
+    h->f          = 0.0f;
+    h->have_f     = 0;
+    h->step       = 0;
+    h->epoch      = 0;
     h->have_spare = 0;
     h->spare      = 0.0f;
 }
 
 void hit_tell_initial(hit_t *h, float f0){
     if (!h) return;
+    /* Explicitly set the score and mark as mature. */
     h->f      = f0;
     h->have_f = 1;
+    h->step   = (uint32_t)h->T;
 }
 
 const float *hit_ask(hit_t *h){
     if (!h) return NULL;
-    /* In strict HIT, the genome to evaluate is always x. */
+    /* In HIT, the genome to evaluate is always x. */
     return h->x;
 }
 
-void hit_tell(hit_t *h, float f){
+void hit_tell(hit_t *h, float r){
     if (!h) return;
-    h->f      = f;
-    h->have_f = 1;
+
+    h->step += 1;
+
+    if (h->T <= 1 || !h->reward_buf){
+        /* Degenerate case: no window, f is simply the latest reward. */
+        h->f      = r;
+        h->have_f = 1;
+        return;
+    }
+
+    uint32_t idx = (h->step - 1u) % (uint32_t)h->T;
+    if (h->step <= (uint32_t)h->T){
+        /* Filling the window. */
+        h->reward_buf[idx] = r;
+        h->f += r;
+        if (h->step == (uint32_t)h->T){
+            h->have_f = 1; /* window is now full => mature */
+        }
+    } else {
+        /* Sliding window: remove oldest, add newest. */
+        float old = h->reward_buf[idx];
+        h->reward_buf[idx] = r;
+        h->f += r - old;
+        h->have_f = 1;
+    }
 }
 
 void hit_observe_remote(hit_t *h, uint16_t from_id, uint32_t epoch,
-                        const float *x_remote, float f_remote)
+                        const float *x_remote, float f_remote,
+                        float alpha_remote)
 {
-    (void)from_id; /* currently unused, kept for possible logging/debug. */
-    (void)epoch;   /* not used in strict HIT core.                      */
+    (void)from_id; /* currently unused, kept for logging/debug. */
+    (void)epoch;   /* not used in HIT core (could be used for staleness). */
 
     if (!h || !x_remote || h->n <= 0){
         return;
     }
 
-    /* If we have no fitness yet, we treat the neighbour as better by default. */
+    /* Maturation: ignore all messages until we have a full window. */
     if (!h->have_f){
-        hit_adopt_from_remote(h, x_remote);
         return;
     }
 
     /* Deterministic acceptance: adopt iff neighbour is strictly better. */
-    if (better(h->mode, f_remote, h->f)){
-        hit_adopt_from_remote(h, x_remote);
+    float f_local = hit_get_f(h);  // local average
+    if (better(h->mode, f_remote, f_local)){
+        hit_adopt_from_remote(h, x_remote, alpha_remote);
     }
 }
 
 int hit_ready(const hit_t *h){
-    return h && h->have_f;   /* or use a separate have_initial flag if you prefer */
+    return h && h->have_f;
 }
 
 uint32_t hit_iterations(const hit_t *h){

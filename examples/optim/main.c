@@ -76,6 +76,7 @@ REGISTER_USERDATA(USERDATA)
 typedef struct __attribute__((__packed__)) {
     uint16_t sender_id;
     uint32_t epoch;
+    float    alpha;      /* transfer rate α (used by HIT, ignored by SL) */
     float    x[D];
     float    f_adv;
 } sl_msg_t;
@@ -96,7 +97,7 @@ static void on_rx(message_t *mr){
     memcpy(x_buf, msg.x, sizeof(x_buf));
 
     // Decentralization hook used only by Social Learning. No‑op for others.
-    opt_observe_remote(mydata->opt, msg.sender_id, msg.epoch, x_buf, msg.f_adv);
+    opt_observe_remote(mydata->opt, msg.sender_id, msg.epoch, x_buf, msg.f_adv, msg.alpha);
 }
 
 
@@ -105,6 +106,9 @@ static bool on_tx(void){
     uint32_t now = current_time_milliseconds();
     const uint32_t period_ms = 200; /* 5 Hz beacons */
     if (now - mydata->last_tx_ms < period_ms) return false;
+
+    /* For HIT, do not transmit during maturation (before window is full) */
+    if (chosen_algo() == OPT_HIT && !opt_ready(mydata->opt)) return false;
 
     sl_msg_t m;
     m.sender_id = pogobot_helper_getid();
@@ -128,8 +132,8 @@ void user_init(void){
     error_codes_led_idx = 3;
 
     // Initialize the heap, with large chunks (512) allowed
-     const uint16_t classes[] = { 32, 48, 64, 128, 512 };
-     tiny_alloc_init(&mydata->ta, mydata->heap, sizeof(mydata->heap), classes, 5);
+    const uint16_t classes[] = { 32, 48, 64, 128, 512 };
+    tiny_alloc_init(&mydata->ta, mydata->heap, sizeof(mydata->heap), classes, 5);
 
     for (int i = 0; i < D; ++i){
         mydata->lo[i] = -2.0f;
@@ -152,7 +156,11 @@ void user_init(void){
 
     /* Prime algorithms that need an initial fitness (ES, SEP-CMA-ES, SL, HIT). */
     mydata->f0    = sphere_fn(opt_get_x(mydata->opt), D);
-    opt_tell_initial(mydata->opt, mydata->f0);
+    /* Prime ES/SEP/SL with an initial fitness; let HIT start “empty” so
+       the sliding-window / maturation behaves as intended. */
+    if (chosen_algo() != OPT_HIT){
+        opt_tell_initial(mydata->opt, mydata->f0);
+    }
 
     printf("[OPT] algo=%d  ok=%d  n=%d  f0=%.6f\n", ok, (int)OPT_EXAMPLE_ALGO, D, mydata->f0);
     mydata->last_print_ms = current_time_milliseconds();
@@ -160,36 +168,61 @@ void user_init(void){
 
 /* =============================== STEP =================================== */
 void user_step(void){
-    const int evals_per_tick = 1;
+    if (chosen_algo() == OPT_HIT){
+        /* CEC2020 HIT: at each control step, evaluate the current genome
+           and feed the instantaneous cost into the sliding window. */
+        const float *x = opt_get_x(mydata->opt);
+        if (x){
+            float f_inst = sphere_fn(x, D);
+            opt_tell(mydata->opt, f_inst);  /* forwards to hit_tell() */
+        }
+    } else {
+        const int evals_per_tick = 1;
 
-    for (int k = 0; k < evals_per_tick; ++k){
-        if (!opt_ready(mydata->opt)) break;
+        for (int k = 0; k < evals_per_tick; ++k){
+            if (!opt_ready(mydata->opt)) break;
 
-        const float *parent_x = opt_get_x(mydata->opt);
-        float parent_f  = parent_x ? sphere_fn(parent_x, D) : 0.0f;
-        if (chosen_algo() == OPT_SOCIAL_LEARNING) parent_f = 1.0f;
+            const float *parent_x = opt_get_x(mydata->opt);
+            float parent_f  = parent_x ? sphere_fn(parent_x, D) : 0.0f;
+            if (chosen_algo() == OPT_SOCIAL_LEARNING) parent_f = 1.0f;
 
-        /* aux_scale is meaningful only for Social Learning; ignored otherwise. */
-        const float *x_try = opt_ask(mydata->opt, parent_f);
-        if (!x_try) break;
+            /* aux_scale is meaningful only for Social Learning; ignored otherwise. */
+            const float *x_try = opt_ask(mydata->opt, parent_f);
+            if (!x_try) break;
 
-        const float f_try = sphere_fn(x_try, D);
-        (void)opt_tell(mydata->opt, f_try);
+            const float f_try = sphere_fn(x_try, D);
+            (void)opt_tell(mydata->opt, f_try);
+        }
     }
 
-    const float f_now = sphere_fn(opt_get_x(mydata->opt), D);
-    float g = f_now; if (g < 0.0f) g = 0.0f; if (g > 1.0f) g = 1.0f;
+    /* LED feedback + periodic debug printout */
+
+    float f_disp;
+    if (chosen_algo() == OPT_HIT){
+        /* Use the sliding-window score for display/logging */
+        f_disp = opt_get_last_advert(mydata->opt);
+    } else {
+        f_disp = sphere_fn(opt_get_x(mydata->opt), D);
+    }
+
+    float g = f_disp;
+    if (g < 0.0f) g = 0.0f;
+    if (g > 1.0f) g = 1.0f;
     uint8_t val = (uint8_t)(25.0f * (1.0f - g));
     pogobot_led_setColors(val, 0, val, 0);
 
     uint32_t now = current_time_milliseconds();
     if (now - mydata->last_print_ms > 1000){
         const float *x = opt_get_x(mydata->opt);
-        printf("[OPT] it=%u  f=%.6f  x[0]=%.4f ... x[%d]=%.4f\n",
-               opt_iterations(mydata->opt), f_now, x[0], D-1, x[D-1]);
+        printf("[OPT] algo=%d it=%u  f_disp=%.6f  x[0]=%.4f ... x[%d]=%.4f\n",
+               (int)chosen_algo(),
+               opt_iterations(mydata->opt),
+               f_disp,
+               x[0], D-1, x[D-1]);
         mydata->last_print_ms = now;
     }
 }
+
 
 /* ============================== MAIN ==================================== */
 int main(void){
