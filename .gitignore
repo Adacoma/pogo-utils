@@ -80,3 +80,8 @@ examples/tiny_alloc/tiny_alloc
 # Generated figures
 *.pdf
 
+# Temp files
+*.tmp
+*.bak
+*.old
+
