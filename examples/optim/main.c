@@ -28,7 +28,7 @@
 #endif
 
 #ifndef OPT_EXAMPLE_ALGO
-#define OPT_EXAMPLE_ALGO 3 /* default: OPT_ES1P1 */
+#define OPT_EXAMPLE_ALGO 5 /* default: OPT_ES1P1 */
 #endif
 
 #define LAMBDA_MAX 4
@@ -146,7 +146,9 @@ void user_init(void){
                (unsigned)sizeof(mydata->heap));
     }
 
-    opt_randomize_x(mydata->opt, /*seed*/ 12345);
+    uint32_t seed = pogobot_helper_getRandSeed()
+        ^ ( (uint32_t)pogobot_helper_getid() * 0x9e3779b9u );
+    opt_randomize_x(mydata->opt, seed);
 
     /* Prime algorithms that need an initial fitness (ES, SEP-CMA-ES, SL, HIT). */
     mydata->f0    = sphere_fn(opt_get_x(mydata->opt), D);

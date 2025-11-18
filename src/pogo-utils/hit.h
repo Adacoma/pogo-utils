@@ -1,32 +1,3 @@
-/**
- * @file hit.h
- * @brief Horizontal Information Transfer (HIT) optimizer in strict ask–tell form.
- *
- * @details
- * HIT performs social learning by *copying a subset of parameters* from
- * neighbors with a probability that increases with the neighbor’s advertised
- * performance; copied parameters are then perturbed (mutation). This follows
- * the Horizontal Information Transfer principle described for social learning
- * in swarm robotics. See: Bredeche & Fontbonne, *Social learning in swarm
- * robotics*, Phil. Trans. B, 2022. DOI: 10.1098/rstb.2020.0309.
- *
- * Design mirrors social_learning.{h,c}:
- *   - Strict ask–tell (no objective callback inside).
- *   - Caller-provided parent x and offspring x_try buffers.
- *   - Optional bounds (lo/hi) with normalized-space mutation.
- *   - Small bounded repository of recent neighbor adverts (for donor picks).
- *   - Duplicate-aware upsert; no malloc when buffers are provided.
- *
- * Typical usage (MINIMIZE):
- *   hit_init(...); hit_tell_initial(&hit, f0);
- *   loop {
- *     const float *x_try = hit_ask(&hit, loss_for_scale);
- *     float f_try = objective(x_try);
- *     (void)hit_tell(&hit, f_try);
- *   }
- *   // On each received advert:
- *   hit_observe_remote(&hit, sender_id, epoch, x_remote, f_adv_remote);
- */
 #ifndef POGO_UTILS_HIT_H
 #define POGO_UTILS_HIT_H
 
@@ -37,99 +8,152 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 
-/** Optimization direction. */
-typedef enum { HIT_MINIMIZE = 0, HIT_MAXIMIZE = 1 } hit_mode_t;
+/**
+ * @brief Optimization direction.
+ *
+ * HIT-2020 maximizes a reward. Here we support both by flipping the
+ * comparison in a single place.
+ */
+typedef enum {
+    HIT_MINIMIZE = 0,
+    HIT_MAXIMIZE = 1
+} hit_mode_t;
 
-/** Tunables for HIT. */
+/**
+ * @brief Parameters for strict HIT (CEC 2020).
+ *
+ * - mode  : minimize or maximize the scalar objective.
+ * - alpha : fraction of parameters (0..1) to copy from a better neighbour.
+ *           In the paper this is the transfer rate α; exactly floor(alpha*n)
+ *           dimensions are copied at each accepted transfer.
+ * - sigma : standard deviation of Gaussian mutation applied AFTER transfer.
+ *           Mutation is additive in parameter space: x_d ← x_d + σ·N(0,1),
+ *           with optional clamping to [lo_d, hi_d] when bounds are provided.
+ */
 typedef struct {
-    hit_mode_t mode;           /**< MIN or MAX. */
-    float transfer_prob;       /**< Prob. to copy each dim from donor (typ. 0.2..0.5). */
-    float random_donor_prob;   /**< Chance to ignore repo and use fresh random donor. */
-    float accept_beta;         /**< Sigmoid slope for neighbor acceptance (2..10). */
-    float accept_pmin;         /**< Floor acceptance prob. for worse neighbors (0..0.2). */
-    float mut_gain;            /**< Mutation amplitude gain (normalized space). */
-    float mut_clip;            /**< Clip for loss_for_scale driver. */
-    float dup_eps;             /**< Duplicate tolerance in normalized space. */
-    uint16_t repo_capacity;    /**< Bounded repository capacity (<= provided buffers). */
+    hit_mode_t mode;
+    float      alpha;   /**< Transfer rate α (0..1). */
+    float      sigma;   /**< Mutation stddev σ.     */
 } hit_params_t;
 
-/** HIT handle. */
+/**
+ * @brief HIT optimizer state.
+ *
+ * Design is “strict HIT”:
+ *   - Single parent genome x (no repository, no probabilistic acceptance).
+ *   - When hit_observe_remote() sees a better neighbour:
+ *       - Choose exactly α·n indices without replacement.
+ *       - Copy those coordinates from remote genome.
+ *       - Apply additive Gaussian mutation to ALL coordinates.
+ *       - Mark the genome as “needing re-evaluation” (have_f = 0).
+ *   - ask/tell are just a clean interface around “current genome + fitness”.
+ */
 typedef struct {
-    /* Problem */
-    int n;
+    /* Problem size / mode */
+    int        n;
     hit_mode_t mode;
 
-    /* Parent & offspring (owned by caller) */
-    float *restrict x;
-    float *restrict x_try;
-    const float *restrict lo;
-    const float *restrict hi;
+    /* HIT hyperparameters */
+    float alpha;   /**< Transfer rate α.      */
+    float sigma;   /**< Mutation stddev σ.    */
 
-    /* Repository of neighbor adverts (owned by caller) */
-    float    *restrict repo_X;     /**< capacity * n floats (row-major). */
-    float    *restrict repo_F;     /**< capacity floats (advertised perf). */
-    uint32_t *restrict repo_epoch; /**< capacity uint32. */
-    uint16_t *restrict repo_from;  /**< capacity uint16. */
-    uint16_t capacity;
-    uint16_t rsize;
+    /* Genomes (owned by caller) */
+    float       *x;      /**< Current genome to evaluate.     */
+    float       *x_buf;  /**< Optional work buffer (may be NULL). */
+    const float *lo;     /**< Optional lower bounds (size n). */
+    const float *hi;     /**< Optional upper bounds (size n). */
 
-    /* Parameters */
-    float transfer_prob;
-    float random_donor_prob;
-    float accept_beta;
-    float accept_pmin;
-    float mut_gain;
-    float mut_clip;
-    float dup_eps;
+    /* Current fitness */
+    float    f;          /**< Fitness of x.            */
+    int      have_f;     /**< 0 = unknown, 1 = valid.  */
 
     /* Book-keeping */
-    uint32_t epoch_local;      /**< Increments on accepted parent updates. */
-    float    last_adv_f;       /**< Last advertised fitness (parent). */
-    int      have_initial;
+    uint32_t epoch;      /**< Increments at each successful transfer. */
 
-    /* RNG cache */
+    /* RNG cache for Box–Muller */
     int   have_spare;
     float spare;
 } hit_t;
 
 /* ===== API ===== */
 
+/**
+ * @brief Initialize a HIT optimizer.
+ *
+ * @param h      Handle to initialize.
+ * @param n      Dimension of the genome.
+ * @param x      Pointer to current genome (size n).
+ * @param x_buf  Optional work buffer (size n). If NULL, x is used in-place.
+ * @param lo     Optional lower bounds (size n), or NULL.
+ * @param hi     Optional upper bounds (size n), or NULL.
+ * @param params HIT parameters (mode, alpha, sigma). If NULL, defaults are:
+ *               mode = HIT_MINIMIZE, alpha = 0.3f, sigma = 0.1f.
+ */
 void hit_init(hit_t *h, int n,
-              float *restrict x, float *restrict x_try,
-              const float *restrict lo, const float *restrict hi,
-              float *restrict repo_X, float *restrict repo_F,
-              uint32_t *restrict repo_epoch, uint16_t *restrict repo_from,
-              uint16_t capacity, const hit_params_t *params);
+              float *x, float *x_buf,
+              const float *lo, const float *hi,
+              const hit_params_t *params);
 
+/**
+ * @brief Set the initial fitness of the current genome.
+ *
+ * Must be called once after you evaluate the initial x, before the
+ * main ask/tell loop. (If you never call this, neighbours will be
+ * considered better by default and the first incoming advert will
+ * be accepted.)
+ */
 void hit_tell_initial(hit_t *h, float f0);
 
 /**
- * @brief Generate an offspring by copying a subset from a donor and mutating.
+ * @brief Ask for the genome to evaluate.
  *
- * @param h               Handle.
- * @param loss_for_scale  Driver for mutation amplitude (see mut_clip, mut_gain).
- * @return Pointer to x_try (length n), or NULL if called before tell_initial().
+ * In strict HIT, the current genome is always h->x. This function
+ * mainly exists for symmetry with other optimizers and to keep the
+ * ask/tell structure consistent. It does not create a new offspring:
+ * new genomes are produced only when a better neighbour is observed.
+ *
+ * @return Pointer to genome of length n, or NULL if h is NULL.
  */
-const float *hit_ask(hit_t *h, float loss_for_scale);
+const float *hit_ask(hit_t *h);
 
 /**
- * @brief Tell the candidate’s fitness and perform parent replacement if better.
+ * @brief Tell HIT the fitness of the last evaluated genome.
  *
- * @return Current parent’s fitness after potential replacement.
+ * @param h Handle.
+ * @param f Fitness of the genome returned by hit_ask().
  */
-float hit_tell(hit_t *h, float f_try);
+void hit_tell(hit_t *h, float f);
 
 /**
- * @brief Ingest a neighbor advert (duplicate-aware upsert). Acceptance
- *        probability follows a sigmoid of performance difference as in HIT.
+ * @brief Notify HIT of a neighbour's advertised genome and fitness.
+ *
+ * This is the core of strict HIT:
+ *   - If neighbour is better (according to mode), apply horizontal
+ *     transfer + mutation immediately to the local genome:
+ *       1. Choose k = round(alpha * n) distinct indices without
+ *          replacement.
+ *       2. Copy those coordinates from x_remote into the local genome.
+ *       3. Mutate ALL coordinates with additive Gaussian noise of
+ *          stddev sigma (and optional clipping to [lo, hi]).
+ *       4. Set have_f = 0 and increment epoch.
+ *
+ * @param h         Handle.
+ * @param from_id   Sender id (unused, but kept for API symmetry).
+ * @param epoch     Sender epoch (unused).
+ * @param x_remote  Neighbour genome (size n).
+ * @param f_remote  Neighbour fitness.
  */
 void hit_observe_remote(hit_t *h, uint16_t from_id, uint32_t epoch,
-                        const float *x_remote, float f_adv);
+                        const float *x_remote, float f_remote);
 
-/* Getters */
-static inline const float *hit_get_x(const hit_t *h){ return h->x; }
-static inline uint32_t     hit_get_epoch(const hit_t *h){ return h->epoch_local; }
-static inline float        hit_get_last_advert(const hit_t *h){ return h->last_adv_f; }
+/* ===== Convenience getters ===== */
+
+static inline const float *hit_get_x(const hit_t *h){ return h ? h->x : NULL; }
+static inline uint32_t     hit_get_epoch(const hit_t *h){ return h ? h->epoch : 0u; }
+static inline float        hit_get_f(const hit_t *h){ return h ? h->f : 0.0f; }
+
+int      hit_ready(const hit_t *h);      /* 0/1: has initial fitness been set? */
+uint32_t hit_iterations(const hit_t *h); /* e.g. just return hit_get_epoch(h) */
 
 #ifdef __cplusplus
 }

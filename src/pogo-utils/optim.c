@@ -38,10 +38,9 @@ struct opt_t {
             float *repo_X, *repo_F; uint32_t *repo_epoch; uint16_t *repo_from;
             uint16_t capacity;
         } sl;
-        struct {  /* HIT */
-            float *x, *x_try;
-            float *repo_X, *repo_F; uint32_t *repo_epoch; uint16_t *repo_from;
-            uint16_t capacity;
+        struct {  /* HIT  */
+            float *x;      /* current genome */
+            float *x_buf;  /* optional work buffer passed to hit_init (can be NULL) */
         } hit;
     } buf;
 
@@ -119,16 +118,9 @@ opt_cfg_t opt_default_cfg(opt_algo_t algo, int n){
 
     case OPT_HIT:
         memset(&c.P.hit, 0, sizeof(c.P.hit));
-        c.P.hit.mode = HIT_MINIMIZE;
-        c.P.hit.transfer_prob = 0.35f;
-        c.P.hit.random_donor_prob = 0.05f;
-        c.P.hit.accept_beta = 5.0f;
-        c.P.hit.accept_pmin = 0.02f;
-        c.P.hit.mut_gain = 0.4f;
-        c.P.hit.mut_clip = 1.0f;
-        c.P.hit.dup_eps = 1e-3f;
-        c.P.hit.repo_capacity = 0;
-        c.sz.repo_capacity = 16;
+        c.P.hit.mode  = HIT_MINIMIZE;
+        c.P.hit.alpha = 0.35f;  /* fraction of coordinates copied */
+        c.P.hit.sigma = 0.15f;  /* mutation stddev */
         break;
     }
     return c;
@@ -270,24 +262,19 @@ int opt_create(opt_t **self_out, tiny_alloc_t *ta, int n,
     } break;
 
     case OPT_HIT: {
-        const uint16_t cap = cfg.sz.repo_capacity ? cfg.sz.repo_capacity : 16;
-        float *x  = (float*)tiny_calloc(ta, n, sizeof(float));
-        float *xt = (float*)tiny_calloc(ta, n, sizeof(float));
-        float *RX = (float*)tiny_calloc(ta, (size_t)cap*n, sizeof(float));
-        float *RF = (float*)tiny_calloc(ta, cap, sizeof(float));
-        uint32_t *RE = (uint32_t*)tiny_calloc(ta, cap, sizeof(uint32_t));
-        uint16_t *FR = (uint16_t*)tiny_calloc(ta, cap, sizeof(uint16_t));
-        if (!x || !xt || !RX || !RF || !RE || !FR) goto fail;
+        float *x     = (float*)tiny_calloc(ta, n, sizeof(float));
+        float *x_buf = (float*)tiny_calloc(ta, n, sizeof(float));  /* optional */
+        if (!x || !x_buf) goto fail;
 
-        self->buf.hit.x=x; self->buf.hit.x_try=xt;
-        self->buf.hit.repo_X=RX; self->buf.hit.repo_F=RF;
-        self->buf.hit.repo_epoch=RE; self->buf.hit.repo_from=FR; self->buf.hit.capacity=cap;
+        self->buf.hit.x     = x;
+        self->buf.hit.x_buf = x_buf;
 
         hit_params_t P = cfg.P.hit;
-        P.mode = (mode==OPT_MINIMIZE)?HIT_MINIMIZE:HIT_MAXIMIZE;
-        if (P.repo_capacity==0) P.repo_capacity = cap;
+        P.mode = (mode == OPT_MINIMIZE) ? HIT_MINIMIZE : HIT_MAXIMIZE;
 
-        hit_init(&self->o.hit, n, x, xt, LO, HI, RX, RF, RE, FR, cap, &P);
+        /* New strict HIT API: no repository, just x/x_buf + bounds + params. */
+        hit_init(&self->o.hit, n, x, x_buf, LO, HI, &P);
+
         self->x_ptr = x;
     } break;
     }
@@ -322,9 +309,8 @@ void opt_destroy(opt_t *self){
         TFREE(self->buf.sl.repo_epoch); TFREE(self->buf.sl.repo_from);
         break;
     case OPT_HIT:
-        TFREE(self->buf.hit.x); TFREE(self->buf.hit.x_try);
-        TFREE(self->buf.hit.repo_X); TFREE(self->buf.hit.repo_F);
-        TFREE(self->buf.hit.repo_epoch); TFREE(self->buf.hit.repo_from);
+        TFREE(self->buf.hit.x);
+        TFREE(self->buf.hit.x_buf);
         break;
     }
 
@@ -355,7 +341,9 @@ const float *opt_ask(opt_t *self, float aux_scale){
     case OPT_PGPE:           return pgpe_ask(&self->o.pgpe);
     case OPT_SEP_CMAES:      return sep_cmaes_ask(&self->o.sep);
     case OPT_SOCIAL_LEARNING:return sl_ask(&self->o.sl, aux_scale);
-    case OPT_HIT:            return hit_ask(&self->o.hit, aux_scale);
+    case OPT_HIT:
+        (void)aux_scale;
+        return hit_ask(&self->o.hit);
     }
     return NULL;
 }
@@ -367,8 +355,8 @@ float opt_tell(opt_t *self, float f){
     case OPT_SPSA:           (void)spsa_tell(&self->o.spsa, f); return f;
     case OPT_PGPE:           pgpe_tell(&self->o.pgpe, f); return f;
     case OPT_SEP_CMAES:      return sep_cmaes_tell(&self->o.sep, f);
-    case OPT_SOCIAL_LEARNING:return sl_tell(&self->o.sl, f);
-    case OPT_HIT:            return hit_tell(&self->o.hit, f);
+    case OPT_SOCIAL_LEARNING: return sl_tell(&self->o.sl, f);
+    case OPT_HIT:            (void)hit_tell(&self->o.hit, f); return f;
     }
     return 0.0f;
 }
@@ -381,7 +369,7 @@ int opt_ready(const opt_t *self){
     case OPT_PGPE:           return 1;
     case OPT_SEP_CMAES:      return sep_cmaes_ready(&self->o.sep);
     case OPT_SOCIAL_LEARNING:return self->o.sl.have_initial;
-    case OPT_HIT:            return self->o.hit.have_initial;
+    case OPT_HIT:             return hit_ready(&self->o.hit);
     }
     return 0;
 }
@@ -394,7 +382,7 @@ uint32_t opt_iterations(const opt_t *self){
     case OPT_PGPE:           return pgpe_iterations(&self->o.pgpe);
     case OPT_SEP_CMAES:      return sep_cmaes_iterations(&self->o.sep);
     case OPT_SOCIAL_LEARNING:return self->o.sl.epoch_local;
-    case OPT_HIT:            return self->o.hit.epoch_local;
+    case OPT_HIT:             return hit_iterations(&self->o.hit);
     }
     return 0;
 }
@@ -416,7 +404,7 @@ void opt_observe_remote(opt_t *self, uint16_t from_id, uint32_t epoch,
 float opt_get_last_advert(const opt_t *self){
     if (!self) return 0.0f;
     if (self->algo == OPT_SOCIAL_LEARNING) return sl_get_last_advert(&self->o.sl);
-    if (self->algo == OPT_HIT)            return hit_get_last_advert(&self->o.hit);
+    if (self->algo == OPT_HIT)            return hit_get_f(&self->o.hit);
     return 0.0f;
 }
 
