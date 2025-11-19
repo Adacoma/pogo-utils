@@ -10,7 +10,7 @@ extern "C" {
 #include <stdbool.h>
 
 #ifndef HIT_MAX_T
-#define HIT_MAX_T 256
+#define HIT_MAX_T 32
 #endif
 
 

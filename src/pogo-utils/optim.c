@@ -123,7 +123,7 @@ opt_cfg_t opt_default_cfg(opt_algo_t algo, int n){
         c.P.hit.sigma       = 0.15f;   /* mutation stddev on genome coords  */
 
         /* CEC2020-like defaults for our HIT implementation */
-        c.P.hit.eval_T      = 50;     /* sliding-window length / maturation */
+        c.P.hit.eval_T      = 5;     /* sliding-window length / maturation */
         c.P.hit.evolve_alpha= true;    /* α is evolvable                     */
         c.P.hit.alpha_sigma = 1e-3f;   /* mutation stddev on α               */
         c.P.hit.alpha_min   = 0.0f;    /* clamp α to [0, 0.9]                */

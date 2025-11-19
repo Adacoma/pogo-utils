@@ -197,7 +197,7 @@ void hit_init(hit_t *h, int n,
     h->mode        = HIT_MINIMIZE;
     h->alpha       = 0.3f;
     h->sigma       = 0.001f;
-    h->T           = 50;
+    h->T           = 5;
     h->evolve_alpha= false;
     h->alpha_sigma = 0.001f;
     h->alpha_min   = 0.0f;

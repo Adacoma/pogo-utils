@@ -125,7 +125,7 @@ void user_init(void){
     hit_params_t p;
     p.mode         = HIT_MINIMIZE;
     p.sigma        = 0.15f;
-    p.eval_T       = 200;
+    p.eval_T       = 5;
     p.evolve_alpha = true;
     p.alpha_min    = 0.0f;
     p.alpha_max    = 0.9f;
