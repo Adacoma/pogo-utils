@@ -118,7 +118,7 @@ void user_init(void){
 
     /* HIT hyperparameters close to CEC2020:
      *   - minimise accumulated cost (Sphere),
-     *   - eval_T = 400 (maturation delay),
+     *   - eval_T = 200 (maturation delay),
      *   - α initially uniform in [0, 0.9], then evolved by selection,
      *   - σ chosen fairly large here for a simple demo.
      */

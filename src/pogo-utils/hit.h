@@ -9,6 +9,11 @@ extern "C" {
 #include <stddef.h>
 #include <stdbool.h>
 
+#ifndef HIT_MAX_T
+#define HIT_MAX_T 256
+#endif
+
+
 /**
  * @brief Optimization direction.
  *
@@ -99,6 +104,7 @@ typedef struct {
 
     /* Maturation / sliding-window bookkeeping */
     uint32_t step;       /**< Steps since last parameter change.  */
+    float    reward_buf_static[HIT_MAX_T];
     float   *reward_buf; /**< Circular buffer of size T (or NULL
                               if T<=1 and no buffering is needed). */
 

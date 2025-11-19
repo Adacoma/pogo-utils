@@ -2,6 +2,7 @@
 #include "optim.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #ifndef OPT_CLAMP
 #define OPT_CLAMP(v,a,b) ((v)<(a)?(a):((v)>(b)?(b):(v)))
@@ -119,7 +120,6 @@ opt_cfg_t opt_default_cfg(opt_algo_t algo, int n){
     case OPT_HIT:
         memset(&c.P.hit, 0, sizeof(c.P.hit));
         c.P.hit.mode        = HIT_MINIMIZE;
-        c.P.hit.alpha       = 0.35f;   /* initial transfer rate α           */
         c.P.hit.sigma       = 0.15f;   /* mutation stddev on genome coords  */
 
         /* CEC2020-like defaults for our HIT implementation */
@@ -128,6 +128,10 @@ opt_cfg_t opt_default_cfg(opt_algo_t algo, int n){
         c.P.hit.alpha_sigma = 1e-3f;   /* mutation stddev on α               */
         c.P.hit.alpha_min   = 0.0f;    /* clamp α to [0, 0.9]                */
         c.P.hit.alpha_max   = 0.9f;
+
+        //c.P.hit.alpha       = 0.35f;   /* initial transfer rate α           */
+        float u_alpha  = (float)rand() / (float)RAND_MAX; /* in [0,1] */
+        c.P.hit.alpha        = c.P.hit.alpha_min + u_alpha * (c.P.hit.alpha_max - c.P.hit.alpha_min);
 
         break;
     }

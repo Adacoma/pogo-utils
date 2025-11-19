@@ -118,29 +118,23 @@ static void hit_adopt_from_remote(hit_t *h,
     memcpy(dst, h->x, (size_t)n * sizeof(float));
 
     if (do_transfer){
-        /* Choose k indices without replacement using partial Fisher–Yates. */
-        int *indices = (int *)malloc((size_t)n * sizeof(int));
-        if (!indices){
-            /* Fallback: if malloc fails, just copy all coordinates. */
-            for (int d = 0; d < n; ++d){
-                dst[d] = x_remote[d];
-            }
-        } else {
-            for (int d = 0; d < n; ++d){
-                indices[d] = d;
-            }
-            for (int i = 0; i < k; ++i){
-                int range = n - i;
-                int j = i + (rand() % range);
-                int tmp = indices[i];
-                indices[i] = indices[j];
-                indices[j] = tmp;
-            }
-            for (int i = 0; i < k; ++i){
-                int d = indices[i];
-                dst[d] = x_remote[d];
-            }
-            free(indices);
+        /* Choose k indices without replacement using partial Fisher–Yates.
+         */
+        int indices[n];
+
+        for (int d = 0; d < n; ++d){
+            indices[d] = d;
+        }
+        for (int i = 0; i < k; ++i){
+            int range = n - i;
+            int j = i + (rand() % range);
+            int tmp      = indices[i];
+            indices[i]   = indices[j];
+            indices[j]   = tmp;
+        }
+        for (int i = 0; i < k; ++i){
+            int d = indices[i];
+            dst[d] = x_remote[d];
         }
     }
 
@@ -148,19 +142,24 @@ static void hit_adopt_from_remote(hit_t *h,
     float sigma = h->sigma;
     if (!isfinite(sigma) || sigma < 0.0f) sigma = 0.0f;
 
-    if (sigma > 0.0f){
-        for (int d = 0; d < n; ++d){
-            float v = dst[d] + sigma * randn01(h);
+    /* Always loop once over all coordinates;
+     * apply mutation only if sigma>0, but always clamp.
+     */
+    for (int d = 0; d < n; ++d){
+        float v = dst[d];
 
-            if (h->lo && h->hi){
-                float lo = h->lo[d];
-                float hi = h->hi[d];
-                if (isfinite(lo) && isfinite(hi) && hi > lo){
-                    v = clampf(v, lo, hi);
-                }
-            }
-            dst[d] = v;
+        if (sigma > 0.0f){
+            v += sigma * randn01(h);
         }
+
+        if (h->lo && h->hi){
+            float lo = h->lo[d];
+            float hi = h->hi[d];
+            if (isfinite(lo) && isfinite(hi) && hi > lo){
+                v = clampf(v, lo, hi);
+            }
+        }
+        dst[d] = v;
     }
 
     /* Commit dst to x, and keep x_buf in sync if it exists and is distinct. */
@@ -221,7 +220,12 @@ void hit_init(hit_t *h, int n,
 
     h->reward_buf = NULL;
     if (h->T > 1){
-        h->reward_buf = (float *)calloc((size_t)h->T, sizeof(float));
+        if (h->T > HIT_MAX_T){
+            /* Clamp T to the maximum supported window length */
+            h->T = HIT_MAX_T;
+        }
+        h->reward_buf = h->reward_buf_static;
+        memset(h->reward_buf, 0, (size_t)h->T * sizeof(float));
     }
 
     h->f          = 0.0f;
@@ -231,6 +235,7 @@ void hit_init(hit_t *h, int n,
     h->have_spare = 0;
     h->spare      = 0.0f;
 }
+
 
 void hit_tell_initial(hit_t *h, float f0){
     if (!h) return;

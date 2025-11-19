@@ -115,6 +115,7 @@ static bool on_tx(void){
     m.epoch     = opt_iterations(mydata->opt);
     memcpy(m.x, opt_get_x(mydata->opt), sizeof(float)*D);
     m.f_adv = opt_get_last_advert(mydata->opt);
+    m.alpha = opt_get_alpha(mydata->opt);
 
     mydata->last_tx_ms = now;
     return pogobot_infrared_sendShortMessage_omni((uint8_t*)&m, SL_MSG_BYTES);
@@ -214,10 +215,12 @@ void user_step(void){
     uint32_t now = current_time_milliseconds();
     if (now - mydata->last_print_ms > 1000){
         const float *x = opt_get_x(mydata->opt);
-        printf("[OPT] algo=%d it=%u  f_disp=%.6f  x[0]=%.4f ... x[%d]=%.4f\n",
+        const float alpha = opt_get_alpha(mydata->opt);
+        printf("[OPT] algo=%d it=%u  f_disp=%.6f  alpha=%.3f   x[0]=%.4f ... x[%d]=%.4f\n",
                (int)chosen_algo(),
                opt_iterations(mydata->opt),
                f_disp,
+               alpha,
                x[0], D-1, x[D-1]);
         mydata->last_print_ms = now;
     }
