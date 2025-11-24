@@ -1833,14 +1833,14 @@ void bench_fixp_functions(void) {
         final_float += val;
     }
     {
-        volatile double val = -23.04435;
-        volatile double val2 = 0.01;
+        volatile double val3 = -23.04435;
+        volatile double val4 = 0.01;
         pogobot_stopwatch_reset(&mydata->timer_it);
         for (uint16_t i = 0; i < BENCH_RUNS; i++) {
-            val += val2;
+            val3 += val4;
         }
         elapsed_double = pogobot_stopwatch_get_elapsed_microseconds(&mydata->timer_it);
-        final_double += val;
+        final_double += val3;
     }
     {
         volatile q8_24_t val = q8_24_from_float(-23.0876f);
@@ -2318,8 +2318,8 @@ void bench_fixp_functions(void) {
     printf0("tanh,%lu,%lu,%lu,%lu,%lu,%lu\n", elapsed_float, elapsed_double, elapsed_q8_24, elapsed_q1_15, elapsed_q16_16, elapsed_q6_10);
 
 
-    printf0("\n");
-    printf_fixp0("Final vals: %Q16.16 %Q16.16 %Q8.24 %Q1.15 %Q16.16 %Q6.10\n", q16_16_from_float(final_float), q16_16_from_float(final_double), final_q8_24, final_q1_15, final_q16_16, final_q6_10);
+//    printf0("\n");
+//    printf_fixp0("Final vals: %Q16.16 %Q16.16 %Q8.24 %Q1.15 %Q16.16 %Q6.10\n", q16_16_from_float(final_float), q16_16_from_float(final_double), final_q8_24, final_q1_15, final_q16_16, final_q6_10);
 }
 
 
