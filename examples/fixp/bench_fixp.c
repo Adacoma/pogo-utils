@@ -246,8 +246,6 @@ void test_fixp_q8_24(void) {
         assert(q8_24_is_saturated(x3) == 1);
     }
 
-
-
     printf0("\n");
     printf0("=== Q8.24 exp and log Tests ===\n");
     {
@@ -283,6 +281,89 @@ void test_fixp_q8_24(void) {
         //printf0("exp(-10.0) = %li.%lu \n", q8_24_get_int(exp_a), q8_24_get_frac(exp_a));
         printf0("exp(-10.0) = %f \n", q8_24_to_float(exp_a));
     }
+
+    printf0("\n");
+    printf0("=== Q8.24 Activation Tests (tanh, sigmoid, ReLU) ===\n");
+
+    /* ---- q8_24_tanh tests ---- */
+    {
+        /* Test 1: tanh(0) = 0 */
+        q8_24_t x0 = q8_24_from_float(0.0f);
+        q8_24_t y0 = q8_24_tanh(x0);
+        float y0_f = q8_24_to_float(y0);
+        printf0("q8_24_tanh(0.0) = %f (expected 0.0)\n", y0_f);
+        assert(fabsf(y0_f - 0.0f) < 1e-5f);
+    }
+    {
+        /* Test 2: tanh(0.5) ≈ 0.462117 */
+        q8_24_t x = q8_24_from_float(0.5f);
+        q8_24_t y = q8_24_tanh(x);
+        float y_f = q8_24_to_float(y);
+        printf0("q8_24_tanh(0.5) = %f (expected ~0.462117)\n", y_f);
+        assert(fabsf(y_f - 0.462117f) < 2e-3f);
+    }
+    {
+        /* Test 3: odd symmetry: tanh(-x) ≈ -tanh(x) */
+        q8_24_t x  = q8_24_from_float(0.7f);
+        q8_24_t yp = q8_24_tanh(x);
+        q8_24_t ym = q8_24_tanh((q8_24_t)(-x));
+        float sum  = q8_24_to_float(yp) + q8_24_to_float(ym);
+        printf0("q8_24_tanh(0.7) + q8_24_tanh(-0.7) = %f (expected ~0)\n", sum);
+        assert(fabsf(sum) < 5e-3f);
+    }
+
+    /* ---- q8_24_sigmoid tests ---- */
+    {
+        /* Test 1: sigmoid(0) ≈ 0.5 */
+        q8_24_t x0 = q8_24_from_float(0.0f);
+        q8_24_t y0 = q8_24_sigmoid(x0);
+        float y0_f = q8_24_to_float(y0);
+        printf0("q8_24_sigmoid(0.0) = %f (expected ~0.5)\n", y0_f);
+        assert(fabsf(y0_f - 0.5f) < 5e-3f);
+    }
+    {
+        /* Test 2: sigmoid(1.0) ≈ 0.731059 */
+        q8_24_t x = q8_24_from_float(1.0f);
+        q8_24_t y = q8_24_sigmoid(x);
+        float y_f = q8_24_to_float(y);
+        printf0("q8_24_sigmoid(1.0) = %f (expected ~0.731059)\n", y_f);
+        assert(fabsf(y_f - 0.731059f) < 5e-3f);
+    }
+    {
+        /* Test 3: sigmoid(-1.0) ≈ 0.268941 */
+        q8_24_t x = q8_24_from_float(-1.0f);
+        q8_24_t y = q8_24_sigmoid(x);
+        float y_f = q8_24_to_float(y);
+        printf0("q8_24_sigmoid(-1.0) = %f (expected ~0.268941)\n", y_f);
+        assert(fabsf(y_f - 0.268941f) < 5e-3f);
+    }
+
+    /* ---- q8_24_relu tests ---- */
+    {
+        /* Test 1: ReLU(-0.3) = 0 */
+        q8_24_t x = q8_24_from_float(-0.3f);
+        q8_24_t y = q8_24_relu(x);
+        float y_f = q8_24_to_float(y);
+        printf0("q8_24_relu(-0.3) = %f (expected 0.0)\n", y_f);
+        assert(fabsf(y_f - 0.0f) < 1e-6f);
+    }
+    {
+        /* Test 2: ReLU(0.3) = 0.3 */
+        q8_24_t x = q8_24_from_float(0.3f);
+        q8_24_t y = q8_24_relu(x);
+        float y_f = q8_24_to_float(y);
+        printf0("q8_24_relu(0.3) = %f (expected ~0.3)\n", y_f);
+        assert(fabsf(y_f - 0.3f) < 5e-3f);
+    }
+    {
+        /* Test 3: ReLU(0) = 0 */
+        q8_24_t x = q8_24_from_float(0.0f);
+        q8_24_t y = q8_24_relu(x);
+        float y_f = q8_24_to_float(y);
+        printf0("q8_24_relu(0.0) = %f (expected 0.0)\n", y_f);
+        assert(fabsf(y_f - 0.0f) < 1e-6f);
+    }
+
 }
 
 
@@ -1062,6 +1143,91 @@ void test_fixp_q16_16(void) {
         printf0("q16_16_exp(log(exp(3.0))) = %f (expected ~ %f)\n", f_exp_log_exp_three, f_exp_three);
         assert(fabsf(f_exp_log_exp_three - f_exp_three) < TOLERANCE);
     }
+
+
+    printf0("\n");
+    printf0("=== Q16.16 Activation Tests (tanh, sigmoid, ReLU) ===\n");
+
+    /* ---- q16_16_tanh tests ---- */
+    {
+        /* Test 1: tanh(0) = 0 */
+        q16_16_t x0 = q16_16_from_float(0.0f);
+        q16_16_t y0 = q16_16_tanh(x0);
+        float y0_f = q16_16_to_float(y0);
+        printf0("q16_16_tanh(0.0) = %f (expected 0.0)\n", y0_f);
+        assert(fabsf(y0_f - 0.0f) < 1e-5f);
+    }
+    {
+        /* Test 2: tanh(0.5) ≈ 0.462117 */
+        q16_16_t x = q16_16_from_float(0.5f);
+        q16_16_t y = q16_16_tanh(x);
+        float y_f = q16_16_to_float(y);
+        printf0("q16_16_tanh(0.5) = %f (expected ~0.462117)\n", y_f);
+        assert(fabsf(y_f - 0.462117f) < 2e-3f);
+    }
+    {
+        /* Test 3: odd symmetry: tanh(-x) ≈ -tanh(x) */
+        q16_16_t x  = q16_16_from_float(0.7f);
+        q16_16_t yp = q16_16_tanh(x);
+        q16_16_t ym = q16_16_tanh((q16_16_t)(-x));
+        float sum   = q16_16_to_float(yp) + q16_16_to_float(ym);
+        printf0("q16_16_tanh(0.7) + q16_16_tanh(-0.7) = %f (expected ~0)\n", sum);
+        assert(fabsf(sum) < 5e-3f);
+    }
+
+    /* ---- q16_16_sigmoid tests ---- */
+    {
+        /* Test 1: sigmoid(0) ≈ 0.5 */
+        q16_16_t x0 = q16_16_from_float(0.0f);
+        q16_16_t y0 = q16_16_sigmoid(x0);
+        float y0_f = q16_16_to_float(y0);
+        printf0("q16_16_sigmoid(0.0) = %f (expected ~0.5)\n", y0_f);
+        assert(fabsf(y0_f - 0.5f) < 5e-3f);
+    }
+    {
+        /* Test 2: sigmoid(1.0) ≈ 0.731059 */
+        q16_16_t x = q16_16_from_float(1.0f);
+        q16_16_t y = q16_16_sigmoid(x);
+        float y_f = q16_16_to_float(y);
+        printf0("q16_16_sigmoid(1.0) = %f (expected ~0.731059)\n", y_f);
+        assert(fabsf(y_f - 0.731059f) < 5e-3f);
+    }
+    {
+        /* Test 3: sigmoid(-1.0) ≈ 0.268941 */
+        q16_16_t x = q16_16_from_float(-1.0f);
+        q16_16_t y = q16_16_sigmoid(x);
+        float y_f = q16_16_to_float(y);
+        printf0("q16_16_sigmoid(-1.0) = %f (expected ~0.268941)\n", y_f);
+        assert(fabsf(y_f - 0.268941f) < 5e-3f);
+    }
+
+    /* ---- q16_16_relu tests ---- */
+    {
+        /* Test 1: ReLU(-0.3) = 0 */
+        q16_16_t x = q16_16_from_float(-0.3f);
+        q16_16_t y = q16_16_relu(x);
+        float y_f = q16_16_to_float(y);
+        printf0("q16_16_relu(-0.3) = %f (expected 0.0)\n", y_f);
+        assert(fabsf(y_f - 0.0f) < 1e-6f);
+    }
+    {
+        /* Test 2: ReLU(0.3) = 0.3 */
+        q16_16_t x = q16_16_from_float(0.3f);
+        q16_16_t y = q16_16_relu(x);
+        float y_f = q16_16_to_float(y);
+        printf0("q16_16_relu(0.3) = %f (expected ~0.3)\n", y_f);
+        assert(fabsf(y_f - 0.3f) < 5e-3f);
+    }
+    {
+        /* Test 3: ReLU(0) = 0 */
+        q16_16_t x = q16_16_from_float(0.0f);
+        q16_16_t y = q16_16_relu(x);
+        float y_f = q16_16_to_float(y);
+        printf0("q16_16_relu(0.0) = %f (expected 0.0)\n", y_f);
+        assert(fabsf(y_f - 0.0f) < 1e-6f);
+    }
+
+
 }
 
 

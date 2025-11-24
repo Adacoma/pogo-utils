@@ -414,7 +414,7 @@ static inline q6_10_t q6_10_sigmoid(q6_10_t x) {
 /*
  * Q6.10 ReLU: max(0, x)
  *
- * Completely branch-predictable on your RV32IM core and almost free.
+ * Completely branch-predictable on RV32IM core and almost free.
  */
 static inline q6_10_t q6_10_relu(q6_10_t x) {
     return (x > 0) ? x : (q6_10_t)0;

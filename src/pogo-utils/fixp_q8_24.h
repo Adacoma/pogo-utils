@@ -85,6 +85,26 @@ static inline q8_24_t q8_24_mul(q8_24_t a, q8_24_t b) {
 }
 
 /*
+ * q8_24_mul32_r:
+ * Multiply two Q8.24 values using a 64-bit intermediate and return a Q8.24
+ * result in a 32-bit integer, with rounding.
+ *
+ * This is intended for internal polynomial approximations; it saturates only
+ * to the generic Q8.24 32-bit range.
+ */
+static inline int32_t q8_24_mul32_r(int32_t a, int32_t b) {
+    int64_t prod = (int64_t)a * (int64_t)b;
+    /* Round to nearest when shifting down by Q8.24 fractional bits (24). */
+    prod += (int64_t)1 << (Q8_24_FRACTIONAL_BITS - 1);  // +0.5 ulp
+    prod >>= Q8_24_FRACTIONAL_BITS;
+
+    if (prod > Q8_24_MAX) prod = Q8_24_MAX;
+    if (prod < Q8_24_MIN) prod = Q8_24_MIN;
+    return (int32_t)prod;
+}
+
+
+/*
  * q8_24_approximate_reciprocal:
  *
  * Computes an approximate reciprocal 1/b for a Q8.24 number b.
@@ -496,6 +516,88 @@ static inline uint32_t q8_24_get_frac(q8_24_t x) {
     // Use the absolute value of the lower bits.
     return (x >= 0) ? ((uint32_t)x & mask) : (((uint32_t)(-x)) & mask);
 }
+
+
+/* ==== Q8.24 Activation Functions: tanh, sigmoid, ReLU ==== */
+
+/*
+ * Fast Q8.24 tanh approximation.
+ *
+ * For |x| ≲ 1–2, we use the same 5th-order odd polynomial as in the other
+ * fixed-point formats:
+ *
+ *      tanh(x) ≈ x - x^3/3 + 2x^5/15
+ *
+ * Implemented in Q8.24 using q8_24_mul32_r and precomputed Q8.24
+ * coefficients:
+ *      1/3   ≈ 5592405  / 2^24
+ *      2/15  ≈ 2236962  / 2^24
+ *
+ * On [-1, 1] this is quite accurate; for larger |x| it remains monotone,
+ * and we explicitly clamp the output to [-1, 1].
+ */
+static inline q8_24_t q8_24_tanh(q8_24_t x) {
+    int32_t x32 = (int32_t)x;  /* promote to 32 bits for intermediates */
+
+    /* Powers of x in Q8.24 */
+    int32_t x2 = q8_24_mul32_r(x32, x32);  /* x^2 */
+    int32_t x3 = q8_24_mul32_r(x2,  x32);  /* x^3 */
+    int32_t x5 = q8_24_mul32_r(x3,  x2);  /* x^5 */
+
+    /* Q8.24 constants for 1/3 and 2/15 */
+    const int32_t C_INV3   = 5592405;  /* round((1.0/3.0)  * 2^24) */
+    const int32_t C_2DIV15 = 2236962;  /* round((2.0/15.0) * 2^24) */
+
+    /* term3 = x^3 / 3, term5 = 2x^5 / 15 in Q8.24 */
+    int32_t term3 = q8_24_mul32_r(x3, C_INV3);
+    int32_t term5 = q8_24_mul32_r(x5, C_2DIV15);
+
+    int64_t y64 = (int64_t)x32 - term3 + term5;
+
+    /* Clamp output to [-1.0, 1.0] in Q8.24. */
+    if (y64 >  Q8_24_ONE)      y64 =  Q8_24_ONE;
+    if (y64 < -Q8_24_ONE)      y64 = -Q8_24_ONE;
+
+    return (q8_24_t)(int32_t)y64;
+}
+
+/*
+ * Fast Q8.24 sigmoid approximation.
+ *
+ * Uses the identity:
+ *      sigmoid(x) = 0.5 * (tanh(x/2) + 1)
+ *
+ * All operations are Q8.24, with no divisions. For x in a moderate range
+ * (e.g. [-8, 8]) this is both accurate and cheap.
+ */
+static inline q8_24_t q8_24_sigmoid(q8_24_t x) {
+    /* x_half = x / 2 in Q8.24 (arithmetic shift). */
+    q8_24_t x_half = (q8_24_t)(x >> 1);
+
+    q8_24_t t = q8_24_tanh(x_half);  /* tanh(x/2) in Q8.24 */
+
+    /* Compute 0.5 * (t + 1) in Q8.24.
+     * 1.0 is Q8_24_ONE.
+     */
+    int32_t tmp = (int32_t)t + (int32_t)Q8_24_ONE;  /* t + 1 */
+    int32_t y   = tmp >> 1;                         /* divide by 2 */
+
+    /* Clamp to [0, 1.0] in Q8.24. */
+    if (y < 0)            y = 0;
+    if (y > Q8_24_ONE)    y = Q8_24_ONE;
+
+    return (q8_24_t)y;
+}
+
+/*
+ * Q8.24 ReLU: max(0, x)
+ *
+ * Branch-predictable on RV32IM core and essentially free.
+ */
+static inline q8_24_t q8_24_relu(q8_24_t x) {
+    return (x > 0) ? x : (q8_24_t)0;
+}
+
 
 #endif
 

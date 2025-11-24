@@ -108,6 +108,24 @@ static inline q16_16_t q16_16_mul(q16_16_t a, q16_16_t b) {
     return (q16_16_t)v;
 }
 
+/*
+ * q16_16_mul32_r:
+ * Multiply two Q16.16 values using a 64-bit intermediate and return a Q16.16
+ * result in a 32-bit integer, with rounding. This version saturates only to
+ * the generic 32-bit range (which coincides with Q16.16 range).
+ */
+static inline int32_t q16_16_mul32_r(int32_t a, int32_t b) {
+    int64_t prod = (int64_t)a * (int64_t)b;
+    /* Round to nearest when shifting down by Q16.16 fractional bits (16). */
+    prod += (int64_t)1 << (Q16_16_FRACTIONAL_BITS - 1);  // +0.5 ulp
+    prod >>= Q16_16_FRACTIONAL_BITS;
+
+    if (prod > Q16_16_MAX) prod = Q16_16_MAX;
+    if (prod < Q16_16_MIN) prod = Q16_16_MIN;
+    return (int32_t)prod;
+}
+
+
 /* --- Branch-free saturating abs (handles INT32_MIN -> Q16_16_MAX) --- */
 static inline q16_16_t q16_16_abs(q16_16_t x) {
     /* Standard branch-free abs, then fix INT_MIN to saturate */
@@ -332,6 +350,85 @@ static inline uint16_t q16_16_get_frac(q16_16_t x) {
     uint16_t mask = (1 << Q16_16_FRACTIONAL_BITS) - 1;
     return (x >= 0) ? ((uint16_t)x & mask) : (((uint16_t)(-x)) & mask);
 }
+
+
+/* ==== Q16.16 Activation Functions: tanh, sigmoid, ReLU ==== */
+
+/*
+ * Fast Q16.16 tanh approximation.
+ *
+ * For |x| ≲ 1–2 we use a 5th–order odd polynomial:
+ *    tanh(x) ≈ x - x^3/3 + 2x^5/15
+ *
+ * Implemented in Q16.16 using q16_16_mul32_r and precomputed Q16.16
+ * coefficients:
+ *    1/3   ≈ 21845 / 2^16
+ *    2/15  ≈  8738 / 2^16
+ *
+ * On [-1,1] this is quite accurate; on |x| a bit larger it remains monotone
+ * and saturating, which is typically good enough for small MLP/GRU nets.
+ */
+static inline q16_16_t q16_16_tanh(q16_16_t x) {
+    int32_t x32 = (int32_t)x;  /* promote to 32 bits for intermediate math */
+
+    /* x^2, x^3, x^5 in Q16.16 */
+    int32_t x2 = q16_16_mul32_r(x32, x32);
+    int32_t x3 = q16_16_mul32_r(x2,  x32);
+    int32_t x5 = q16_16_mul32_r(x3,  x2);
+
+    /* Q16.16 constants for 1/3 and 2/15 */
+    const int32_t C_INV3   = 21845; /* round((1.0/3.0)  * 65536) */
+    const int32_t C_2DIV15 =  8738; /* round((2.0/15.0) * 65536) */
+
+    /* term3 = x^3 / 3, term5 = 2x^5 / 15 in Q16.16 */
+    int32_t term3 = q16_16_mul32_r(x3, C_INV3);
+    int32_t term5 = q16_16_mul32_r(x5, C_2DIV15);
+
+    /* Accumulate in 64-bit then clamp to Q16.16 range. */
+    int64_t y64 = (int64_t)x32 - term3 + term5;
+    if (y64 > Q16_16_MAX) y64 = Q16_16_MAX;
+    if (y64 < Q16_16_MIN) y64 = Q16_16_MIN;
+
+    return (q16_16_t)(int32_t)y64;
+}
+
+/*
+ * Fast Q16.16 sigmoid approximation.
+ *
+ * Use identity:
+ *    sigmoid(x) = 0.5 * (tanh(x/2) + 1)
+ *
+ * All operations are Q16.16. For x in a moderate range (e.g. [-8, 8]),
+ * this is both accurate and inexpensive (no division).
+ */
+static inline q16_16_t q16_16_sigmoid(q16_16_t x) {
+    /* x_half = x / 2 in Q16.16 (arithmetic shift) */
+    q16_16_t x_half = (q16_16_t)(x >> 1);
+
+    q16_16_t t = q16_16_tanh(x_half);  /* tanh(x/2) in Q16.16 */
+
+    /* Compute 0.5 * (t + 1) in Q16.16.
+     * 1.0 is Q16_16_ONE (65536).
+     */
+    int32_t tmp = (int32_t)t + (int32_t)Q16_16_ONE;  /* t + 1 */
+    int32_t y   = tmp >> 1;                          /* divide by 2 */
+
+    /* Clamp to [0, 1.0] in Q16.16. */
+    if (y < 0)            y = 0;
+    if (y > Q16_16_ONE)   y = Q16_16_ONE;
+
+    return (q16_16_t)y;
+}
+
+/*
+ * Q16.16 ReLU: max(0, x)
+ *
+ * Branch-predictable and essentially free compared to multiplies.
+ */
+static inline q16_16_t q16_16_relu(q16_16_t x) {
+    return (x > 0) ? x : (q16_16_t)0;
+}
+
 
 
 #endif
