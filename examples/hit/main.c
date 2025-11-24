@@ -66,12 +66,18 @@ static void on_rx(message_t *mr){
 
     if (msg.sender_id == pogobot_helper_getid()) return;
 
+    /* Copy to an aligned buffer to avoid taking the address of a packed member */
+    float x_aligned[D];
+    for (int i = 0; i < D; ++i) {
+        x_aligned[i] = msg.x[i];    // direct member access is fine
+    }
+
     /* HIT (CEC2020): only mature agents may adopt neighbours.
        Maturation gating is handled inside hit_observe_remote(). */
     hit_observe_remote(&mydata->hit,
                        msg.sender_id,
                        msg.epoch,
-                       msg.x,
+                       x_aligned,
                        msg.f_adv,
                        msg.alpha);
 }
