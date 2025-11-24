@@ -38,7 +38,7 @@ static inline int q8_24_to_int(q8_24_t x) {
 }
 
 /* Convert a float to Q8.24 fixed point with saturation. */
-//#define q8_24_from_float(x) Q8_24_FROM_FLOAT(x) 
+//#define q8_24_from_float(x) Q8_24_FROM_FLOAT(x)
 //static inline q8_24_t q8_24_from_float(float x) {
 //    if (x >= 128.0f)
 //        return Q8_24_MAX;
@@ -144,13 +144,20 @@ static inline q8_24_t q8_24_approximate_reciprocal(q8_24_t b) {
     // Normalize b: we want norm in [Q8_24_ONE/2, Q8_24_ONE] (i.e., roughly [0.5, 1.0]).
     int shift = 0;
     q8_24_t norm = b;
-    while (norm < (Q8_24_ONE >> 1)) {
-        norm <<= 1;
-        shift--;  // b was too small; will later multiply reciprocal by 2^(-shift)
-    }
-    while (norm > Q8_24_ONE) {
-        norm >>= 1;
-        shift++;  // b was too large
+//    while (norm < (Q8_24_ONE >> 1)) {
+//        norm <<= 1;
+//        shift--;  // b was too small; will later multiply reciprocal by 2^(-shift)
+//    }
+//    while (norm > Q8_24_ONE) {
+//        norm >>= 1;
+//        shift++;  // b was too large
+//    }
+    if (norm < (Q8_24_ONE >> 1)) {
+        while (norm < (Q8_24_ONE >> 5)) { norm <<= 4; shift -= 4; } // coarse
+        while (norm < (Q8_24_ONE >> 1)) { norm <<= 1; shift--; }    // fine
+    } else if (norm > Q8_24_ONE) {
+        while (norm > (Q8_24_ONE << 5)) { norm >>= 4; shift += 4; } // coarse
+        while (norm > Q8_24_ONE)        { norm >>= 1; shift++; }    // fine
     }
 
     // Use a linear approximation to get a better initial guess for 1/norm.
@@ -161,13 +168,24 @@ static inline q8_24_t q8_24_approximate_reciprocal(q8_24_t b) {
     const int32_t L = (int32_t)((32.0 / 17.0) * Q8_24_ONE + 0.5);
     int32_t r = K - (int32_t)(((int64_t)L * norm) >> Q8_24_FRACTIONAL_BITS);
 
-    // Refine the initial guess with three iterations of Newton–Raphson:
-    //     r = r * (2 - norm * r)
-    for (int i = 0; i < 3; i++) {
-        int64_t prod = ((int64_t)norm * r) >> Q8_24_FRACTIONAL_BITS;
-        int64_t diff = (2LL * Q8_24_ONE) - prod;
-        r = (int32_t)(((int64_t)r * diff) >> Q8_24_FRACTIONAL_BITS);
-    }
+//    // Refine the initial guess with three iterations of Newton–Raphson:
+//    //     r = r * (2 - norm * r)
+//    for (int i = 0; i < 3; i++) {
+//        int64_t prod = ((int64_t)norm * r) >> Q8_24_FRACTIONAL_BITS;
+//        int64_t diff = (2LL * Q8_24_ONE) - prod;
+//        r = (int32_t)(((int64_t)r * diff) >> Q8_24_FRACTIONAL_BITS);
+//    }
+
+    // After computing initial r
+    // 1st iteration
+    int64_t prod = ((int64_t)norm * r) >> 24;
+    int64_t diff = (2LL * Q8_24_ONE) - prod;
+    r = (int32_t)(((int64_t)r * diff) >> 24);
+    // 2nd iteration
+    prod = ((int64_t)norm * r) >> 24;
+    diff = (2LL * Q8_24_ONE) - prod;
+    r = (int32_t)(((int64_t)r * diff) >> 24);
+
 
     // Adjust for the normalization:
     // If b was scaled as b = norm * 2^(shift), then 1/b = (1/norm) * 2^(-shift)
@@ -212,14 +230,6 @@ static inline q8_24_t q8_24_div(q8_24_t a, q8_24_t b) {
     if (res < Q8_24_MIN)
         return Q8_24_MIN;
     return (q8_24_t)res;
-
-    // Slow division
-//    int64_t res = ((int64_t)a << Q8_24_FRACTIONAL_BITS) / b;
-//    if (res > Q8_24_MAX)
-//        return Q8_24_MAX;
-//    if (res < Q8_24_MIN)
-//        return Q8_24_MIN;
-//    return (q8_24_t)res;
 }
 
 /* Absolute value with saturation.
@@ -413,23 +423,29 @@ static inline q8_24_t _q8_24_log_base(q8_24_t x) {
     if (x <= 0)
         return Q8_24_LN2_CONST * (-100); // or Q8_24_MIN; choose an appropriate saturation.
 
-    // ----- Step 1: Normalize x using bit-level operations -----
-    // We want to represent x as:
-    //       x = m * 2^n,
-    // where m is in [Q8_24_ONE, 2*Q8_24_ONE) (i.e. [1.0, 2.0)).
-    // Compute the index of the highest set bit. For positive x:
-    int p = 31 - __builtin_clz((unsigned int)x); // floor(log2(x))
-    // The constant Q8_24_ONE is 1 << 24. Thus, we want:
-    int n = p - Q8_24_FRACTIONAL_BITS;  // n = floor_log2(x) - 24.
-    
-    // Normalize x: if n >= 0, then m = x >> n; otherwise, m = x << (-n).
-    q8_24_t m;
-    if (n >= 0)
-        m = x >> n;
-    else
-        m = x << (-n);
-    // Now m is in [Q8_24_ONE, 2*Q8_24_ONE).
-    
+//    // ----- Step 1: Normalize x using bit-level operations -----
+//    // We want to represent x as:
+//    //       x = m * 2^n,
+//    // where m is in [Q8_24_ONE, 2*Q8_24_ONE) (i.e. [1.0, 2.0)).
+//    // Compute the index of the highest set bit. For positive x:
+//    int p = 31 - __builtin_clz((unsigned int)x); // floor(log2(x))
+//    // The constant Q8_24_ONE is 1 << 24. Thus, we want:
+//    int n = p - Q8_24_FRACTIONAL_BITS;  // n = floor_log2(x) - 24.
+//
+//    // Normalize x: if n >= 0, then m = x >> n; otherwise, m = x << (-n).
+//    q8_24_t m;
+//    if (n >= 0)
+//        m = x >> n;
+//    else
+//        m = x << (-n);
+//    // Now m is in [Q8_24_ONE, 2*Q8_24_ONE).
+
+    int n = 0;
+    q8_24_t m = x;
+    // Bring m into [Q8_24_ONE, 2*Q8_24_ONE)
+    while (m < Q8_24_ONE)       { m <<= 1; n--; }
+    while (m >= (2 * Q8_24_ONE)){ m >>= 1; n++; }
+
     // ----- Step 2: Compute the series for ln(1+t) -----
     // Let t = m - Q8_24_ONE (so that m = 1 + t in Q8.24).
     q8_24_t t = m - Q8_24_ONE;
@@ -437,13 +453,13 @@ static inline q8_24_t _q8_24_log_base(q8_24_t x) {
     //    ln(1+t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5.
     // Perform all multiplications in 64-bit arithmetic.
     int64_t t64 = t;  // t in Q8.24.
-    
+
     // Compute powers of t in Q8.24:
     int64_t t2 = (t64 * t64) >> Q8_24_FRACTIONAL_BITS;      // t^2 in Q8.24.
     int64_t t3 = (t2 * t64) >> Q8_24_FRACTIONAL_BITS;       // t^3 in Q8.24.
     int64_t t4 = (t3 * t64) >> Q8_24_FRACTIONAL_BITS;       // t^4 in Q8.24.
     int64_t t5 = (t4 * t64) >> Q8_24_FRACTIONAL_BITS;       // t^5 in Q8.24.
-    
+
     // Replace divisions by constants:
     // Division by 2: use a right shift by 1.
     int64_t term2 = t2 >> 1;
@@ -457,19 +473,19 @@ static inline q8_24_t _q8_24_log_base(q8_24_t x) {
     // (1<<32) / 5 ≈ 858993459.
     const uint32_t RECIP_5 = 858993459U;
     int64_t term5 = (t5 * RECIP_5) >> 32;
-    
+
     // Combine terms with alternating signs:
     // ln(1+t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5.
     int64_t series = t64 - term2 + term3 - term4 + term5;
     // series is in Q8.24.
-    
+
     // ----- Step 3: Reconstruct ln(x) -----
     // We have:
     //      ln(x) = ln(m) + n * ln2,
     // and we computed ln(m) ≈ series.
     int64_t n_ln2 = (int64_t)n * Q8_24_LN2_CONST;
     int64_t result = series + n_ln2;
-    
+
     return (q8_24_t)result;
 }
 

@@ -157,6 +157,7 @@ static inline int msb_index(uint32_t x)
     return n;
 }
 
+#if 0
 /* ~16b accuracy, 1 NR step */
 /* --- approximate reciprocal 1/b (Q16.16) using:
  *  1) sign & early saturation
@@ -205,6 +206,43 @@ static inline q16_16_t q16_16_approximate_reciprocal(q16_16_t b) {
     if (res < Q16_16_MIN) res = Q16_16_MIN;
     return (q16_16_t)res;
 }
+
+#else
+// Faster implementation
+static inline q16_16_t q16_16_approximate_reciprocal(q16_16_t b) {
+    if (b == 0) return Q16_16_MAX;
+    if (!q16_16_inited) _init_q16_16();
+
+    int sign = 1;
+    uint32_t ub = (uint32_t)b;
+    if (b < 0) { sign = -1; ub = (uint32_t)(-b); }
+
+    if (ub <= 2u) return (sign > 0) ? Q16_16_MAX : Q16_16_MIN;
+
+    int p = msb_index(ub);          // 0..31
+    int k = p - 16;
+    uint32_t m = (k >= 0) ? (ub >> k) : (ub << (-k));
+
+    // index in [0,255]
+    uint32_t frac = (m - (uint32_t)Q16_16_ONE) >> 8;
+    q16_16_t r = q16_16_recip_table[frac];     // LUT-only approximation of 1/m
+
+    // scale by 2^(-k)
+    if (k > 0) {
+        r >>= k;
+    } else if (k < 0) {
+        int sh = -k;
+        if (r > (Q16_16_MAX >> sh)) r = Q16_16_MAX;
+        else                        r <<= sh;
+    }
+
+    int32_t res = (sign > 0) ? r : -r;
+    if (res > Q16_16_MAX) res = Q16_16_MAX;
+    if (res < Q16_16_MIN) res = Q16_16_MIN;
+    return (q16_16_t)res;
+}
+
+#endif
 
 
 /* saturating, uses reciprocal */
@@ -287,6 +325,7 @@ static inline q16_16_t q16_16_exp(q16_16_t x) {
     return (q16_16_t)res;
 }
 
+#if 0
 /* --- log via normalization + one Newton refinement ---
  * x = m * 2^k, ln(x) = ln(m) + k*ln2, with m in [1,2).
  * Initial ln(m) uses cubic log1p; then one Newton step refines it.
@@ -338,6 +377,71 @@ static inline q16_16_t q16_16_log(q16_16_t x) {
     if (y < Q16_16_MIN) return Q16_16_MIN;
     return y;
 }
+
+#else
+
+/* ln(1+t) ≈ a5*t^5 + a4*t^4 + a3*t^3 + a2*t^2 + a1*t + a0,  t ∈ [0,1]
+ * double-precision fit, then quantized to Q16.16:
+ *   a5 ≈  3.0102625e-02  ->  1973
+ *   a4 ≈ -1.3011941e-01  -> -8528
+ *   a3 ≈  2.8330432e-01  -> 18567
+ *   a2 ≈ -4.8915685e-01  -> -32057
+ *   a1 ≈  9.9901045e-01  -> 65471
+ *   a0 ≈  2.2117031e-05  -> 1
+ *
+ * With Q16.16 Horner evaluation using q16_16_mul32_r, max |ln(1+t)_approx - ln(1+t)| on [0,1]
+ * is about 4.2e-5 (so < 1e-4).
+ */
+static const q16_16_t Q16_16_LOG_A5 = (q16_16_t)  1973;
+static const q16_16_t Q16_16_LOG_A4 = (q16_16_t) -8528;
+static const q16_16_t Q16_16_LOG_A3 = (q16_16_t) 18567;
+static const q16_16_t Q16_16_LOG_A2 = (q16_16_t)-32057;
+static const q16_16_t Q16_16_LOG_A1 = (q16_16_t) 65471;
+static const q16_16_t Q16_16_LOG_A0 = (q16_16_t)     1;
+
+static inline q16_16_t q16_16_log(q16_16_t x) {
+    if (x <= 0) {
+        /* Choose your convention; this matches your previous behavior */
+        return Q16_16_MIN;
+    }
+
+    /* ---- normalization: x = m * 2^k, with m in [1,2) ---- */
+    uint32_t ux = (uint32_t)x;
+    int p = 0;
+    if (ux >= (1u << 16)) { ux >>= 16; p += 16; }
+    if (ux >= (1u <<  8)) { ux >>=  8; p +=  8; }
+    if (ux >= (1u <<  4)) { ux >>=  4; p +=  4; }
+    if (ux >= (1u <<  2)) { ux >>=  2; p +=  2; }
+    if (ux >= (1u <<  1)) {            p +=  1; }
+    int k = p - 16;
+
+    uint32_t m;
+    if (k >= 0) {
+        m = (uint32_t)x >> k;         /* m in [1,2) as Q16.16 */
+    } else {
+        m = (uint32_t)x << (-k);
+    }
+
+    /* t = m - 1 in Q16.16, t ∈ [0,1] */
+    int32_t t = (int32_t)m - Q16_16_ONE;
+
+    /* ---- ln(m) ≈ polynomial in t via Horner, all in Q16.16 ---- */
+    int32_t acc = Q16_16_LOG_A5;
+    acc = q16_16_mul32_r(acc, t) + Q16_16_LOG_A4;
+    acc = q16_16_mul32_r(acc, t) + Q16_16_LOG_A3;
+    acc = q16_16_mul32_r(acc, t) + Q16_16_LOG_A2;
+    acc = q16_16_mul32_r(acc, t) + Q16_16_LOG_A1;
+    acc = q16_16_mul32_r(acc, t) + Q16_16_LOG_A0;
+
+    /* ln(x) ≈ ln(m) + k * ln(2) */
+    int64_t y = (int64_t)acc + (int64_t)k * (int64_t)Q16_16_LN2;
+
+    if (y > Q16_16_MAX) return Q16_16_MAX;
+    if (y < Q16_16_MIN) return Q16_16_MIN;
+    return (q16_16_t)y;
+}
+
+#endif
 
 
 // Returns the integer part of a Q16.16 number.
