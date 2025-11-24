@@ -243,6 +243,91 @@ static inline uint16_t q1_15_get_frac(q1_15_t x) {
 }
 
 
+/* ==== Q1.15 Activation Functions: tanh, sigmoid, ReLU ==== */
+
+/*
+ * Fast Q1.15 tanh approximation.
+ *
+ * For x in [-1, 1), we use a 5th–order odd polynomial:
+ *    tanh(x) ≈ x - x^3/3 + 2x^5/15
+ *
+ * Implemented entirely in Q1.15 using q1_15_mul32_r and precomputed
+ * Q1.15 coefficients:
+ *    1/3   ≈ 10923 / 2^15
+ *    2/15  ≈  4369 / 2^15
+ *
+ * On [-0.5, 0.5] the max absolute error is about 4e-4; on [-1, 1] it
+ * stays below ~0.04, which is usually sufficient for small MLP/GRU
+ * controllers.
+ */
+static inline q1_15_t q1_15_tanh(q1_15_t x) {
+    int32_t x32 = (int32_t)x;  /* promote to 32 bits for intermediate math */
+
+    /* x^2, x^3, x^5 in Q1.15 */
+    int32_t x2 = q1_15_mul32_r(x32, x32);
+    int32_t x3 = q1_15_mul32_r(x2,  x32);
+    int32_t x5 = q1_15_mul32_r(x3,  x2);
+
+    /* Q1.15 constants: 1/3 and 2/15 */
+    const int32_t C_INV3   = 10923; /* round((1.0/3.0)  * 32768) */
+    const int32_t C_2DIV15 =  4369; /* round((2.0/15.0) * 32768) */
+
+    /* term3 = x^3 / 3, term5 = 2x^5 / 15 */
+    int32_t term3 = q1_15_mul32_r(x3, C_INV3);
+    int32_t term5 = q1_15_mul32_r(x5, C_2DIV15);
+
+    int32_t y = x32 - term3 + term5;
+
+    /* Saturate to Q1.15 range, though for |x|<=1 this should not hit. */
+    if (y > Q1_15_MAX) y = Q1_15_MAX;
+    if (y < Q1_15_MIN) y = Q1_15_MIN;
+
+    return (q1_15_t)y;
+}
+
+/*
+ * Fast Q1.15 sigmoid approximation.
+ *
+ * We use the identity:
+ *    sigmoid(x) = 0.5 * (tanh(x/2) + 1)
+ *
+ * For x in [-1, 1), x/2 is in [-0.5, 0.5], where the tanh polynomial
+ * is highly accurate (max error ~4e-4). We do all math in Q1.15 and
+ * clamp the result to [0, 1).
+ */
+static inline q1_15_t q1_15_sigmoid(q1_15_t x) {
+    /* x_half = x / 2 in Q1.15 (arithmetic shift) */
+    q1_15_t x_half = (q1_15_t)(x >> 1);
+
+    q1_15_t t = q1_15_tanh(x_half);      /* tanh(x/2) in Q1.15 */
+
+    /* Compute 0.5 * (t + 1) in Q1.15.
+     *
+     * 1.0 is represented as Q1_15_ONE (32768) in 32-bit space; final
+     * result must be clamped into [0, Q1_15_MAX].
+     */
+    int32_t tmp = (int32_t)t + Q1_15_ONE; /* t + 1.0, in Q1.15+scale */
+    int32_t y   = tmp >> 1;               /* divide by 2 -> 0.5*(t+1) */
+
+    /* Clamp to [0, Q1_15_MAX] to enforce sigmoid range [0,1). */
+    if (y < 0)         y = 0;
+    if (y > Q1_15_MAX) y = Q1_15_MAX;
+
+    return (q1_15_t)y;
+}
+
+/*
+ * Q1.15 ReLU: max(0, x)
+ *
+ * Fully branch–predictable on RV32IM core and essentially free
+ * compared to multiplies.
+ */
+static inline q1_15_t q1_15_relu(q1_15_t x) {
+    return (x > 0) ? x : (q1_15_t)0;
+}
+
+
+
 #endif
 
 // MODELINE "{{{1

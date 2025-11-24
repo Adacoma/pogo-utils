@@ -30,12 +30,7 @@ void test_fixp_functions(void);
 void bench_fixp_functions(void);
 
 
-void test_fixp_functions(void) {
-#ifdef SIMULATOR
-    printf0("==============================================\n");
-    printf0("=== POGO-UTILS " POGO_UTILS_VERSION " - FIXED-POINT TESTS  ===\n");
-    printf0("==============================================\n");
-
+void test_fixp_q8_24(void) {
     printf0("=== Q8.24 Conversion Tests ===\n");
     // Test conversion from int
     {
@@ -288,8 +283,10 @@ void test_fixp_functions(void) {
         //printf0("exp(-10.0) = %li.%lu \n", q8_24_get_int(exp_a), q8_24_get_frac(exp_a));
         printf0("exp(-10.0) = %f \n", q8_24_to_float(exp_a));
     }
+}
 
 
+void test_fixp_q1_15(void) {
     /* --- Tests for Q1.15 Conversions --- */
     printf0("\n");
     printf0("=== Q1.15 Conversion Tests ===\n");
@@ -602,6 +599,90 @@ void test_fixp_functions(void) {
     }
 
 
+    printf0("\n");
+    printf0("=== Q1.15 Activation Tests (tanh, sigmoid, ReLU) ===\n");
+
+    /* ---- q1_15_tanh tests ---- */
+    {
+        /* Test 1: tanh(0) = 0 */
+        q1_15_t x0 = q1_15_from_float(0.0f);
+        q1_15_t y0 = q1_15_tanh(x0);
+        float y0_f = q1_15_to_float(y0);
+        printf0("q1_15_tanh(0.0) = %f (expected 0.0)\n", y0_f);
+        assert(fabsf(y0_f - 0.0f) < 1e-4f);
+    }
+    {
+        /* Test 2: tanh(0.5) ≈ 0.462117 */
+        q1_15_t x = q1_15_from_float(0.5f);
+        q1_15_t y = q1_15_tanh(x);
+        float y_f = q1_15_to_float(y);
+        printf0("q1_15_tanh(0.5) = %f (expected ~0.462117)\n", y_f);
+        assert(fabsf(y_f - 0.462117f) < 5e-3f);
+    }
+    {
+        /* Test 3: odd symmetry tanh(-x) ≈ -tanh(x) */
+        q1_15_t x = q1_15_from_float(0.7f);
+        q1_15_t yp = q1_15_tanh(x);
+        q1_15_t ym = q1_15_tanh((q1_15_t)(-x));
+        float sum = q1_15_to_float(yp) + q1_15_to_float(ym);
+        printf0("q1_15_tanh(0.7) + q1_15_tanh(-0.7) = %f (expected ~0)\n", sum);
+        assert(fabsf(sum) < 5e-3f);
+    }
+
+    /* ---- q1_15_sigmoid tests ---- */
+    {
+        /* Test 1: sigmoid(0) ≈ 0.5 */
+        q1_15_t x0 = q1_15_from_float(0.0f);
+        q1_15_t y0 = q1_15_sigmoid(x0);
+        float y0_f = q1_15_to_float(y0);
+        printf0("q1_15_sigmoid(0.0) = %f (expected ~0.5)\n", y0_f);
+        assert(fabsf(y0_f - 0.5f) < 5e-3f);
+    }
+    {
+        /* Test 2: sigmoid(0.5) ≈ 0.622459 */
+        q1_15_t x = q1_15_from_float(0.5f);
+        q1_15_t y = q1_15_sigmoid(x);
+        float y_f = q1_15_to_float(y);
+        printf0("q1_15_sigmoid(0.5) = %f (expected ~0.622459)\n", y_f);
+        assert(fabsf(y_f - 0.622459f) < 5e-3f);
+    }
+    {
+        /* Test 3: sigmoid(-0.5) ≈ 0.377540 */
+        q1_15_t x = q1_15_from_float(-0.5f);
+        q1_15_t y = q1_15_sigmoid(x);
+        float y_f = q1_15_to_float(y);
+        printf0("q1_15_sigmoid(-0.5) = %f (expected ~0.377540)\n", y_f);
+        assert(fabsf(y_f - 0.377540f) < 5e-3f);
+    }
+
+    /* ---- q1_15_relu tests ---- */
+    {
+        /* Test 1: ReLU(-0.3) = 0 */
+        q1_15_t x = q1_15_from_float(-0.3f);
+        q1_15_t y = q1_15_relu(x);
+        float y_f = q1_15_to_float(y);
+        printf0("q1_15_relu(-0.3) = %f (expected 0.0)\n", y_f);
+        assert(fabsf(y_f - 0.0f) < 1e-6f);
+    }
+    {
+        /* Test 2: ReLU(0.3) = 0.3 */
+        q1_15_t x = q1_15_from_float(0.3f);
+        q1_15_t y = q1_15_relu(x);
+        float y_f = q1_15_to_float(y);
+        printf0("q1_15_relu(0.3) = %f (expected ~0.3)\n", y_f);
+        assert(fabsf(y_f - 0.3f) < 5e-3f);
+    }
+    {
+        /* Test 3: ReLU(0) = 0 */
+        q1_15_t x = q1_15_from_float(0.0f);
+        q1_15_t y = q1_15_relu(x);
+        float y_f = q1_15_to_float(y);
+        printf0("q1_15_relu(0.0) = %f (expected 0.0)\n", y_f);
+        assert(fabsf(y_f - 0.0f) < 1e-6f);
+    }
+}
+
+void test_fixp_q16_16(void) {
     printf0("\n");
     printf0("=== Q16.16 Conversion Tests ===\n");
     /* Test int <-> Q16.16 */
@@ -981,9 +1062,10 @@ void test_fixp_functions(void) {
         printf0("q16_16_exp(log(exp(3.0))) = %f (expected ~ %f)\n", f_exp_log_exp_three, f_exp_three);
         assert(fabsf(f_exp_log_exp_three - f_exp_three) < TOLERANCE);
     }
+}
 
 
-
+void test_fixp_q6_10(void) {
 #undef TOLERANCE
 #define TOLERANCE 1e-2f
 
@@ -1231,6 +1313,19 @@ void test_fixp_functions(void) {
         printf0("q6_10_log(exp(-1.0)) = %f (expected ~ -1.0)\n", f_log_exp_neg1);
         assert(fabsf(f_log_exp_neg1 + 1.0f) < TOLERANCE);
     }
+}
+
+
+void test_fixp_functions(void) {
+#ifdef SIMULATOR
+    printf0("==============================================\n");
+    printf0("=== POGO-UTILS " POGO_UTILS_VERSION " - FIXED-POINT TESTS  ===\n");
+    printf0("==============================================\n");
+
+    test_fixp_q8_24();
+    test_fixp_q1_15();
+    test_fixp_q16_16();
+    test_fixp_q6_10();
 
 
     printf0("\n");
