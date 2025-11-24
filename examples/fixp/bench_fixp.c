@@ -1313,6 +1313,90 @@ void test_fixp_q6_10(void) {
         printf0("q6_10_log(exp(-1.0)) = %f (expected ~ -1.0)\n", f_log_exp_neg1);
         assert(fabsf(f_log_exp_neg1 + 1.0f) < TOLERANCE);
     }
+
+
+    printf0("\n");
+    printf0("=== Q6.10 Activation Tests (tanh, sigmoid, ReLU) ===\n");
+
+    /* ---- q6_10_tanh tests ---- */
+    {
+        /* Test 1: tanh(0) = 0 */
+        q6_10_t x0 = q6_10_from_float(0.0f);
+        q6_10_t y0 = q6_10_tanh(x0);
+        float y0_f = q6_10_to_float(y0);
+        printf0("q6_10_tanh(0.0) = %f (expected 0.0)\n", y0_f);
+        assert(fabsf(y0_f - 0.0f) < TOLERANCE);
+    }
+    {
+        /* Test 2: tanh(0.5) ≈ 0.462117 */
+        q6_10_t x = q6_10_from_float(0.5f);
+        q6_10_t y = q6_10_tanh(x);
+        float y_f = q6_10_to_float(y);
+        printf0("q6_10_tanh(0.5) = %f (expected ~0.462117)\n", y_f);
+        assert(fabsf(y_f - 0.462117f) < 5e-3f);
+    }
+    {
+        /* Test 3: odd symmetry: tanh(-x) ≈ -tanh(x) */
+        q6_10_t x  = q6_10_from_float(0.7f);
+        q6_10_t yp = q6_10_tanh(x);
+        q6_10_t ym = q6_10_tanh((q6_10_t)(-x));
+        float sum  = q6_10_to_float(yp) + q6_10_to_float(ym);
+        printf0("q6_10_tanh(0.7) + q6_10_tanh(-0.7) = %f (expected ~0)\n", sum);
+        assert(fabsf(sum) < 5e-3f);
+    }
+
+    /* ---- q6_10_sigmoid tests ---- */
+    {
+        /* Test 1: sigmoid(0) ≈ 0.5 */
+        q6_10_t x0 = q6_10_from_float(0.0f);
+        q6_10_t y0 = q6_10_sigmoid(x0);
+        float y0_f = q6_10_to_float(y0);
+        printf0("q6_10_sigmoid(0.0) = %f (expected ~0.5)\n", y0_f);
+        assert(fabsf(y0_f - 0.5f) < 5e-3f);
+    }
+    {
+        /* Test 2: sigmoid(0.5) ≈ 0.622459 */
+        q6_10_t x = q6_10_from_float(0.5f);
+        q6_10_t y = q6_10_sigmoid(x);
+        float y_f = q6_10_to_float(y);
+        printf0("q6_10_sigmoid(0.5) = %f (expected ~0.622459)\n", y_f);
+        assert(fabsf(y_f - 0.622459f) < 5e-3f);
+    }
+    {
+        /* Test 3: sigmoid(-0.5) ≈ 0.377540 */
+        q6_10_t x = q6_10_from_float(-0.5f);
+        q6_10_t y = q6_10_sigmoid(x);
+        float y_f = q6_10_to_float(y);
+        printf0("q6_10_sigmoid(-0.5) = %f (expected ~0.377540)\n", y_f);
+        assert(fabsf(y_f - 0.377540f) < 5e-3f);
+    }
+
+    /* ---- q6_10_relu tests ---- */
+    {
+        /* Test 1: ReLU(-0.3) = 0 */
+        q6_10_t x = q6_10_from_float(-0.3f);
+        q6_10_t y = q6_10_relu(x);
+        float y_f = q6_10_to_float(y);
+        printf0("q6_10_relu(-0.3) = %f (expected 0.0)\n", y_f);
+        assert(fabsf(y_f - 0.0f) < 1e-6f);
+    }
+    {
+        /* Test 2: ReLU(0.3) = 0.3 */
+        q6_10_t x = q6_10_from_float(0.3f);
+        q6_10_t y = q6_10_relu(x);
+        float y_f = q6_10_to_float(y);
+        printf0("q6_10_relu(0.3) = %f (expected ~0.3)\n", y_f);
+        assert(fabsf(y_f - 0.3f) < 5e-3f);
+    }
+    {
+        /* Test 3: ReLU(0) = 0 */
+        q6_10_t x = q6_10_from_float(0.0f);
+        q6_10_t y = q6_10_relu(x);
+        float y_f = q6_10_to_float(y);
+        printf0("q6_10_relu(0.0) = %f (expected 0.0)\n", y_f);
+        assert(fabsf(y_f - 0.0f) < 1e-6f);
+    }
+
 }
 
 

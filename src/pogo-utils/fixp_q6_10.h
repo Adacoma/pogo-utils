@@ -137,6 +137,24 @@ static inline q6_10_t q6_10_mul(q6_10_t a, q6_10_t b) {
 }
 
 /*
+ * q6_10_mul32_r:
+ * Multiply two Q6.10 values using 64-bit intermediate and return a Q6.10
+ * result in a 32-bit integer, with rounding. This version does NOT saturate
+ * to Q6.10 range and is intended for internal polynomial approximations.
+ */
+static inline int32_t q6_10_mul32_r(int32_t a, int32_t b) {
+    int64_t prod = (int64_t)a * (int64_t)b;
+    /* Round to nearest when shifting down by Q6.10 fractional bits (10). */
+    prod += (int64_t)1 << (Q6_10_FRACTIONAL_BITS - 1);  // + 0.5 ulp
+    prod >>= Q6_10_FRACTIONAL_BITS;
+
+    if (prod > INT32_MAX) prod = INT32_MAX;
+    if (prod < INT32_MIN) prod = INT32_MIN;
+    return (int32_t)prod;
+}
+
+
+/*
  * q6_10_div:
  * Divides Q6.10 number a by Q6.10 number b.
  * The numerator is shifted left by 10 bits to maintain precision.
@@ -318,6 +336,90 @@ static inline uint16_t q6_10_get_frac(q6_10_t x) {
     uint16_t mask = (1 << Q6_10_FRACTIONAL_BITS) - 1;
     return (x >= 0) ? ((uint16_t)x & mask) : (((uint16_t)(-x)) & mask);
 }
+
+
+/* ==== Q6.10 Activation Functions: tanh, sigmoid, ReLU ==== */
+
+/*
+ * Fast Q6.10 tanh approximation.
+ *
+ * Designed for inputs in approximately [-1.0, 1.0]. For that range we use
+ * the same 5th-order odd polynomial as the Q1.15 variant:
+ *
+ *     tanh(x) ≈ x - x^3/3 + 2x^5/15
+ *
+ * We implement this in Q6.10:
+ *     - x, x^3, x^5 are in Q6.10
+ *     - coefficients 1/3 and 2/15 are stored as Q6.10:
+ *         1/3   ≈ 341 / 2^10
+ *         2/15  ≈ 137 / 2^10
+ *
+ * On |x| ≤ 0.5 the error is very small; on |x| ≤ 1 it stays acceptable
+ * for small MLP/GRU controllers, and the function is cheap (few multiplies).
+ */
+static inline q6_10_t q6_10_tanh(q6_10_t x) {
+    int32_t x32 = (int32_t)x;
+
+    /* Powers of x in Q6.10 */
+    int32_t x2 = q6_10_mul32_r(x32, x32);  /* x^2 */
+    int32_t x3 = q6_10_mul32_r(x2,  x32);  /* x^3 */
+    int32_t x5 = q6_10_mul32_r(x3,  x2);  /* x^5 */
+
+    /* Q6.10 constants for 1/3 and 2/15 */
+    const int32_t C_INV3   = 341;  /* round((1.0/3.0)  * 1024) */
+    const int32_t C_2DIV15 = 137;  /* round((2.0/15.0) * 1024) */
+
+    /* term3 = x^3 / 3, term5 = 2x^5 / 15 in Q6.10 */
+    int32_t term3 = q6_10_mul32_r(x3, C_INV3);
+    int32_t term5 = q6_10_mul32_r(x5, C_2DIV15);
+
+    int32_t y = x32 - term3 + term5;
+
+    /* Safety clamp to Q6.10 range (should not trigger for |x| <= 1). */
+    if (y > Q6_10_MAX) y = Q6_10_MAX;
+    if (y < Q6_10_MIN) y = Q6_10_MIN;
+
+    return (q6_10_t)y;
+}
+
+/*
+ * Fast Q6.10 sigmoid:
+ *
+ *     sigmoid(x) = 0.5 * (tanh(x/2) + 1)
+ *
+ * We compute tanh(x/2) in Q6.10, then do a cheap affine transform.
+ * For |x| in a moderate range (e.g. [-4, 4]) this is accurate enough
+ * for small neural nets and has no divisions.
+ */
+static inline q6_10_t q6_10_sigmoid(q6_10_t x) {
+    /* x_half = x / 2 in Q6.10 (arithmetic shift) */
+    q6_10_t x_half = (q6_10_t)(x >> 1);
+
+    q6_10_t t = q6_10_tanh(x_half);  /* tanh(x/2) in Q6.10 */
+
+    /* Compute 0.5 * (t + 1) in Q6.10.
+     *
+     * 1.0 is Q6_10_ONE (1024). We work in 32-bit to avoid overflow.
+     */
+    int32_t tmp = (int32_t)t + (int32_t)Q6_10_ONE;  /* t + 1 */
+    int32_t y   = tmp >> 1;                         /* divide by 2 */
+
+    /* Clamp to [0, 1.0] in Q6.10. */
+    if (y < 0)            y = 0;
+    if (y > Q6_10_ONE)    y = Q6_10_ONE;
+
+    return (q6_10_t)y;
+}
+
+/*
+ * Q6.10 ReLU: max(0, x)
+ *
+ * Completely branch-predictable on your RV32IM core and almost free.
+ */
+static inline q6_10_t q6_10_relu(q6_10_t x) {
+    return (x > 0) ? x : (q6_10_t)0;
+}
+
 
 
 #endif
