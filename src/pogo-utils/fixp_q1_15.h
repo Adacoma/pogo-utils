@@ -327,6 +327,43 @@ static inline q1_15_t q1_15_relu(q1_15_t x) {
 }
 
 
+// acc is Q2.30
+static inline int32_t q1_15_mac32(int32_t acc, q1_15_t a, q1_15_t b) {
+    acc += (int32_t)a * (int32_t)b;   // Q2.30, no sat
+    return acc;
+}
+
+// convert 32-bit Q2.30 accumulator to Q1.15 with rounding & saturation
+static inline q1_15_t q1_15_from_acc32(int32_t acc) {
+    // round: shift from Q2.30 -> Q1.15
+    acc += (acc >= 0 ? (1 << (Q1_15_FRACTIONAL_BITS - 1))
+                     : -(1 << (Q1_15_FRACTIONAL_BITS - 1)));
+    acc >>= Q1_15_FRACTIONAL_BITS;
+
+    if (acc > Q1_15_MAX) acc = Q1_15_MAX;
+    if (acc < Q1_15_MIN) acc = Q1_15_MIN;
+
+    return (q1_15_t)acc;
+}
+
+/*
+ * Q1.15 hard tanh:
+ *   hard_tanh(x) = -1      if x <= -1
+ *                   x      if -1 < x <  1
+ *                   +1     if x >=  1
+ *
+ * In Q1.15 we approximate +1 by Q1_15_MAX (0x7FFF) and -1 by Q1_15_MIN (0x8000).
+ */
+static inline q1_15_t q1_15_hard_tanh(q1_15_t x) {
+//    if (x <= Q1_15_MIN)
+//        return Q1_15_MIN;
+//    if (x >= Q1_15_MAX)
+//        return Q1_15_MAX;
+//    return x;
+    /* In Q1.15 we are already in [-1, 1), so hard tanh is just identity. */
+    return x;
+}
+
 
 #endif
 
