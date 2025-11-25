@@ -92,7 +92,7 @@ void bench_mlp_q1_15(void) {
         in[i] = rand_q1_15();
     }
 
-    /* Benchmark 1000 forward passes */
+    /* Benchmark several forward passes */
     uint32_t elapsed_mlp = 0;
 
     pogobot_stopwatch_reset(&mydata->timer_it);

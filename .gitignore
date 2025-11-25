@@ -77,6 +77,9 @@ examples/hit/hit
 examples/optim/optim
 examples/tiny_alloc/tiny_alloc
 examples/MLP_Q1_15/MLP_Q1_15
+examples/MLP_int8/MLP_int8
+examples/MLP_int8_MNIST/MLP_int8_MNIST
+examples/MLP_int8_MNIST/data/
 
 # Generated figures
 *.pdf
