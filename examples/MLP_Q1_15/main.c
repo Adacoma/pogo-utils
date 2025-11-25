@@ -17,7 +17,7 @@
 #define MLP_Q1_15_OUTPUT_DIM  32
 #define MLP_Q1_15_OUTPUT_HARD_TANH   /* optional: also hard-tanh on outputs */
 
-#define BENCH_RUNS 1000
+#define BENCH_RUNS 100
 
 #include "pogo-utils/MLP_Q1_15.h"
 
