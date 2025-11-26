@@ -80,6 +80,7 @@ examples/MLP_Q1_15/MLP_Q1_15
 examples/MLP_int8/MLP_int8
 examples/MLP_int8_MNIST/MLP_int8_MNIST
 examples/MLP_int8_MNIST/data/
+examples/TRM_int8/TRM_int8
 
 # Generated figures
 *.pdf
