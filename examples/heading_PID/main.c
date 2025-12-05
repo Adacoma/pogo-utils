@@ -68,7 +68,7 @@ static void apply_diff_drive_discrete(float f, float u) {
 
 // --- user code --------------------------------------------------------------
 
-static void user_init(void) {
+void user_init(void) {
     srand(pogobot_helper_getRandSeed());
 
     main_loop_hz = 60;
@@ -104,7 +104,7 @@ static void user_init(void) {
     //heading_pid_enable(&mydata->pid, false);
 }
 
-static void user_step(void) {
+void user_step(void) {
     // Optional: if you use photostart, always call photostart_step() first
     bool ready = photostart_step(&mydata->ps);
     if (!ready) {

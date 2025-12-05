@@ -31,7 +31,7 @@ static void rx_process(message_t* msg) {
     /* ... user protocol here if needed ... */
 }
 
-static void user_init(void) {
+void user_init(void) {
     srand(pogobot_helper_getRandSeed());
 
     main_loop_hz = 60;
@@ -69,7 +69,7 @@ static void user_init(void) {
     diff_drive_kin_set_photostart(&mydata->ddk, &mydata->ps);
 }
 
-static void user_step(void) {
+void user_step(void) {
     // Optional: if you use photostart, always call photostart_step() first
     bool ready = photostart_step(&mydata->ps);
     if (!ready) {
