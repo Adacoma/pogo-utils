@@ -128,6 +128,9 @@ opt_cfg_t opt_default_cfg(opt_algo_t algo, int n){
         c.P.hit.alpha_sigma = 1e-3f;   /* mutation stddev on α               */
         c.P.hit.alpha_min   = 0.1f;    /* clamp α to [0, 0.9]                */
         c.P.hit.alpha_max   = 0.9f;
+        c.P.hit.auto_sigma  = false;
+        c.P.hit.loss_mut_gain = 0.5f;
+        c.P.hit.loss_mut_clip = 1.0f;
 
         //c.P.hit.alpha       = 0.35f;   /* initial transfer rate α           */
         float u_alpha  = (float)rand() / (float)RAND_MAX; /* in [0,1] */
