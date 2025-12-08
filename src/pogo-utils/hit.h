@@ -57,6 +57,28 @@ typedef struct {
     float      alpha_sigma;  /**< Mutation stddev on α when evolvable.     */
     float      alpha_min;    /**< Lower bound for α when evolvable.        */
     float      alpha_max;    /**< Upper bound for α when evolvable.        */
+
+    /* Optional automatic scaling of σ from the current sliding-window score.
+     *
+     * When auto_sigma == false (default), σ is constant as before.
+     *
+     * When auto_sigma == true, the mutation stddev actually used at adoption
+     * time is:
+     *
+     *    sigma_eff = sigma * amp(loss)
+     *
+     * where loss is derived from the current sliding-window score:
+     *   - HIT_MINIMIZE: loss = average cost over the window.
+     *   - HIT_MAXIMIZE: loss ≈ 1 / max(avg_reward, eps).
+     *
+     * and amp(loss) is similar to social_learning.c:
+     *
+     *   L  = clamp(loss, 0, loss_mut_clip)
+     *   amp = max(1e-4, loss_mut_gain * (L + 1e-12))
+     */
+    bool  auto_sigma;    /**< Enable adaptive σ if true (default: false). */
+    float loss_mut_gain; /**< Gain for loss→σ scaling (typ. 0.5).         */
+    float loss_mut_clip; /**< Clip for the loss scale (typ. 1.0).         */
 } hit_params_t;
 
 /**
@@ -91,6 +113,11 @@ typedef struct {
     float alpha_sigma;  /**< Mutation stddev for α.           */
     float alpha_min;    /**< Clamp range for α.               */
     float alpha_max;
+
+    /* Optional adaptive σ from sliding-window score */
+    bool  auto_sigma;    /**< If true, scale σ with window loss.      */
+    float loss_mut_gain; /**< Gain for loss→σ scaling.                */
+    float loss_mut_clip; /**< Clip for loss scale (>=0).              */
 
     /* Genomes (owned by caller) */
     float       *x;      /**< Current genome to evaluate.         */

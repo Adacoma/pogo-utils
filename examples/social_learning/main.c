@@ -19,7 +19,7 @@
 #include <string.h>
 
 #ifndef D
-#define D 4   /* keep small to fit into the IR message comfortably */
+#define D 16   /* keep small to fit into the IR message comfortably */
 #endif
 #ifndef REPO_CAP
 #define REPO_CAP 32

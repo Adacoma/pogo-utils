@@ -207,8 +207,13 @@ void user_init(void){
      *   - eval_T = 200 (maturation delay),
      *   - α initially uniform in [0, 0.9], then evolved by selection,
      *   - σ chosen fairly large here for a simple demo.
+     *
+     * We ALSO enable optional adaptive σ: when the sliding-window cost is
+     * large, mutation is stronger; when the cost is small, mutation is
+     * milder. This mimics the loss-driven mutation amplitude from
+     * social_learning.c.
      */
-    hit_params_t p;
+    hit_params_t p = {0};
     p.mode         = HIT_MINIMIZE;
     p.sigma        = 0.05f;
     p.eval_T       = 5;
@@ -220,6 +225,11 @@ void user_init(void){
     float u_alpha  = (float)rand() / (float)RAND_MAX; /* in [0,1] */
     p.alpha        = p.alpha_min + u_alpha * (p.alpha_max - p.alpha_min);
 
+    /* Adaptive σ, similar to SL. */
+    p.auto_sigma    = true;   /* enable loss-based mutation amplitude */
+    p.loss_mut_gain = 0.5f;   /* how strongly cost scales σ          */
+    p.loss_mut_clip = 1.0f;   /* clip for "loss" (≈ window cost)     */
+
     hit_init(&mydata->hit, D,
              mydata->x,       /* x */
              NULL,            /* x_buf (unused) */
@@ -230,7 +240,10 @@ void user_init(void){
     mydata->last_print_ms = current_time_milliseconds();
 
 #ifndef SIMULATOR
-    printf("[HIT] init: alpha0=%.3f\n", hit_get_alpha(&mydata->hit));
+    printf("[HIT] init: alpha0=%.3f sigma=%.4f auto_sigma=%d\n",
+            hit_get_alpha(&mydata->hit),
+            mydata->hit.sigma,
+           (int)mydata->hit.auto_sigma);
 #endif
 }
 

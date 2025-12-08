@@ -67,6 +67,67 @@ static void hit_reset_maturation(hit_t *h){
     }
 }
 
+/* Compute effective mutation stddev σ for current state.
+ * - If auto_sigma == false, returns h->sigma (clamped to >=0).
+ * - If auto_sigma == true, scales h->sigma by a factor derived from the
+ *   current sliding-window score, mimicking social_learning.c.
+ */
+static float hit_current_sigma(hit_t *h){
+    if (!h){
+        return 0.0f;
+    }
+
+    float sigma = h->sigma;
+    if (!isfinite(sigma) || sigma < 0.0f){
+        sigma = 0.0f;
+    }
+
+    if (!h->auto_sigma){
+        return sigma;
+    }
+
+    /* Derive a "loss-like" quantity from the sliding-window score. */
+    float f_avg = hit_get_f(h);  /* average over window, direction-agnostic */
+
+    float L;
+    if (h->mode == HIT_MINIMIZE){
+        /* Cost: larger f_avg => larger loss. */
+        L = f_avg;
+    } else {
+        /* Reward: use inverse as difficulty, similar to roulette_weight
+         * in social_learning.c.
+         */
+        const float eps = 1e-9f;
+        float denom = (f_avg > eps) ? f_avg : eps;
+        L = 1.0f / denom;
+    }
+
+    if (!isfinite(L) || L < 0.0f){
+        L = 0.0f;
+    }
+
+    if (h->loss_mut_clip > 0.0f && L > h->loss_mut_clip){
+        L = h->loss_mut_clip;
+    }
+
+    float gain = h->loss_mut_gain;
+    if (!isfinite(gain) || gain <= 0.0f){
+        gain = 0.5f;  /* safe fallback */
+    }
+
+    float amp = gain * (L + 1e-12f);
+    if (amp < 1e-4f){
+        amp = 1e-4f;
+    }
+
+    float sigma_eff = sigma * amp;
+    if (!isfinite(sigma_eff) || sigma_eff < 0.0f){
+        sigma_eff = 0.0f;
+    }
+    return sigma_eff;
+}
+
+
 /* ===== Core adoption operator =========================================== */
 
 /**
@@ -138,13 +199,9 @@ static void hit_adopt_from_remote(hit_t *h,
         }
     }
 
-    /* Mutation: additive Gaussian with stddev sigma on ALL coordinates. */
-    float sigma = h->sigma;
-    if (!isfinite(sigma) || sigma < 0.0f) sigma = 0.0f;
+    /* Mutation: additive Gaussian with stddev sigma_eff on ALL coordinates. */
+    float sigma = hit_current_sigma(h);
 
-    /* Always loop once over all coordinates;
-     * apply mutation only if sigma>0, but always clamp.
-     */
     for (int d = 0; d < n; ++d){
         float v = dst[d];
 
@@ -203,6 +260,10 @@ void hit_init(hit_t *h, int n,
     h->alpha_sigma = 0.001f;
     h->alpha_min   = 0.0f;
     h->alpha_max   = 0.9f;
+    h->auto_sigma    = false;
+    h->loss_mut_gain = 0.5f;
+    h->loss_mut_clip = 1.0f;
+
 
     if (params){
         h->mode        = params->mode;
@@ -215,6 +276,10 @@ void hit_init(hit_t *h, int n,
         h->alpha_sigma = params->alpha_sigma;
         h->alpha_min   = params->alpha_min;
         h->alpha_max   = params->alpha_max;
+
+        h->auto_sigma    = params->auto_sigma;
+        h->loss_mut_gain = params->loss_mut_gain;
+        h->loss_mut_clip = params->loss_mut_clip;
     }
 
     if (h->T < 1) h->T = 1;
@@ -402,15 +467,12 @@ void hit_observe_remote_block(hit_t *h, uint16_t from_id, uint32_t epoch,
         }
     }
 
-    /* 3) Mutation: identical to hit_adopt_from_remote(), but applied after
-     *    block transfers.
+    /* 3) Mutation: identical spirit to hit_adopt_from_remote(), but applied
+     *    after block transfers, with adaptive σ if enabled.
      */
-    float sigma = h->sigma;
-    if (!isfinite(sigma) || sigma < 0.0f) sigma = 0.0f;
-
+    float sigma = hit_current_sigma(h);
     for (int d = 0; d < n; ++d){
         float v = dst[d];
-
         if (sigma > 0.0f){
             v += sigma * randn01(h);
         }
