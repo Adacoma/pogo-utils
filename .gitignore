@@ -84,6 +84,7 @@ examples/TRM_int8/TRM_int8
 examples/distributed_MLP_int8_MNIST/distributed_MLP_int8_MNIST
 examples/distributed_MLP_int8_MNIST/data/
 examples/ESN_int8/ESN_int8
+examples/ESN_int8_PRANC/ESN_int8_PRANC
 
 # Generated figures
 *.pdf
