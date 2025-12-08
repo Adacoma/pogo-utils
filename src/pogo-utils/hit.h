@@ -207,6 +207,46 @@ void hit_observe_remote(hit_t *h, uint16_t from_id, uint32_t epoch,
                         const float *x_remote, float f_remote,
                         float alpha_remote);
 
+/**
+ * @brief Observe a neighbour that only transmits a contiguous block of its genome.
+ *
+ * This is a convenience variant of hit_observe_remote() for
+ * communication-efficient implementations where the sender only broadcasts a
+ * contiguous block of its genome instead of the full vector.
+ *
+ * Semantics:
+ *   - During maturation (window not full yet), all messages are ignored
+ *     (same as hit_observe_remote()).
+ *   - Once mature, the neighbour is adopted iff it is strictly better than
+ *     the local agent w.r.t. the current sliding-window score.
+ *   - On acceptance, an implicit full neighbour genome is reconstructed by
+ *     starting from the current local genome and overwriting the coordinates
+ *     in the range [offset, offset+len) with x_block[0..len-1], then the
+ *     usual HIT adoption rule is applied: k = round(α·n) random coordinates
+ *     are copied from this implicit neighbour genome, mutation is applied on
+ *     all coordinates, α is optionally updated and the maturation window is
+ *     reset.
+ *
+ * The caller is responsible for choosing offset and len consistently with the
+ * message format. Out-of-range values are clamped internally; if the clamped
+ * len <= 0, this reduces to a pure mutation / optional α evolution step.
+ *
+ * @param h            Handle.
+ * @param from_id      Sender id (unused, kept for API symmetry / logging).
+ * @param epoch        Sender epoch (unused in core HIT).
+ * @param x_block      Contiguous block of neighbour genome of length >= len.
+ * @param offset       First index in [0, n-1] where the block should be
+ *                     applied.
+ * @param len          Number of coordinates in the block (may be 0).
+ * @param f_remote     Neighbour sliding-window score.
+ * @param alpha_remote Neighbour transfer rate α (ignored if
+ *                     evolve_alpha==false).
+ */
+void hit_observe_remote_block(hit_t *h, uint16_t from_id, uint32_t epoch,
+                              const float *x_block, int offset, int len,
+                              float f_remote, float alpha_remote);
+
+
 /* ===== Convenience getters ===== */
 
 static inline const float *hit_get_x(const hit_t *h){ return h ? h->x : NULL; }

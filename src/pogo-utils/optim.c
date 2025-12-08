@@ -114,19 +114,19 @@ opt_cfg_t opt_default_cfg(opt_algo_t algo, int n){
         c.P.sl.loss_mut_clip = 1.0f;
         c.P.sl.dup_eps = 1e-3f;
         c.P.sl.repo_capacity = 0; /* will be set from sz.repo_capacity if provided */
-        c.sz.repo_capacity = 16;
+        c.sz.repo_capacity = 8;
         break;
 
     case OPT_HIT:
         memset(&c.P.hit, 0, sizeof(c.P.hit));
         c.P.hit.mode        = HIT_MINIMIZE;
-        c.P.hit.sigma       = 0.15f;   /* mutation stddev on genome coords  */
+        c.P.hit.sigma       = 0.05f;   /* mutation stddev on genome coords  */
 
         /* CEC2020-like defaults for our HIT implementation */
         c.P.hit.eval_T      = 5;     /* sliding-window length / maturation */
         c.P.hit.evolve_alpha= true;    /* α is evolvable                     */
         c.P.hit.alpha_sigma = 1e-3f;   /* mutation stddev on α               */
-        c.P.hit.alpha_min   = 0.0f;    /* clamp α to [0, 0.9]                */
+        c.P.hit.alpha_min   = 0.1f;    /* clamp α to [0, 0.9]                */
         c.P.hit.alpha_max   = 0.9f;
 
         //c.P.hit.alpha       = 0.35f;   /* initial transfer rate α           */
@@ -413,6 +413,33 @@ void opt_observe_remote(opt_t *self, uint16_t from_id, uint32_t epoch,
         hit_observe_remote(&self->o.hit, from_id, epoch, x_remote, f_adv, alpha_remote);
     }
 }
+
+void opt_observe_remote_block(opt_t *self, uint16_t from_id, uint32_t epoch,
+                              const float *x_block, int offset, int len,
+                              float f_adv, float alpha_remote)
+{
+    if (!self) return;
+
+    if (self->algo == OPT_HIT) {
+        /* Directly forward to HIT's block-based observe. */
+        hit_observe_remote_block(&self->o.hit,
+                                 from_id,
+                                 epoch,
+                                 x_block,
+                                 offset,
+                                 len,
+                                 f_adv,
+                                 alpha_remote);
+    } else {
+        /* For now: no-op for all other algorithms. */
+        (void)x_block;
+        (void)offset;
+        (void)len;
+        (void)f_adv;
+        (void)alpha_remote;
+    }
+}
+
 
 float opt_get_alpha(const opt_t *self){
     if (!self) return 0.0f;

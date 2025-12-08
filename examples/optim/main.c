@@ -24,7 +24,11 @@
 #include <float.h>
 
 #ifndef D
-#define D 8
+#define D 16
+#endif
+
+#ifndef HIT_BLOCK_SIZE
+#define HIT_BLOCK_SIZE 4   /* for HIT: 0 => full genome as in CEC2020 example */
 #endif
 
 #ifndef OPT_EXAMPLE_ALGO
@@ -61,7 +65,7 @@ typedef struct {
     float f0;
 
     tiny_alloc_t ta;
-    uint8_t heap[4096];
+    uint8_t heap[8192];
 
     /* Timers */
     uint32_t last_print_ms;
@@ -73,6 +77,23 @@ REGISTER_USERDATA(USERDATA)
 
 /* ==== Messaging ========================================================== */
 /* Minimal advert payload: epoch + D floats + adv fitness. */
+
+#if (OPT_EXAMPLE_ALGO == 5) && (HIT_BLOCK_SIZE > 0)
+/* HIT + block mode: send only a contiguous chunk of the genome. */
+typedef struct __attribute__((__packed__)) {
+    uint16_t sender_id;
+    uint32_t epoch;
+    float    alpha;       /* sender's current transfer rate α */
+
+    uint16_t offset;      /* first index in [0, D-1] */
+    uint16_t len;         /* number of valid entries in block[] */
+
+    float    block[HIT_BLOCK_SIZE];  /* contiguous chunk of x[offset:offset+len) */
+    float    f_adv;                  /* advertised sliding-window score */
+} sl_msg_t;
+
+#else
+/* Default / legacy mode: send full genome. */
 typedef struct __attribute__((__packed__)) {
     uint16_t sender_id;
     uint32_t epoch;
@@ -80,6 +101,8 @@ typedef struct __attribute__((__packed__)) {
     float    x[D];
     float    f_adv;
 } sl_msg_t;
+
+#endif
 #define SL_MSG_BYTES ((uint16_t)sizeof(sl_msg_t))
 
 
@@ -93,12 +116,38 @@ static void on_rx(message_t *mr){
 
     if (msg.sender_id == pogobot_helper_getid()) return; /* ignore own */
 
+#if (OPT_EXAMPLE_ALGO == 5) && (HIT_BLOCK_SIZE > 0)
+    /* HIT + block mode: use the block-based observe. */
+    /* First, copy the packed block[] into an aligned buffer to avoid
+       taking the address of a packed member. */
+    int len = (int)msg.len;
+    if (len < 0) len = 0;
+    if (len > HIT_BLOCK_SIZE) len = HIT_BLOCK_SIZE;
+
+    float block_aligned[HIT_BLOCK_SIZE];
+    for (int i = 0; i < len; ++i){
+        block_aligned[i] = msg.block[i];
+    }
+
+    opt_observe_remote_block(mydata->opt,
+                             msg.sender_id,
+                             msg.epoch,
+                             block_aligned,      /* aligned buffer */
+                             (int)msg.offset,
+                             len,
+                             msg.f_adv,
+                             msg.alpha);
+#else
+    /* Vanilla behaviour: full genome advert (SL and HIT without blocks). */
     float x_buf[D];
     memcpy(x_buf, msg.x, sizeof(x_buf));
 
-    // Decentralization hook used only by Social Learning. No‑op for others.
-    opt_observe_remote(mydata->opt, msg.sender_id, msg.epoch, x_buf, msg.f_adv, msg.alpha);
+    // Decentralization hook used by Social Learning and HIT.
+    opt_observe_remote(mydata->opt, msg.sender_id, msg.epoch,
+                       x_buf, msg.f_adv, msg.alpha);
+#endif
 }
+
 
 
 /* ==== Messaging TX ======================================================= */
@@ -113,27 +162,51 @@ static bool on_tx(void){
     sl_msg_t m;
     m.sender_id = pogobot_helper_getid();
     m.epoch     = opt_iterations(mydata->opt);
+    m.f_adv     = opt_get_last_advert(mydata->opt);
+    m.alpha     = opt_get_alpha(mydata->opt);
+
+#if (OPT_EXAMPLE_ALGO == 5) && (HIT_BLOCK_SIZE > 0)
+    /* HIT + block mode: send only a contiguous block of the genome. */
+    const float *x = opt_get_x(mydata->opt);
+    int n    = D;
+    int Bmax = HIT_BLOCK_SIZE;
+    if (Bmax > n) Bmax = n;
+
+    int len = Bmax;  /* fixed-length block; can be tied to alpha if desired */
+
+    int start_max = n - len;
+    int offset = (start_max > 0) ? (rand() % (start_max + 1)) : 0;
+
+    m.offset = (uint16_t)offset;
+    m.len    = (uint16_t)len;
+
+    for (int i = 0; i < len; ++i){
+        m.block[i] = x[offset + i];
+    }
+
+#else
+    /* Vanilla behaviour: send full genome. */
     memcpy(m.x, opt_get_x(mydata->opt), sizeof(float)*D);
-    m.f_adv = opt_get_last_advert(mydata->opt);
-    m.alpha = opt_get_alpha(mydata->opt);
+#endif
 
     mydata->last_tx_ms = now;
     return pogobot_infrared_sendShortMessage_omni((uint8_t*)&m, SL_MSG_BYTES);
 }
 
 
+
 /* ============================== INIT ==================================== */
 void user_init(void){
     srand(pogobot_helper_getRandSeed());
 
-    main_loop_hz = 30;
+    main_loop_hz = 60;
     max_nb_processed_msg_per_tick = 100;
     msg_rx_fn = on_rx;
     msg_tx_fn = on_tx;
     error_codes_led_idx = 3;
 
     // Initialize the heap, with large chunks (512) allowed
-    const uint16_t classes[] = { 32, 48, 64, 128, 512 };
+    const uint16_t classes[] = { 32, 48, 64, 128, 512, 4096 };
     tiny_alloc_init(&mydata->ta, mydata->heap, sizeof(mydata->heap), classes, 5);
 
     for (int i = 0; i < D; ++i){

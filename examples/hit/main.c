@@ -20,17 +20,40 @@
 #include <stdlib.h>
 
 #ifndef D
-#define D 4
+#define D 16
 #endif
 
+#ifndef HIT_BLOCK_SIZE
+#define HIT_BLOCK_SIZE 4   /* 0 => full genome as in CEC2020 example */
+#endif
+
+
 /* ==== Messaging (payload follows CEC2020 logic) ========================= */
+#if HIT_BLOCK_SIZE <= 0
+/* Payload: full genome (CEC2020 behaviour). */
 typedef struct __attribute__((__packed__)) {
     uint16_t sender_id;
     uint32_t epoch;
     float    alpha;       /* sender's current transfer rate α */
-    float    x[D];        /* genome */
+    float    x[D];        /* full genome */
     float    f_adv;       /* advertised sliding-window score */
 } sl_msg_t;
+
+#else
+/* Block payload: contiguous chunk of genome. */
+typedef struct __attribute__((__packed__)) {
+    uint16_t sender_id;
+    uint32_t epoch;
+    float    alpha;       /* sender's current transfer rate α */
+
+    uint16_t offset;      /* first index in [0, D-1] */
+    uint16_t len;         /* number of valid entries in block[] */
+
+    float    block[HIT_BLOCK_SIZE];  /* contiguous chunk of θ[offset:offset+len) */
+    float    f_adv;                  /* advertised sliding-window score */
+} sl_msg_t;
+#endif
+
 #define SL_MSG_BYTES ((uint16_t)sizeof(sl_msg_t))
 
 /* ==== Objective ========================================================== */
@@ -66,20 +89,46 @@ static void on_rx(message_t *mr){
 
     if (msg.sender_id == pogobot_helper_getid()) return;
 
-    /* Copy to an aligned buffer to avoid taking the address of a packed member */
+#if HIT_BLOCK_SIZE <= 0
+    /* Neighbour sends full genome. */
     float x_aligned[D];
     for (int i = 0; i < D; ++i) {
-        x_aligned[i] = msg.x[i];    // direct member access is fine
+        x_aligned[i] = msg.x[i];
     }
 
-    /* HIT (CEC2020): only mature agents may adopt neighbours.
-       Maturation gating is handled inside hit_observe_remote(). */
     hit_observe_remote(&mydata->hit,
                        msg.sender_id,
                        msg.epoch,
                        x_aligned,
                        msg.f_adv,
                        msg.alpha);
+
+#else
+    /* Block mode: neighbour only sends a contiguous chunk of its genome.
+     * We delegate to hit_observe_remote_block(), which reconstructs an
+     * implicit full genome and then applies the usual HIT adoption logic.
+     */
+
+    /* Block mode: copy packed block[] into an aligned buffer first. */
+    int len = (int)msg.len;
+    if (len < 0) len = 0;
+    if (len > HIT_BLOCK_SIZE) len = HIT_BLOCK_SIZE;
+
+    float block_aligned[HIT_BLOCK_SIZE];
+    for (int i = 0; i < len; ++i){
+        block_aligned[i] = msg.block[i];
+    }
+
+    hit_observe_remote_block(&mydata->hit,
+                             msg.sender_id,
+                             msg.epoch,
+                             block_aligned,          // aligned
+                             (int)msg.offset,
+                             len,                    // clamped length
+                             msg.f_adv,
+                             msg.alpha);
+
+#endif
 }
 
 /* ==== TX: broadcast current genome + score ============================== */
@@ -95,8 +144,39 @@ static bool on_tx(void){
     m.sender_id = pogobot_helper_getid();
     m.epoch     = hit_get_epoch(&mydata->hit);
     m.alpha     = hit_get_alpha(&mydata->hit);
-    memcpy(m.x, hit_get_x(&mydata->hit), sizeof(float)*D);
     m.f_adv     = hit_get_f(&mydata->hit);  /* advertise sliding-window score */
+
+    const float *x = hit_get_x(&mydata->hit);
+#if HIT_BLOCK_SIZE <= 0
+    /* Send full genome behavior */
+    for (int i = 0; i < D; ++i) {
+        m.x[i] = x[i];
+    }
+
+#else
+    /* Block mode: send a contiguous block of the genome. */
+    int n    = D;
+    int Bmax = HIT_BLOCK_SIZE;
+    if (Bmax > n) Bmax = n;
+
+    /* Here we choose a fixed-length block of size Bmax.
+     * If you prefer to tie it to α, you can do:
+     *   int B = (int)roundf(m.alpha * (float)n);
+     *   if (B < 1 && m.alpha > 0.0f) B = 1;
+     *   if (B > Bmax) B = Bmax;
+     */
+    int len = Bmax;
+
+    int start_max = n - len;
+    int offset = (start_max > 0) ? (rand() % (start_max + 1)) : 0;
+
+    m.offset = (uint16_t)offset;
+    m.len    = (uint16_t)len;
+
+    for (int i = 0; i < len; ++i) {
+        m.block[i] = x[offset + i];
+    }
+#endif
 
     mydata->last_tx_ms = now;
     return pogobot_infrared_sendShortMessage_omni((uint8_t*)&m, SL_MSG_BYTES);
@@ -130,10 +210,10 @@ void user_init(void){
      */
     hit_params_t p;
     p.mode         = HIT_MINIMIZE;
-    p.sigma        = 0.15f;
+    p.sigma        = 0.05f;
     p.eval_T       = 5;
     p.evolve_alpha = true;
-    p.alpha_min    = 0.0f;
+    p.alpha_min    = 0.1f;
     p.alpha_max    = 0.9f;
     p.alpha_sigma  = 1e-3f;
 

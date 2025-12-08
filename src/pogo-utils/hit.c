@@ -175,6 +175,7 @@ static void hit_adopt_from_remote(hit_t *h,
     hit_reset_maturation(h);
 }
 
+
 /* ===== Public API ======================================================== */
 
 void hit_init(hit_t *h, int n,
@@ -302,6 +303,138 @@ void hit_observe_remote(hit_t *h, uint16_t from_id, uint32_t epoch,
         hit_adopt_from_remote(h, x_remote, alpha_remote);
     }
 }
+
+void hit_observe_remote_block(hit_t *h, uint16_t from_id, uint32_t epoch,
+                              const float *x_block, int offset, int len,
+                              float f_remote, float alpha_remote)
+{
+    (void)from_id; /* currently unused, kept for logging/debug. */
+    (void)epoch;   /* not used in HIT core (could be used for staleness). */
+
+    if (!h || !x_block || h->n <= 0){
+        return;
+    }
+
+    /* Maturation: ignore all messages until we have a full window. */
+    if (!h->have_f){
+        return;
+    }
+
+    /* Deterministic acceptance: adopt iff neighbour is strictly better. */
+    float f_local = hit_get_f(h);  /* local average */
+    if (!better(h->mode, f_remote, f_local)){
+        return;
+    }
+
+    int n = h->n;
+
+    /* Clamp offset / len to a safe range. */
+    if (offset < 0)      offset = 0;
+    if (offset > n)      offset = n;
+    if (len < 0)         len = 0;
+    if (offset + len > n) len = n - offset;
+
+    /* If len==0, we fall back to “pure mutation + optional α evolution”. */
+    if (len < 0) len = 0;
+
+    /* ===== Adoption logic specialised for a contiguous block ===== */
+
+    /* 1) Optionally copy and mutate α from the neighbour, same as in
+     *    hit_adopt_from_remote(), but we will later interpret α as a
+     *    fraction of the BLOCK, not of full n.
+     */
+    if (h->evolve_alpha){
+        float a = alpha_remote;
+        if (!isfinite(a)) a = h->alpha;
+        if (a < h->alpha_min) a = h->alpha_min;
+        if (a > h->alpha_max) a = h->alpha_max;
+
+        float as = h->alpha_sigma;
+        if (isfinite(as) && as > 0.0f){
+            a += as * randn01(h);
+            if (a < h->alpha_min) a = h->alpha_min;
+            if (a > h->alpha_max) a = h->alpha_max;
+        }
+        h->alpha = a;
+    }
+
+    /* 2) Determine number of transferred coordinates INSIDE THE BLOCK:
+     *    k_block = round(alpha * len).
+     */
+    float a = h->alpha;
+    if (!isfinite(a) || a < 0.0f) a = 0.0f;
+    if (a > 1.0f) a = 1.0f;
+
+    int k = 0;
+    if (len > 0){
+        k = (int)floorf(a * (float)len + 0.5f);
+        if (k < 1 && a > 0.0f) k = 1;  /* at least 1 if alpha>0 and len>0 */
+        if (k > len) k = len;
+    }
+
+    int do_transfer = (k > 0 && len > 0);
+
+    /* Work buffer: either x_buf, or x in place. */
+    float *dst = h->x_buf ? h->x_buf : h->x;
+
+    /* Start from current genome. */
+    memcpy(dst, h->x, (size_t)n * sizeof(float));
+
+    if (do_transfer){
+        /* Choose k indices WITHOUT replacement inside the block [0..len-1],
+         * then map them to global coordinates offset + b.
+         */
+        int indices[len];
+        for (int i = 0; i < len; ++i){
+            indices[i] = i;
+        }
+        for (int i = 0; i < k; ++i){
+            int range = len - i;
+            int j = i + (rand() % range);
+            int tmp    = indices[i];
+            indices[i] = indices[j];
+            indices[j] = tmp;
+        }
+        for (int i = 0; i < k; ++i){
+            int b = indices[i];      /* index INSIDE the block (0..len-1) */
+            int d = offset + b;      /* corresponding global dimension     */
+            dst[d] = x_block[b];
+        }
+    }
+
+    /* 3) Mutation: identical to hit_adopt_from_remote(), but applied after
+     *    block transfers.
+     */
+    float sigma = h->sigma;
+    if (!isfinite(sigma) || sigma < 0.0f) sigma = 0.0f;
+
+    for (int d = 0; d < n; ++d){
+        float v = dst[d];
+
+        if (sigma > 0.0f){
+            v += sigma * randn01(h);
+        }
+
+        if (h->lo && h->hi){
+            float lo = h->lo[d];
+            float hi = h->hi[d];
+            if (isfinite(lo) && isfinite(hi) && hi > lo){
+                v = clampf(v, lo, hi);
+            }
+        }
+        dst[d] = v;
+    }
+
+    /* 4) Copy back if we used an intermediate buffer. */
+    if (dst != h->x){
+        memcpy(h->x, dst, (size_t)n * sizeof(float));
+    }
+
+    /* 5) Successful transfer: increase epoch and reset maturation window. */
+    h->epoch += 1;
+    hit_reset_maturation(h);
+}
+
 
 int hit_ready(const hit_t *h){
     return h && h->have_f;
