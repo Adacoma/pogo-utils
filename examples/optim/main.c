@@ -9,10 +9,6 @@
  *   -DOPT_EXAMPLE_ALGO=3  -> OPT_SEP_CMAES
  *   -DOPT_EXAMPLE_ALGO=4  -> OPT_SOCIAL_LEARNING
  *
- * Example build (adjust sources as needed):
- *   gcc -std=c11 -O3 -DOPT_EXAMPLE_ALGO=0 example_optim.c \
- *       optim.c oneplusone_es.c spsa.c pgpe.c sep_cmaes.c social_learning.c \
- *       -o example_optim
  */
 
 #include "pogobase.h"
