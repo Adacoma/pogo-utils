@@ -2,6 +2,8 @@
 #define MLP_INT8_H_
 
 #include <stdint.h>
+#include <stdlib.h>   /* for rand() */
+#include <math.h>     /* for sqrtf() */
 
 /*
  * Compile-time configuration of the MLP dimensions.
@@ -175,8 +177,7 @@ static void mlp_int8_forward(const MLP_INT8 *net,
 
 static void mlp_int8_forward_logits32(const MLP_INT8 *net,
                                       const int8_t in[MLP_INT8_INPUT_DIM],
-                                      int32_t out[MLP_INT8_OUTPUT_DIM])
-{
+                                      int32_t out[MLP_INT8_OUTPUT_DIM]) {
     int8_t hidden[MLP_INT8_HIDDEN_DIM];
 
     /* First layer: input -> hidden with hard tanh */
@@ -198,6 +199,163 @@ static void mlp_int8_forward_logits32(const MLP_INT8 *net,
     }
 }
 
+
+/* Total number of trainable parameters. */
+static inline uint32_t mlp_int8_param_count(void) {
+    return (uint32_t)MLP_INT8_INPUT_DIM  * (uint32_t)MLP_INT8_HIDDEN_DIM +
+           (uint32_t)MLP_INT8_HIDDEN_DIM +
+           (uint32_t)MLP_INT8_HIDDEN_DIM * (uint32_t)MLP_INT8_OUTPUT_DIM +
+           (uint32_t)MLP_INT8_OUTPUT_DIM;
+}
+
+/* Helper: convert float in [-1, 1] to Q0.7 int8 with rounding + saturation. */
+static inline int8_t mlp_int8_float_to_q0_7(float x) {
+    /* Clamp to representable range (slightly less than 1.0 in Q0.7). */
+    if (x > 0.999f)  x = 0.999f;
+    if (x < -1.0f)   x = -1.0f;
+
+    float scaled = x * (float)(1 << MLP_INT8_FRAC_BITS);  // e.g., *128
+    if (scaled >= 0.0f)
+        scaled += 0.5f;
+    else
+        scaled -= 0.5f;
+    int32_t v = (int32_t)scaled;
+
+    if (v > 127)   v = 127;
+    if (v < -128)  v = -128;
+
+    return (int8_t)v;
+}
+
+/**
+ * @brief Xavier-style initialization of an int8 MLP to reduce early saturation.
+ *
+ * We use a uniform Xavier scheme:
+ *   W ~ U(-a, a), with a = sqrt(6 / (fan_in + fan_out))
+ * then scaled and quantized to Q0.7.
+ *
+ * Biases are initialized to 0.
+ *
+ * IMPORTANT: call srand(...) in user code before using this, if you want
+ * deterministic / controlled randomness.
+ */
+static inline void mlp_int8_init_xavier(MLP_INT8 *net) {
+    /* ---- First layer: W1 (hidden x input) ---- */
+    const float fan_in1  = (float)MLP_INT8_INPUT_DIM;
+    const float fan_out1 = (float)MLP_INT8_HIDDEN_DIM;
+    float limit1 = sqrtf(6.0f / (fan_in1 + fan_out1));
+
+    /* Optional extra shrink to be conservative wrt hard-tanh saturation. */
+    limit1 *= 0.5f;
+
+    for (int i = 0; i < MLP_INT8_HIDDEN_DIM; ++i) {
+        for (int j = 0; j < MLP_INT8_INPUT_DIM; ++j) {
+            float u = (float)rand() / (float)RAND_MAX;      // [0,1]
+            float r = (2.0f * u - 1.0f) * limit1;            // [-limit1, limit1]
+            net->W1[i][j] = mlp_int8_float_to_q0_7(r);
+        }
+        net->b1[i] = 0;  /* zero bias */
+    }
+
+    /* ---- Second layer: W2 (output x hidden) ---- */
+    const float fan_in2  = (float)MLP_INT8_HIDDEN_DIM;
+    const float fan_out2 = (float)MLP_INT8_OUTPUT_DIM;
+    float limit2 = sqrtf(6.0f / (fan_in2 + fan_out2));
+    limit2 *= 0.5f;
+
+    for (int i = 0; i < MLP_INT8_OUTPUT_DIM; ++i) {
+        for (int j = 0; j < MLP_INT8_HIDDEN_DIM; ++j) {
+            float u = (float)rand() / (float)RAND_MAX;      // [0,1]
+            float r = (2.0f * u - 1.0f) * limit2;            // [-limit2, limit2]
+            net->W2[i][j] = mlp_int8_float_to_q0_7(r);
+        }
+        net->b2[i] = 0;  /* zero bias */
+    }
+}
+
+/**
+ * @brief Serialize all trainable parameters to a flat int8 array.
+ *
+ * Layout (row-major):
+ *   1) W1[hidden][input]  -> H * I
+ *   2) b1[hidden]         -> H
+ *   3) W2[output][hidden] -> O * H
+ *   4) b2[output]         -> O
+ *
+ * @param net  Pointer to MLP.
+ * @param out  Destination array, of length at least mlp_int8_param_count().
+ * @return     Number of parameters written.
+ */
+static inline uint32_t mlp_int8_serialize_params(const MLP_INT8 *net,
+                                                 int8_t *out) {
+    uint32_t idx = 0;
+
+    /* W1 */
+    for (int i = 0; i < MLP_INT8_HIDDEN_DIM; ++i) {
+        for (int j = 0; j < MLP_INT8_INPUT_DIM; ++j) {
+            out[idx++] = net->W1[i][j];
+        }
+    }
+
+    /* b1 */
+    for (int i = 0; i < MLP_INT8_HIDDEN_DIM; ++i) {
+        out[idx++] = net->b1[i];
+    }
+
+    /* W2 */
+    for (int i = 0; i < MLP_INT8_OUTPUT_DIM; ++i) {
+        for (int j = 0; j < MLP_INT8_HIDDEN_DIM; ++j) {
+            out[idx++] = net->W2[i][j];
+        }
+    }
+
+    /* b2 */
+    for (int i = 0; i < MLP_INT8_OUTPUT_DIM; ++i) {
+        out[idx++] = net->b2[i];
+    }
+
+    return idx;
+}
+
+/**
+ * @brief Deserialize all trainable parameters from a flat int8 array.
+ *
+ * The layout must match mlp_int8_serialize_params().
+ *
+ * @param net  Pointer to MLP to be filled.
+ * @param in   Source array, of length at least mlp_int8_param_count().
+ * @return     Number of parameters read.
+ */
+static inline uint32_t mlp_int8_deserialize_params(MLP_INT8 *net,
+                                                   const int8_t *in) {
+    uint32_t idx = 0;
+
+    /* W1 */
+    for (int i = 0; i < MLP_INT8_HIDDEN_DIM; ++i) {
+        for (int j = 0; j < MLP_INT8_INPUT_DIM; ++j) {
+            net->W1[i][j] = in[idx++];
+        }
+    }
+
+    /* b1 */
+    for (int i = 0; i < MLP_INT8_HIDDEN_DIM; ++i) {
+        net->b1[i] = in[idx++];
+    }
+
+    /* W2 */
+    for (int i = 0; i < MLP_INT8_OUTPUT_DIM; ++i) {
+        for (int j = 0; j < MLP_INT8_HIDDEN_DIM; ++j) {
+            net->W2[i][j] = in[idx++];
+        }
+    }
+
+    /* b2 */
+    for (int i = 0; i < MLP_INT8_OUTPUT_DIM; ++i) {
+        net->b2[i] = in[idx++];
+    }
+
+    return idx;
+}
 
 #endif /* MLP_INT8_H_ */
 

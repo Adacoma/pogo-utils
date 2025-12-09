@@ -68,20 +68,8 @@ void bench_mlp_int8(void) {
     /* Init RNG (deterministic for reproducibility) */
     srand(1);
 
-    /* Fill weights and biases with random Q0.7 values */
-    for (int i = 0; i < MLP_INT8_HIDDEN_DIM; ++i) {
-        for (int j = 0; j < MLP_INT8_INPUT_DIM; ++j) {
-            net.W1[i][j] = rand_int8_q0_7();
-        }
-        net.b1[i] = rand_int8_q0_7();
-    }
-
-    for (int i = 0; i < MLP_INT8_OUTPUT_DIM; ++i) {
-        for (int j = 0; j < MLP_INT8_HIDDEN_DIM; ++j) {
-            net.W2[i][j] = rand_int8_q0_7();
-        }
-        net.b2[i] = rand_int8_q0_7();
-    }
+    /* Xavier-style initialization instead of full-range [-128,127] */
+    mlp_int8_init_xavier(&net);
 
     /* Random input vector */
     for (int i = 0; i < MLP_INT8_INPUT_DIM; ++i) {
