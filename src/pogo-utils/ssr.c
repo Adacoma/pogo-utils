@@ -802,26 +802,26 @@ void ssr_config_init_default(ssr_config_t *config) {
     config->diffusion_convergence_threshold = 0.1f;
     config->diffusion_min_points = 3u;
 
-    config->tau_initial = 0.01f;
+    config->tau_initial = 1.00f;
     config->tau_increment = 0.015f;
-    config->tau_max = 0.20f;
+    config->tau_max = 1.00f;
     config->min_abs_s_for_led = 0.01f;
 
-    config->neighbor_max_age_ms = 1500u;
+    config->neighbor_max_age_ms = 500u;
     config->initial_motility_ms = 0u;
     config->iteration_motility_ms = 0u;
-    config->waiting_ms = 1500u;
-    config->diffusion_ms = 150000u;
-    config->diffusion_step_ms = 1500u;
-    config->diffusion_burnin_ms = 97500u;
-    config->collective_lambda_ms = 15000u;
-    config->collective_lambda_step_ms = 1500u;
-    config->final_lambda_ms = 15000u;
-    config->final_lambda_step_ms = 1500u;
+    config->waiting_ms = 500u;
+    config->diffusion_ms = 11000u;
+    config->diffusion_step_ms = 500u;
+    config->diffusion_burnin_ms = 3000u;
+    config->collective_lambda_ms = 5000u;
+    config->collective_lambda_step_ms = 500u;
+    config->final_lambda_ms = 5000u;
+    config->final_lambda_step_ms = 500u;
 
     config->enable_pre_diffusion = true;
     config->enable_final_lambda = true;
-    config->enable_tau_increase = true;
+    config->enable_tau_increase = false;
     config->enable_time_sync = true;
     config->enable_photo_start = true;
     config->light_threshold = 40;
