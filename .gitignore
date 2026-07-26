@@ -86,6 +86,7 @@ examples/distributed_MLP_int8_MNIST/data/
 examples/ESN_int8/ESN_int8
 examples/ESN_int8_PRANC/ESN_int8_PRANC
 examples/MLP_int8_dyn/MLP_int8_dyn
+examples/ssr/ssr
 
 # Generated figures
 *.pdf
