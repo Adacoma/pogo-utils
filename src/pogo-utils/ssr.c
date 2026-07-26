@@ -465,7 +465,7 @@ static void ssr_fit_next_lambda(ssr_state_t *state) {
 
     const float lambda = numerator / denominator;
     const float intercept = (
-        diffusion->sum_logs[index] - lambda * diffusion->sum_t[index]
+        diffusion->sum_logs[index] + lambda * diffusion->sum_t[index]
     ) / point_count;
 
     if (!ssr_float_is_valid(lambda) || !ssr_float_is_valid(intercept)) {

@@ -506,8 +506,8 @@ int main(void) {
     pogobot_start(user_init, user_step);
 
     SET_CALLBACK(callback_global_setup, global_setup);
-//    SET_CALLBACK(callback_create_data_schema, create_data_schema);
-//    SET_CALLBACK(callback_export_data, export_data);
+    SET_CALLBACK(callback_create_data_schema, create_data_schema);
+    SET_CALLBACK(callback_export_data, export_data);
 
     return 0;
 }
