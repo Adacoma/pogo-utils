@@ -290,7 +290,7 @@ static void user_step(void) {
     }
 }
 
-/* -------------------- Optional Pogosim configuration/export -------------------- */
+/* -------------------- Configuration/export -------------------- */
 
 #ifdef SIMULATOR
 
