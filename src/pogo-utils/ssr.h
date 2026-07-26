@@ -39,14 +39,6 @@ extern "C" {
 #define SSR_MAX_CLASSES 10
 #endif
 
-#ifndef SSR_PROTOCOL_MAGIC
-#define SSR_PROTOCOL_MAGIC 0x53u /* ASCII 'S' */
-#endif
-
-#ifndef SSR_PROTOCOL_VERSION
-#define SSR_PROTOCOL_VERSION 2u
-#endif
-
 #if (SSR_NUMBER_DIFFUSIONS < 1)
 #error "SSR_NUMBER_DIFFUSIONS must be at least 1"
 #endif
@@ -168,13 +160,10 @@ typedef enum {
 
 /*
  * Float-only wire format. Fields are ordered so float values start at an
- * aligned offset even with byte packing. Protocol version 2 is intentionally
- * not wire-compatible with the previous q6.10 packet format.
+ * aligned offset even with byte packing.
  */
 #pragma pack(push, 1)
 typedef struct {
-    uint8_t magic;
-    uint8_t version;
     uint8_t data_type;
     uint8_t degree;
     uint16_t sender_id;
@@ -231,7 +220,21 @@ typedef struct {
     ssr_config_t config;
 
     ssr_neighbor_t neighbors[SSR_MAX_NEIGHBORS];
+
+    /*
+     * Number of unique neighbor packets currently buffered for the
+     * next SSR update.
+     */
     uint8_t neighbor_count;
+    /*
+     * Number of neighbor values consumed by the most recent diffusion
+     * or consensus update.
+     */
+    uint8_t last_update_neighbor_count;
+    /*
+     * Metropolis degree transmitted in outgoing packets.
+     * This may be clamped to at least 1.
+     */
     uint8_t last_degree;
     uint32_t current_neighbor_max_age_ms;
 
@@ -306,6 +309,16 @@ bool ssr_is_motility_phase(const ssr_state_t *state);
 bool ssr_is_measurement_phase(const ssr_state_t *state);
 
 /* -------------------- Queries -------------------- */
+
+/**
+ * Number of unique neighbor messages currently waiting to be consumed.
+ */
+uint8_t ssr_get_buffered_neighbor_count(const ssr_state_t *state);
+
+/**
+ * Number of neighbors used by the most recent SSR update.
+ */
+uint8_t ssr_get_last_update_neighbor_count(const ssr_state_t *state);
 
 ssr_behavior_t ssr_get_behavior(const ssr_state_t *state);
 ssr_behavior_t ssr_get_previous_behavior(const ssr_state_t *state);

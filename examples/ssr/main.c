@@ -300,6 +300,34 @@ static void load_bool_from_configuration(bool *target, const char *name) {
     *target = value != 0u;
 }
 
+
+static void validate_ssr_timing(const ssr_config_t *config) {
+    if (config == NULL || config->diffusion_step_ms == 0u) {
+        return;
+    }
+
+    uint32_t fitting_duration_ms = 0u;
+
+    if (config->diffusion_ms > config->diffusion_burnin_ms) {
+        fitting_duration_ms =
+            config->diffusion_ms - config->diffusion_burnin_ms;
+    }
+
+    uint32_t maximum_fit_points =
+        fitting_duration_ms / config->diffusion_step_ms;
+
+    if (maximum_fit_points < SSR_DIFFUSION_WINDOW_SIZE) {
+        printf(
+            "[SSR configuration error] Only %u lambda-fit points are "
+            "available, but SSR_DIFFUSION_WINDOW_SIZE=%u. "
+            "Increase diffusion_ms, reduce diffusion_burnin_ms, "
+            "or reduce SSR_DIFFUSION_WINDOW_SIZE.\n",
+            (unsigned)maximum_fit_points,
+            (unsigned)SSR_DIFFUSION_WINDOW_SIZE
+        );
+    }
+}
+
 static void global_setup(void) {
     init_uint16_from_configuration(
         &application_ssr_config.main_loop_hz,
@@ -420,7 +448,12 @@ static void global_setup(void) {
 
     // XXX
     //init_array_from_configuration(application_ssr_config.class_centroids);
+
+    validate_ssr_timing(&application_ssr_config);
 }
+
+
+
 
 static void create_data_schema(void) {
     data_add_column_int8("ssr_behavior");

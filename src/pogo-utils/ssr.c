@@ -386,7 +386,8 @@ static void ssr_compute_next_s(ssr_state_t *state) {
         }
     }
 
-    state->last_degree = ssr_clamped_degree(matching_neighbors);
+    state->last_update_neighbor_count = matching_neighbors;
+    state->last_degree = matching_neighbors > 0u ? matching_neighbors : 1u;
     ssr_clear_neighbors(state);
 
     const float local_tau = state->config.enable_tau_increase
@@ -609,6 +610,7 @@ static void ssr_collective_lambda_step(ssr_state_t *state, uint32_t now) {
 
     float sum = 0.0f;
     uint8_t used = 0u;
+    uint8_t received_neighbors = 0;
 
     if (state->diffusion.valid && ssr_float_is_valid(state->diffusion.lambda)) {
         sum += state->diffusion.lambda;
@@ -620,9 +622,11 @@ static void ssr_collective_lambda_step(ssr_state_t *state, uint32_t now) {
             ssr_float_is_valid(state->neighbors[i].val[0])) {
             sum += state->neighbors[i].val[0];
             ++used;
+            ++received_neighbors;
         }
     }
 
+    state->last_update_neighbor_count = received_neighbors;
     ssr_clear_neighbors(state);
 
     if (used > 0u) {
@@ -680,6 +684,7 @@ static void ssr_final_lambda_step(ssr_state_t *state, uint32_t now) {
 
     float sum = 0.0f;
     uint8_t used = 0u;
+    uint8_t received_neighbors = 0;
 
     if (ssr_float_is_valid(state->diffusion.average_lambda)) {
         sum += state->diffusion.average_lambda;
@@ -691,9 +696,11 @@ static void ssr_final_lambda_step(ssr_state_t *state, uint32_t now) {
             ssr_float_is_valid(state->neighbors[i].val[0])) {
             sum += state->neighbors[i].val[0];
             ++used;
+            ++received_neighbors;
         }
     }
 
+    state->last_update_neighbor_count = received_neighbors;
     ssr_clear_neighbors(state);
 
     if (used > 0u) {
@@ -849,8 +856,6 @@ void ssr_init(ssr_state_t *state, const ssr_config_t *config) {
     state->previous_behavior = SSR_BEHAVIOR_WAITING_FOR_START;
     ssr_setup_diffusion_session(&state->diffusion);
 
-    state->outgoing_message.magic = SSR_PROTOCOL_MAGIC;
-    state->outgoing_message.version = SSR_PROTOCOL_VERSION;
     state->outgoing_message.data_type = (uint8_t)SSR_DATA_NULL;
     state->outgoing_message.degree = 1u;
     state->outgoing_message.sender_id = pogobot_helper_getid();
@@ -977,9 +982,7 @@ bool ssr_process_message(ssr_state_t *state, message_t *message) {
     ssr_message_data_t data;
     memcpy(&data, &message->payload, sizeof(data));
 
-    if (data.magic != SSR_PROTOCOL_MAGIC ||
-        data.version != SSR_PROTOCOL_VERSION ||
-        data.data_type < (uint8_t)SSR_DATA_PRE_S ||
+    if (data.data_type < (uint8_t)SSR_DATA_PRE_S ||
         data.data_type > (uint8_t)SSR_DATA_CONSENSUS_LAMBDA) {
         return false;
     }
@@ -1032,8 +1035,6 @@ bool ssr_send_message(ssr_state_t *state) {
         return false;
     }
 
-    state->outgoing_message.magic = SSR_PROTOCOL_MAGIC;
-    state->outgoing_message.version = SSR_PROTOCOL_VERSION;
     state->outgoing_message.sender_id = pogobot_helper_getid();
     state->outgoing_message.degree = ssr_clamped_degree(
         state->neighbor_count > 0u ? state->neighbor_count : state->last_degree
@@ -1102,8 +1103,22 @@ uint16_t ssr_get_iteration(const ssr_state_t *state) {
     return state == NULL ? 0u : state->current_iteration;
 }
 
+uint8_t ssr_get_buffered_neighbor_count(
+    const ssr_state_t *state
+) {
+    return state != NULL ? state->neighbor_count : 0u;
+}
+
+uint8_t ssr_get_last_update_neighbor_count(
+    const ssr_state_t *state
+) {
+    return state != NULL
+        ? state->last_update_neighbor_count
+        : 0u;
+}
+
 uint8_t ssr_get_neighbor_count(const ssr_state_t *state) {
-    return state == NULL ? 0u : state->neighbor_count;
+    return ssr_get_last_update_neighbor_count(state);
 }
 
 bool ssr_result_is_ready(const ssr_state_t *state) {

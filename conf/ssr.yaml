@@ -4,8 +4,8 @@ window_width: 600       # In pixels
 window_height: 600      # In pixels
 
 #arena_file: arenas/square.csv
-arena_file: arenas/disk.csv
-#arena_file: arenas/annulus.csv
+#arena_file: arenas/disk.csv
+arena_file: arenas/annulus.csv
 #arena_file: arenas/arena8.csv
 #arena_file: arenas/star.csv
 arena_surface: 1.5e5    # In mm²
@@ -61,8 +61,8 @@ GUI_speed_up: 1.0         # How much the visualisation in the GUI should be sped
 #       As such, if the distance is enough, the robots will only have max 4 neighbors corresponding to the 4 directions top, left, bottom, right.
 #       The "formation_cluster_at_center" parameter (default=true) specifies whether (true) all robots should put as close as possible to the center of the grid (i.e. center of the arena); or (false) if they should just be placed randomly in the grid.
 #   - aligned_chessboard: similar to formation "chessboard", but all robots have a pi/2 direction.
-initial_formation: random
-#initial_formation: power_lloyd
+#initial_formation: random
+initial_formation: power_lloyd
 #initial_formation: random
 
 # In the chessboard formations, the euclidean distance between two connected points of the grid.
@@ -183,9 +183,9 @@ parameters:
     ssr_initial_motility_ms: 0
     ssr_iteration_motility_ms: 0
     ssr_waiting_ms: 1500
-    ssr_diffusion_ms: 100000
+    ssr_diffusion_ms: 150000
     ssr_diffusion_step_ms: 1500
-    ssr_diffusion_burnin_ms: 65000
+    ssr_diffusion_burnin_ms: 97500
     ssr_collective_lambda_ms: 15000
     ssr_collective_lambda_step_ms: 1500
     ssr_final_lambda_ms: 15000
