@@ -32,7 +32,7 @@ extern "C" {
 #endif
 
 #ifndef SSR_DIFFUSION_WINDOW_SIZE
-#define SSR_DIFFUSION_WINDOW_SIZE 30
+#define SSR_DIFFUSION_WINDOW_SIZE 15
 #endif
 
 #ifndef SSR_MAX_CLASSES

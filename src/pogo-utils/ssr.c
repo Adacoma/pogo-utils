@@ -97,7 +97,7 @@ static void ssr_setup_diffusion_session(ssr_diffusion_session_t *diffusion) {
 
     for (uint8_t i = 0; i < SSR_NUMBER_DIFFUSIONS; ++i) {
         diffusion->lambda_per_diffusion[i] = NAN;
-        diffusion->best_mse[i] = 100.0f;
+        diffusion->best_mse[i] = INFINITY;
         for (uint8_t j = 0; j < SSR_DIFFUSION_WINDOW_SIZE; ++j) {
             diffusion->history_t[i][j] = -1.0f;
             diffusion->history_mse[i][j] = -1.0f;
@@ -297,7 +297,7 @@ static void ssr_init_diffusion(
         diffusion->sum_tlogs[i] = 0.0f;
         diffusion->least_squares_point_count[i] = 0u;
         diffusion->stopped[i] = false;
-        diffusion->best_mse[i] = 100.0f;
+        diffusion->best_mse[i] = INFINITY;
 
         for (uint8_t j = 0; j < SSR_DIFFUSION_WINDOW_SIZE; ++j) {
             diffusion->history_logs[i][j] = 0.0f;

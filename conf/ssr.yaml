@@ -4,8 +4,8 @@ window_width: 600       # In pixels
 window_height: 600      # In pixels
 
 #arena_file: arenas/square.csv
-#arena_file: arenas/disk.csv
-arena_file: arenas/annulus.csv
+arena_file: arenas/disk.csv
+#arena_file: arenas/annulus.csv
 #arena_file: arenas/arena8.csv
 #arena_file: arenas/star.csv
 arena_surface: 1.5e5    # In mm²
@@ -175,25 +175,40 @@ parameters:
     ssr_min_abs_s_for_led: 0.01
     ssr_diffusion_min_points: 3
 
-    ssr_tau_initial: 0.01
-    ssr_tau_increment: 0.015
-    ssr_tau_max: 0.20
+#    ssr_enable_tau_increase: true
+#    ssr_tau_initial: 0.01
+#    ssr_tau_increment: 0.015
+#    ssr_tau_max: 0.20
 
-    ssr_neighbor_max_age_ms: 1500
+    ssr_enable_tau_increase: false
+    ssr_tau_initial: 0.50
+
+#    ssr_neighbor_max_age_ms: 1500
+#    ssr_initial_motility_ms: 0
+#    ssr_iteration_motility_ms: 0
+#    ssr_waiting_ms: 1500
+#    ssr_diffusion_ms: 150000
+#    ssr_diffusion_step_ms: 1500
+#    ssr_diffusion_burnin_ms: 97500
+#    ssr_collective_lambda_ms: 15000
+#    ssr_collective_lambda_step_ms: 1500
+#    ssr_final_lambda_ms: 15000
+#    ssr_final_lambda_step_ms: 1500
+
+    ssr_neighbor_max_age_ms: 500
     ssr_initial_motility_ms: 0
     ssr_iteration_motility_ms: 0
-    ssr_waiting_ms: 1500
-    ssr_diffusion_ms: 150000
-    ssr_diffusion_step_ms: 1500
-    ssr_diffusion_burnin_ms: 97500
-    ssr_collective_lambda_ms: 15000
-    ssr_collective_lambda_step_ms: 1500
-    ssr_final_lambda_ms: 15000
-    ssr_final_lambda_step_ms: 1500
+    ssr_waiting_ms: 500
+    ssr_diffusion_ms: 17000
+    ssr_diffusion_step_ms: 500
+    ssr_diffusion_burnin_ms: 7000
+    ssr_collective_lambda_ms: 5000
+    ssr_collective_lambda_step_ms: 500
+    ssr_final_lambda_ms: 5000
+    ssr_final_lambda_step_ms: 500
 
     ssr_enable_pre_diffusion: true
     ssr_enable_final_lambda: true
-    ssr_enable_tau_increase: true
     ssr_enable_time_sync: true
     ssr_enable_photo_start: true
     ssr_manage_leds: true
