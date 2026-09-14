@@ -89,6 +89,7 @@ examples/MLP_int8_dyn/MLP_int8_dyn
 examples/MLP_int8_dyn_act/MLP_int8_dyn_act
 examples/ssr/ssr
 examples/magnetometer_heading_detection/magnetometer_heading_detection
+examples/go_straight/go_straight
 
 # Generated figures
 *.pdf
@@ -97,4 +98,5 @@ examples/magnetometer_heading_detection/magnetometer_heading_detection
 *.tmp
 *.bak
 *.old
+tmp/
 

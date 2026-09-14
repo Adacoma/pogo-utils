@@ -392,6 +392,12 @@ ddk_behavior_t diff_drive_kin_step_command(
     if (!applied) {
         return fail(ddk, DDK_FAULT_MOTOR_CALIBRATION);
     }
+    if (committing) {
+        /* Credit ONLY successful commit motor applications. A sensor/PID stop,
+         * turning or merely asking WA for a recommendation earns no forward
+         * time. This is command duration, not measured travel distance. */
+        wall_avoidance_magnetometer_forward_applied(&ddk->wa, now_ms);
+    }
     ddk->behavior = committing ? DDK_BEHAVIOR_COMMITTING : (pivoting ? DDK_BEHAVIOR_PIVOT :
         (use_pid ? DDK_BEHAVIOR_NORMAL : DDK_BEHAVIOR_PID_DISABLED));
     return ddk->behavior;

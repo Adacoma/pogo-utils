@@ -44,6 +44,14 @@
 #ifndef ENABLE_WALL_AVOIDANCE_UART
 #define ENABLE_WALL_AVOIDANCE_UART 1
 #endif
+/* Rich evidence logs for simulation; avoid the extra UART load on robots. */
+#ifndef ENABLE_WALL_DETAIL_UART
+#ifdef SIMULATOR
+#define ENABLE_WALL_DETAIL_UART 1
+#else
+#define ENABLE_WALL_DETAIL_UART 0
+#endif
+#endif
 
 #define CAL_PRINTF(...) do { \
     if (ENABLE_CALIBRATION_UART) { \
@@ -87,7 +95,20 @@ bool magnetometer_use_fixed_point = true;
  */
 bool enable_wall_avoidance = true;
 uint32_t wall_avoidance_memory_ms = 350u;
-uint32_t wall_avoidance_forward_commit_ms = 500u;
+/* FULL applied forward interval after every settled turn. Wall-beacon vetoes
+ * are deferred until this interval ends; sensing faults and STOP still win.
+ * This is motor-command time, not a distance or a collision-free guarantee. */
+uint32_t wall_avoidance_forward_commit_ms = 1000u;
+uint32_t wall_avoidance_walls_clear_ms = 200u;
+/* Cross-leg progress watchdog. After this long without a useful applied run,
+ * settle then commit at reduced speed for at least forward_commit_ms.
+ * Sensor failures and explicit STOP still win. timeout=0 disables only the
+ * watchdog; it no longer disables normal full-commit protection.
+ */
+uint32_t wall_avoidance_no_forward_timeout_ms = 8000u;
+uint32_t wall_avoidance_recovery_forward_ms = 300u;
+float wall_avoidance_recovery_forward_speed_ratio = 0.40f;
+float wall_avoidance_replan_improvement_rad = 15.0f * PI_F / 180.0f;
 float wall_avoidance_forward_speed_ratio = 0.50f;
 float wall_avoidance_turn_angle_rad = 120.0f * PI_F / 180.0f;
 float wall_avoidance_max_turn_angle_rad = PI_F;
@@ -286,18 +307,55 @@ static void wall_log_step(uint32_t now) {
     mydata->last_wall_logged_extensions = state->extension_count;
     /* Faults always print once, even when routine avoidance UART is disabled.
      * Integer millidegrees avoid printf's float-to-double varargs promotion. */
-//    if (ENABLE_WALL_AVOIDANCE_UART || output->fault != WA_MAGNETOMETER_FAULT_NONE) {
-//        printf("WAM,id=%u,ms=%lu,phase=%d,action=%d,reason=%s,fault=%s,turns=%lu,"
-//               "extensions=%lu,progress_mdeg=%d,target_mdeg=%d,ccw_sign=%d\n",
-//               (unsigned)pogobot_helper_getid(), (unsigned long)now,
-//               (int)state->phase, (int)output->action,
-//               wall_avoidance_magnetometer_reason_string(output->reason),
-//               wall_avoidance_magnetometer_fault_string(output->fault),
-//               (unsigned long)state->turn_count, (unsigned long)state->extension_count,
-//               round_float_to_int(state->progress_rad * (180000.0f / PI_F)),
-//               round_float_to_int(state->target_heading_rad * (180000.0f / PI_F)),
-//               (int)state->config.heading_ccw_sign);
-//    }
+    if (ENABLE_WALL_AVOIDANCE_UART || output->fault != WA_MAGNETOMETER_FAULT_NONE) {
+        printf("WAM,id=%u,ms=%lu,phase=%d,action=%d,reason=%s,fault=%s,turns=%lu,"
+               "extensions=%lu,retries=%lu,turn_budgets=%lu,escaped=%lu,probes=%lu,probe_active=%u,progress_mdeg=%d,target_mdeg=%d,ccw_sign=%d\n",
+               (unsigned)pogobot_helper_getid(), (unsigned long)now,
+               (int)state->phase, (int)output->action,
+               wall_avoidance_magnetometer_reason_string(output->reason),
+               wall_avoidance_magnetometer_fault_string(output->fault),
+               (unsigned long)state->turn_count, (unsigned long)state->extension_count,
+               (unsigned long)state->retry_count, (unsigned long)state->turn_timeout_count,
+               (unsigned long)state->escaped_count,
+               (unsigned long)state->recovery_count, (unsigned)state->recovery_active,
+               round_float_to_int(state->progress_rad * (180000.0f / PI_F)),
+               round_float_to_int(state->target_heading_rad * (180000.0f / PI_F)),
+               (int)state->config.heading_ccw_sign);
+#if ENABLE_WALL_DETAIL_UART
+        /* Same control tick, cached data only. WAM remains compatible with
+         * existing parsers; WAD adds the information missing from the original
+         * tumbling trace. This is command/evidence telemetry, not odometry. */
+        uint32_t required = state->config.forward_commit_ms;
+        if (state->recovery_active && state->config.recovery_forward_ms > required) {
+            required = state->config.recovery_forward_ms;
+        }
+        const heading_sample_t *heading = &mydata->drive.heading;
+        printf("WAD,id=%u,ms=%lu,api=%u,commit_ms=%lu,required_ms=%lu,"
+               "heading_valid=%u,heading_mdeg=%d,heading_age_ms=%lu,"
+               "motor_left=%d,motor_right=%d,goal_mdeg=%d\n",
+               (unsigned)pogobot_helper_getid(), (unsigned long)now,
+               (unsigned)WALL_AVOIDANCE_MAGNETOMETER_API_VERSION,
+               (unsigned long)state->forward_progress_ms, (unsigned long)required,
+               (unsigned)heading->valid,
+               heading->valid ? round_float_to_int(heading->angle_rad * (180000.0f / PI_F)) : 0,
+               (unsigned long)(uint32_t)(now - heading->sample_ms),
+               (mydata->drive.motors.left_ratio < 0.0f ? -(int)mydata->drive.motors.left_pwm : (int)mydata->drive.motors.left_pwm),
+               (mydata->drive.motors.right_ratio < 0.0f ? -(int)mydata->drive.motors.right_pwm : (int)mydata->drive.motors.right_pwm),
+               round_float_to_int(state->goal_progress_rad * (180000.0f / PI_F)));
+        for (uint8_t face = 0u; face < 4u; ++face) {
+            const wa_magnetometer_observation_t *observation = &state->observation[face];
+            printf("WAO,id=%u,ms=%lu,face=%u,active=%u,located=%u,hits=%u,"
+                   "age_ms=%lu,burst_span_ms=%lu,bearing_mdeg=%d\n",
+                   (unsigned)pogobot_helper_getid(), (unsigned long)now, (unsigned)face,
+                   (unsigned)wall_avoidance_magnetometer_face_active(state, face, now),
+                   (unsigned)observation->bearing_valid, (unsigned)observation->hits,
+                   (unsigned long)(uint32_t)(now - observation->last_seen_ms),
+                   (unsigned long)(uint32_t)(observation->last_seen_ms - observation->burst_started_ms),
+                   observation->bearing_valid ? round_float_to_int(
+                       observation->bearing_rad * (180000.0f / PI_F)) : 0);
+        }
+#endif
+    }
 }
 
 static void pid_log_step(uint32_t now) {
@@ -422,7 +480,7 @@ void user_init(void) {
     memset(mydata, 0, sizeof(*mydata));
     uint32_t random_seed = (uint32_t)pogobot_helper_getRandSeed();
     srand((unsigned)random_seed);
-    main_loop_hz = 10;
+    main_loop_hz = 20;
     max_nb_processed_msg_per_tick = 3;
     percent_msgs_sent_per_ticks = 0;
     msg_rx_fn = process_message;
@@ -464,6 +522,11 @@ void user_init(void) {
     config.heading_ccw_sign = drive_config.heading_ccw_sign;
     config.wall_memory_ms = wall_avoidance_memory_ms;
     config.forward_commit_ms = wall_avoidance_forward_commit_ms;
+    config.walls_clear_ms = wall_avoidance_walls_clear_ms;
+    config.no_forward_timeout_ms = wall_avoidance_no_forward_timeout_ms;
+    config.recovery_forward_ms = wall_avoidance_recovery_forward_ms;
+    config.recovery_forward_speed_ratio = wall_avoidance_recovery_forward_speed_ratio;
+    config.replan_improvement_rad = wall_avoidance_replan_improvement_rad;
     config.forward_speed_ratio = wall_avoidance_forward_speed_ratio;
     config.policy = wall_avoidance_chirality_policy;
     config.turn_angle_rad = wall_avoidance_turn_angle_rad;
@@ -541,7 +604,7 @@ void user_step(void) {
     }
     /* ONE acquisition. One coordinator step. One final motor-command pair.
      * A failed read passes an invalid/stale snapshot, NOT an explicit STOP
-     * request, so an interrupted escape retains its original watchdog. */
+     * request. Sensing faults are distinct from retries of an incomplete escape. */
     (void)magnetometer_heading_update();
     uint32_t now = now_ms();
     heading_sample_t input = heading_snapshot(now);
@@ -589,6 +652,10 @@ static void create_data_schema(void) {
     data_add_column_int32("wall_turn_count");
     data_add_column_int32("wall_completed_count");
     data_add_column_int32("wall_extension_count");
+    data_add_column_int8("wall_recovery_active");
+    data_add_column_int32("wall_recovery_count");
+    data_add_column_int32("wall_recovery_motion_ms");
+    data_add_column_int32("wall_no_forward_ms");
 }
 
 static void export_data(void) {
@@ -633,6 +700,13 @@ static void export_data(void) {
         INT32_MAX : mydata->drive.wa.completed_count));
     data_set_value_int32("wall_extension_count", (int32_t)(mydata->drive.wa.extension_count > INT32_MAX ?
         INT32_MAX : mydata->drive.wa.extension_count));
+    const wa_magnetometer_state_t *wa = &mydata->drive.wa;
+    data_set_value_int8("wall_recovery_active", (int8_t)wa->recovery_active);
+    data_set_value_int32("wall_recovery_count", (int32_t)(wa->recovery_count > INT32_MAX ?
+        INT32_MAX : wa->recovery_count));
+    data_set_value_int32("wall_recovery_motion_ms", (int32_t)wa->recovery_motion_ms);
+    uint32_t no_forward = wa->no_forward_watch_active ? (uint32_t)(now - wa->no_forward_since_ms) : 0u;
+    data_set_value_int32("wall_no_forward_ms", (int32_t)(no_forward > INT32_MAX ? INT32_MAX : no_forward));
 }
 
 static void global_setup(void) {
@@ -683,6 +757,11 @@ static void global_setup(void) {
     init_from_configuration(wall_avoidance_heading_max_age_ms);
     init_from_configuration(wall_avoidance_settle_ms);
     init_from_configuration(wall_avoidance_forward_commit_ms);
+    init_from_configuration(wall_avoidance_walls_clear_ms);
+    init_from_configuration(wall_avoidance_no_forward_timeout_ms);
+    init_from_configuration(wall_avoidance_recovery_forward_ms);
+    init_from_configuration(wall_avoidance_recovery_forward_speed_ratio);
+    init_from_configuration(wall_avoidance_replan_improvement_rad);
     init_from_configuration(wall_avoidance_forward_speed_ratio);
 
     char wall_avoidance_policy[128] = "min_turn";

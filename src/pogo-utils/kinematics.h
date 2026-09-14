@@ -13,7 +13,10 @@
  * Each step selects ONE final motor pair: explicit STOP/fault has priority;
  * avoidance overrides ordinary motion for directed turns and stopped settling;
  * forward commit and normal heading hold use the SAME PID. Commit adopts the
- * settled escape target and retains it after the commit interval ends.
+ * settled escape target and retains it after escape ends. Commits remain active
+ * until minimum applied forward time AND all-wall clearance; multiple nearby
+ * bearings can cause further turn/commit attempts, not an avoidance fault.
+ * This revision requires wall_avoidance_magnetometer API v3. Rebuild together.
  *
  * v_cmd is calibrated MOTOR POWER in [0,1], not m/s or a software PWM duty cycle.
  * L=v-u, R=v+u preserves the normalized mean and cannot reverse in FORWARD mode.
@@ -34,6 +37,9 @@ extern "C" {
 #endif
 
 #define DIFF_DRIVE_KINEMATICS_API_VERSION 2
+#if WALL_AVOIDANCE_MAGNETOMETER_API_VERSION < 3
+#error "Rebuild kinematics with wall_avoidance_magnetometer API v3 or newer"
+#endif
 
 typedef enum {
     DDK_BEHAVIOR_IDLE = 0,

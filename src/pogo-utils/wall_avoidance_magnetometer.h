@@ -22,9 +22,37 @@
  *  - One maneuver has a locked physical direction and measured angular progress.
  *    Motor power tapers near the goal; crossing the goal does not cause reversal
  *    or another full revolution. A stopped settling phase absorbs filter lag.
- *  - Successful settling publishes ONE new heading target for the caller's PID.
- *    Forward-commit is PID-guided and remains interruptible by a new front wall.
- *  - A turn timeout is a latched STOP fault, never permission to drive blindly.
+ *  - Successful settling ALWAYS publishes one new heading target and starts
+ *    a full PID-guided commit, even while wall beacons remain visible.
+ *  - The forward_commit_ms interval is protected from beacon-triggered STOPs
+ *    and turns. It is counted from successfully applied forward commands, not
+ *    elapsed time since entering COMMITTING. Sensor/PID pauses do not spend it.
+ *  - AFTER that interval, front evidence may request a new angle-controlled
+ *    turn. Multiple lateral/rear directions may select a materially better
+ *    gap; otherwise continue forward. Keep the same PID target until a new
+ *    turn settles. End avoidance only after ALL wall memories clear for
+ *    walls_clear_ms and the minimum forward interval has been applied.
+ *  - There is no retry-count cap or fatal condition for incomplete escape.
+ *    Each rotating leg remains time-bounded. The no-forward watchdog can
+ *    interrupt a stalled leg, settle, then request a reduced-speed recovery
+ *    run, protected for max(forward_commit_ms,recovery_forward_ms).
+ *  - No observations are erased. This is a deliberate proximity/contact
+ *    tradeoff: a beacon is not a bumper/range measurement, but a committed
+ *    run can press against a wall or another robot. It is NOT collision-free
+ *    navigation and does not measure physical displacement.
+ *  - no_forward_timeout_ms=0 disables the turn-recovery watchdog ONLY. Unlike
+ *    API v4, it does NOT restore immediate beacon veto during every commit.
+ *  - Sensor discontinuities, wrong-direction motion and genuinely unsettled
+ *    headings remain separate STOP faults. Invalid/stale heading and explicit
+ *    application STOP always override a protected forward run.
+ *
+ * API v5: turn -> settle -> full commit -> reassess. Public layouts and function
+ * signatures are unchanged from API v4; all consumers should be rebuilt against
+ * this semantic change. No changes to PID/calibration/kinematics are required.
+ * Kinematics calls forward_applied() only after successfully applying a commit
+ * motor command. Direct users MUST make that call too: update() alone cannot
+ * know whether its recommendation reached the motors. This counts commanded
+ * motor-on time, NOT actual translation or distance travelled.
  *
  * Geometry is deliberately coarse: receiver index gives a face, NOT distance,
  * bearing within that face, or wall normal. Stored bearings use face centers.
@@ -59,7 +87,7 @@
 extern "C" {
 #endif
 
-#define WALL_AVOIDANCE_MAGNETOMETER_API_VERSION 2
+#define WALL_AVOIDANCE_MAGNETOMETER_API_VERSION 5
 #define WA_MAGNETOMETER_PI_F POGO_HEADING_PI_F
 
 typedef enum {
@@ -88,10 +116,10 @@ typedef enum {
 typedef enum {
     WA_MAGNETOMETER_FAULT_NONE = 0,
     WA_MAGNETOMETER_FAULT_NOT_INITIALIZED,
-    WA_MAGNETOMETER_FAULT_TURN_TIMEOUT,
+    WA_MAGNETOMETER_FAULT_TURN_TIMEOUT, /**< Reserved legacy code; no longer emitted. */
     WA_MAGNETOMETER_FAULT_WRONG_DIRECTION,
     WA_MAGNETOMETER_FAULT_HEADING_DISCONTINUITY,
-    WA_MAGNETOMETER_FAULT_NO_CLEAR_HEADING,
+    WA_MAGNETOMETER_FAULT_NO_CLEAR_HEADING, /**< Reserved legacy code; replan instead. */
     WA_MAGNETOMETER_FAULT_NOT_SETTLED
 } wa_magnetometer_fault_t;
 
@@ -104,7 +132,11 @@ typedef enum {
     WA_MAGNETOMETER_REASON_SETTLING,
     WA_MAGNETOMETER_REASON_COMMITTING,
     WA_MAGNETOMETER_REASON_FAULT,
-    WA_MAGNETOMETER_REASON_REFERENCE_CHANGED
+    WA_MAGNETOMETER_REASON_REFERENCE_CHANGED,
+    WA_MAGNETOMETER_REASON_REPLANNING,
+    WA_MAGNETOMETER_REASON_TURN_BUDGET,
+    WA_MAGNETOMETER_REASON_NO_FORWARD_PROGRESS,
+    WA_MAGNETOMETER_REASON_RECOVERY_COMMIT
 } wa_magnetometer_reason_t;
 
 /** A snapshot of the caller's already-filtered detector. valid should include
@@ -133,29 +165,42 @@ typedef struct {
     wa_magnetometer_policy_t policy;
     int8_t heading_ccw_sign;             /**< +1 or -1, see motor convention above. */
     float turn_angle_rad;               /**< Default 120 deg, measured not timed. */
-    float max_turn_angle_rad;           /**< Default 180 deg, including extensions. */
-    float extension_angle_rad;          /**< Default 30 deg if front still blocked. */
+    float max_turn_angle_rad;           /**< Default 180 deg PER turn leg, not per episode. */
+    float extension_angle_rad;          /**< Default 30 deg fallback retry step. */
     float angle_tolerance_rad;          /**< Default 8 deg. */
     float turn_speed_ratio;             /**< Default 0.40 of each calibrated full. */
     float min_turn_speed_ratio;         /**< Default 0.16: below this may stall. */
     float slowdown_angle_rad;           /**< Taper over last 45 deg. */
-    uint32_t max_turn_ms;                /**< Default 6000; includes settling. */
+    uint32_t max_turn_ms;                /**< Default 6000 PER rotating leg; then settle/replan. */
     float wrong_direction_limit_rad;    /**< Default 20 deg backwards -> fault. */
     float max_heading_step_rad;         /**< Default 90 deg per new sample. */
     uint32_t max_tracking_gap_ms;        /**< Default 1000; longer gaps are ambiguous. */
 
     uint32_t settle_ms;                  /**< Default 250; motors stopped. */
-    uint32_t max_settle_ms;              /**< Default 2000; otherwise fault. */
+    uint32_t max_settle_ms;              /**< Default 2000: heading instability only -> fault. */
     uint8_t settle_samples;              /**< Default 5 DISTINCT post-stop samples. */
     uint8_t stable_samples;              /**< Default 3 small consecutive changes. */
     float stable_step_rad;              /**< Default 3 deg per distinct sample. */
-    uint32_t front_clear_ms;             /**< Default 100: require sustained clearance. */
-    uint32_t forward_commit_ms;          /**< Default 500; never masks front messages. */
+    uint32_t front_clear_ms;             /**< Legacy field retained; use walls_clear_ms instead. */
+    uint32_t forward_commit_ms;          /**< Default 1000: protected applied forward run after EVERY turn, then reassess. */
     float forward_speed_ratio;          /**< Default 0.50; caller still applies PID. */
+    uint32_t walls_clear_ms;             /**< Default 200 after ALL wall memories expire. */
+    float replan_improvement_rad;       /**< Default 15 deg gain in angular clearance. */
+
+    /* Anti-livelock policy. The watchdog spans turn/settle/replan transitions.
+     * Refreshed after a FULL protected forward interval in ONE commit: normally
+     * forward_commit_ms, or max(forward_commit_ms,recovery_forward_ms) during
+     * recovery. Sensor pauses may interrupt it; a new turn resets credit.
+     * Reaching CRUISE or an intentional cancel ends this watchdog's episode.
+     * Expiry does NOT claim physical blockage or identify another robot's push.
+     */
+    uint32_t no_forward_timeout_ms;      /**< Default 8000; zero disables watchdog, NOT normal commit protection. */
+    uint32_t recovery_forward_ms;        /**< Default 300; extra recovery minimum, never shorter than forward_commit_ms. */
+    float recovery_forward_speed_ratio; /**< Default 0.40 for full recovery run, capped by normal commit speed. */
 } wa_magnetometer_config_t;
 
 /** Every update returns a complete recommendation. No output commands motors.
- * new_heading_target is a ONE-UPDATE event, only on successful settling.
+ * new_heading_target is a ONE-UPDATE event, only on starting a forward commit.
  * The target is the measured SETTLED escape heading, not a lagging turn sample.
  * During commit the same target remains valid; after commit the caller must
  * RETAIN it rather than reverting to the incoming (wall-facing) PID target.
@@ -215,7 +260,28 @@ typedef struct {
     uint8_t stable_count;
     uint32_t turn_count;       /**< Saturating lifetime diagnostics since reset. */
     uint32_t completed_count;
-    uint32_t extension_count;
+    uint32_t extension_count; /**< Retry legs started before reaching a forward commit. */
+    uint32_t retry_count;     /**< All replanned legs; diagnostic only, never a retry cap. */
+    uint32_t turn_timeout_count; /**< Rotating legs stopped by their time budget. */
+    uint32_t escaped_count;   /**< Episodes ended by minimum commit + all-wall clearance. */
+
+    /* Commit accounting. forward_applied() arms one interval; the next update
+     * consumes it. Intervals during STOP/turning are never added to commit. */
+    uint32_t commit_motion_ms;
+    uint32_t commit_check_motion_ms;
+    uint32_t motion_report_ms;
+    bool forward_was_applied;
+
+    /* Progress-watchdog state is NOT reset by retry_turn(). A probe uses the
+     * ordinary COMMITTING phase and ordinary shared PID, not another motor law.
+     * No new sensor, collision detector, random walk, or global timer is used.
+     */
+    bool no_forward_watch_active;
+    uint32_t no_forward_since_ms;
+    uint32_t forward_progress_ms; /**< Applied time toward this FULL protected run. */
+    bool recovery_active;
+    uint32_t recovery_motion_ms;
+    uint32_t recovery_count;             /**< Saturating watchdog recovery-run entries since reset. */
 } wa_magnetometer_state_t;
 
 typedef wa_magnetometer_state_t wall_avoidance_magnetometer_t;
@@ -285,6 +351,18 @@ bool wall_avoidance_magnetometer_process_message(
 wa_magnetometer_output_t wall_avoidance_magnetometer_update(
     wa_magnetometer_state_t *state, const wa_magnetometer_heading_t *heading,
     uint32_t now_ms);
+
+/** Acknowledge a FORWARD_COMMIT recommendation ONLY after applying its motor
+ * command successfully. No sensor/motor I/O here. Call at most once after each
+ * update(), with the same tick timestamp. The next update accounts that applied
+ * interval; no acknowledgement means stopped/unapplied and adds no commit time.
+ * Recovery probes use this same acknowledgement; neither cached recommendations
+ * nor time spent stopped consumes their protected forward interval.
+ * The stock kinematics module performs this call; ordinary applications using
+ * kinematics need no additional calls. Not a measurement of physical motion.
+ */
+void wall_avoidance_magnetometer_forward_applied(
+    wa_magnetometer_state_t *state, uint32_t now_ms);
 
 bool wall_avoidance_magnetometer_face_active(
     const wa_magnetometer_state_t *state, uint8_t face, uint32_t now_ms);
