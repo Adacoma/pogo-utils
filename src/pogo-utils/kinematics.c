@@ -1,217 +1,408 @@
-#include "heading_detection.h"
 #include "kinematics.h"
-#include <math.h>
-#include <stddef.h>
+#include <string.h>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-#define DDK_V_STOP_EPS   0.02f   /* Below this, hard-stop both motors. */
-
-static inline double wrap_pi(double x) {
-    const float pi = M_PI;
-    const float t  = fmod(x + pi, 2.0 * pi);
-    return (t <= 0.0) ? (t + pi) : (t - pi);
+static bool config_valid(const ddk_config_t *config) {
+    return config != NULL && config->heading_max_age_ms > 0u &&
+        config->heading_max_age_ms < POGO_HEADING_HALF_TIME_RANGE &&
+        isfinite(config->stop_epsilon) && config->stop_epsilon >= 0.0f &&
+        config->stop_epsilon < 1.0f &&
+        (config->heading_ccw_sign == 1 || config->heading_ccw_sign == -1);
 }
 
-static inline float clampf(float x, float a, float b) {
-    return (x < a) ? a : (x > b ? b : x);
+void diff_drive_kin_config_default(ddk_config_t *config) {
+    if (config != NULL) {
+        memset(config, 0, sizeof(*config));
+        config->pid_enabled = true;
+        config->avoidance_enabled = true;
+        config->heading_max_age_ms = 500u;
+        config->stop_epsilon = 0.02f;
+        config->heading_ccw_sign = 1;
+    }
 }
 
-static inline double isnan_local(double x) { return x != x; }
-
-/* Compute current subphase in [0,1) inside a PWM window. */
-static inline float pwm_phase01(uint32_t now_ms, uint32_t epoch_ms, uint16_t period_ms) {
-    const uint32_t dt = now_ms - epoch_ms;
-    const uint32_t k  = period_ms ? (dt % period_ms) : 0u;
-    return (period_ms == 0) ? 1.0f : (float)k / (float)period_ms;
+static ddk_behavior_t stopped(ddk_t *ddk, ddk_behavior_t behavior) {
+    calibrated_motors_stop(ddk != NULL ? &ddk->motors : NULL);
+    if (ddk != NULL) {
+        heading_pid_reset(&ddk->pid);
+        ddk->pid_result.steering = 0.0f;
+        ddk->pid_result.status = HEADING_PID_UNAVAILABLE;
+        ddk->v_cmd = 0.0f;
+        ddk->motor_steering = 0.0f;
+        ddk->behavior = behavior;
+    }
+    return behavior;
 }
 
-/* Apply duty-cycle to a single motor (full vs stop), keeping direction. */
-static inline void apply_motor_ratio(motor_id msel, uint8_t dir, uint16_t pow_on,
-                                     float duty, float subphase01) {
-    if (duty <= 0.0f) {
-        pogobot_motor_set(msel, motorStop);
-    } else if (duty >= 1.0f) {
-        pogobot_motor_set(msel, pow_on);
+static ddk_behavior_t fail(ddk_t *ddk, ddk_fault_t fault) {
+    if (ddk != NULL) {
+        ddk->fault = fault;
+    }
+    return stopped(ddk, DDK_BEHAVIOR_FAULT);
+}
+
+bool diff_drive_kin_init(ddk_t *ddk, const ddk_config_t *config,
+                        const ddk_motors_t *motors, uint32_t random_seed) {
+    calibrated_motors_stop(NULL);
+    if (ddk == NULL) {
+        return false;
+    }
+    /* Config/motor arguments may alias the old ddk object. */
+    ddk_config_t chosen;
+    ddk_motors_t motor_copy;
+    bool explicit_motors = motors != NULL;
+    if (explicit_motors) {
+        motor_copy = *motors;
+    }
+    if (config == NULL) {
+        diff_drive_kin_config_default(&chosen);
     } else {
-        /* simple time-slicing: ON if subphase < duty, else OFF */
-        if (subphase01 < duty) {
-            pogobot_motor_set(msel, pow_on);
-        } else {
-            pogobot_motor_set(msel, motorStop);
+        chosen = *config;
+    }
+    memset(ddk, 0, sizeof(*ddk));
+    heading_pid_init(&ddk->pid);
+    if (!config_valid(&chosen)) {
+        (void)fail(ddk, DDK_FAULT_INVALID_COMMAND);
+        return false;
+    }
+    ddk->config = chosen;
+    if (!(explicit_motors ? calibrated_motors_init(&ddk->motors, &motor_copy) :
+                            calibrated_motors_load(&ddk->motors))) {
+        (void)fail(ddk, DDK_FAULT_MOTOR_CALIBRATION);
+        return false;
+    }
+    wa_magnetometer_config_t wa_config;
+    wall_avoidance_magnetometer_config_default(&wa_config);
+    wa_config.heading_ccw_sign = chosen.heading_ccw_sign;
+    if (!wall_avoidance_magnetometer_init(&ddk->wa, &wa_config, random_seed)) {
+        (void)fail(ddk, DDK_FAULT_AVOIDANCE);
+        return false;
+    }
+    wall_avoidance_magnetometer_set_enabled(&ddk->wa, chosen.avoidance_enabled);
+    heading_pid_enable(&ddk->pid, chosen.pid_enabled);
+    ddk->initialized = true;
+    ddk->inhibited = true;
+    ddk->behavior = DDK_BEHAVIOR_IDLE;
+    return true;
+}
+
+bool diff_drive_kin_init_default(ddk_t *ddk) {
+    return diff_drive_kin_init(ddk, NULL, NULL, (uint32_t)pogobot_helper_getRandSeed());
+}
+
+void diff_drive_kin_stop(ddk_t *ddk) {
+    if (ddk != NULL && ddk->initialized) {
+        wall_avoidance_magnetometer_cancel(&ddk->wa);
+        heading_pid_clear_target(&ddk->pid);
+        ddk->inhibited = true;
+        ddk->heading.valid = false;
+        memset(&ddk->wall_output, 0, sizeof(ddk->wall_output));
+        ddk->wall_output.action = WA_MAGNETOMETER_ACTION_STOP;
+        ddk->wall_output.fault = ddk->wa.fault;
+        if (ddk->wa.fault != WA_MAGNETOMETER_FAULT_NONE) {
+            ddk->fault = DDK_FAULT_AVOIDANCE;
         }
     }
-    pogobot_motor_dir_set(msel, dir);
+    (void)stopped(ddk, ddk != NULL && ddk->fault != DDK_FAULT_NONE ?
+        DDK_BEHAVIOR_FAULT : DDK_BEHAVIOR_STOPPED);
 }
 
-/* Continuous differential mapping using per-wheel duty cycles.
- * steer_u in [-1,1] (from PID): we set
- *   vL = v_cmd * clamp(1 - steer_mix * steer_u, 0, 1)
- *   vR = v_cmd * clamp(1 + steer_mix * steer_u, 0, 1)
- * Positive steer_u makes right wheel faster (turn left), negative → turn right.
- */
-static void apply_diff_drive_pwm(const ddk_t *ddk, double steer_u, float v_cmd,
-                                 float subphase01) {
-    const float mix = clampf(ddk->cfg.steer_mix, 0.0f, 1.0f);
-
-    /* clamp steer_u to [-1,1] */
-    if (steer_u > 1.0) steer_u = 1.0;
-    if (steer_u < -1.0) steer_u = -1.0;
-
-    float vL = v_cmd * clampf(1.0f - (float)(mix * steer_u), 0.0f, 1.0f);
-    float vR = v_cmd * clampf(1.0f + (float)(mix * steer_u), 0.0f, 1.0f);
-
-    apply_motor_ratio(motorL, ddk->motors.dir_left,  ddk->motors.motor_left,  vL, subphase01);
-    apply_motor_ratio(motorR, ddk->motors.dir_right, ddk->motors.motor_right, vR, subphase01);
+void diff_drive_kin_reset(ddk_t *ddk) {
+    diff_drive_kin_stop(ddk);
+    if (ddk == NULL || !ddk->initialized) {
+        return;
+    }
+    ddk->fault = calibrated_motors_is_valid(&ddk->motors) ?
+        DDK_FAULT_NONE : DDK_FAULT_MOTOR_CALIBRATION;
+    wall_avoidance_magnetometer_reset(&ddk->wa);
+    memset(&ddk->wall_output, 0, sizeof(ddk->wall_output));
+    ddk->have_reference = false;
+    ddk->have_input_timestamp = false;
+    ddk->reference_changed_pending = false;
+    ddk->wait_new_reference_sample = false;
+    ddk->behavior = ddk->fault == DDK_FAULT_NONE ? DDK_BEHAVIOR_STOPPED : DDK_BEHAVIOR_FAULT;
 }
 
-/* --- Public API --- */
-
-void diff_drive_kin_init_default(ddk_t *ddk) {
-    if (!ddk) return;
-
-    ddk->cfg.pid_enabled       = true;
-    ddk->cfg.avoidance_enabled = true;
-    ddk->cfg.pwm_period_ms     = 50;     /* 20 Hz switching window */
-    ddk->cfg.steer_mix         = 1.0f;
-
-    ddk->v_cmd      = 0.0f;
-    ddk->psi_target = 0.0;
-    ddk->behavior   = DDK_BEHAVIOR_IDLE;
-
-    /* motor directions from persistent memory (like run_and_tumble.c) */
-    uint8_t dir_mem[3] = {0,0,0};
-    pogobot_motor_dir_mem_get(dir_mem);
-    ddk->motors.motor_left  = motorFull;
-    ddk->motors.motor_right = motorFull;
-    ddk->motors.dir_left    = dir_mem[1];
-    ddk->motors.dir_right   = dir_mem[0];
-
-    /* heading estimator + PID */
-    heading_detection_init(&ddk->hd);
-    heading_detection_set_chirality(&ddk->hd, HEADING_CCW);
-
-    heading_pid_init(&ddk->pid, &ddk->hd);
-    heading_pid_set_gains(&ddk->pid, 2.0, 0.0, 0.25);
-    heading_pid_set_limits(&ddk->pid, 1.0, 0.5);
-    heading_pid_enable(&ddk->pid, ddk->cfg.pid_enabled);
-
-    /* avoidance wired to same motor mapping */
-    wa_heading_motors_t m = {
-        .motor_left  = ddk->motors.motor_left,
-        .dir_left    = ddk->motors.dir_left,
-        .motor_right = ddk->motors.motor_right,
-        .dir_right   = ddk->motors.dir_right
-    };
-    wall_avoidance_heading_init_default(&ddk->wa, &m);
-    wall_avoidance_heading_set_enabled(&ddk->wa, ddk->cfg.avoidance_enabled);
-
-    ddk->t_prev_ms   = current_time_milliseconds();
-    ddk->pwm_epoch_ms = ddk->t_prev_ms;
-}
-
-void diff_drive_kin_set_config(ddk_t *ddk, const ddk_config_t *cfg) {
-    if (!ddk || !cfg) return;
-    ddk->cfg = *cfg;
-    heading_pid_enable(&ddk->pid, ddk->cfg.pid_enabled);
-    wall_avoidance_heading_set_enabled(&ddk->wa, ddk->cfg.avoidance_enabled);
-    if (ddk->cfg.pwm_period_ms == 0) ddk->cfg.pwm_period_ms = 50;
-    ddk->pwm_epoch_ms = current_time_milliseconds();
-}
-
-// caller retains ownership; NULL = disable normalization
-void diff_drive_kin_set_photostart(ddk_t *ddk, photostart_t *ps) {
-    if (!ddk) return;
-    heading_detection_set_photostart(&ddk->hd, ps);
+bool diff_drive_kin_set_config(ddk_t *ddk, const ddk_config_t *config) {
+    if (ddk == NULL || !ddk->initialized || !config_valid(config)) {
+        return false;
+    }
+    ddk_config_t selected = *config;
+    diff_drive_kin_stop(ddk);
+    ddk->config = selected;
+    (void)wall_avoidance_magnetometer_set_heading_ccw_sign(&ddk->wa, selected.heading_ccw_sign);
+    wall_avoidance_magnetometer_set_enabled(&ddk->wa, selected.avoidance_enabled);
+    heading_pid_enable(&ddk->pid, selected.pid_enabled);
+    return true;
 }
 
 void diff_drive_kin_set_pid_enabled(ddk_t *ddk, bool enabled) {
-    if (!ddk) return;
-    ddk->cfg.pid_enabled = enabled;
-    heading_pid_enable(&ddk->pid, enabled);
+    if (ddk != NULL && ddk->initialized && ddk->config.pid_enabled != enabled) {
+        ddk_config_t config = ddk->config;
+        config.pid_enabled = enabled;
+        (void)diff_drive_kin_set_config(ddk, &config);
+    }
 }
 
 void diff_drive_kin_set_avoidance_enabled(ddk_t *ddk, bool enabled) {
-    if (!ddk) return;
-    ddk->cfg.avoidance_enabled = enabled;
-    wall_avoidance_heading_set_enabled(&ddk->wa, enabled);
-}
-
-void diff_drive_kin_set_pid(ddk_t *ddk, double Kp, double Ki, double Kd, double u_max, double I_max) {
-    if (!ddk) return;
-    heading_pid_set_gains(&ddk->pid, Kp, Ki, Kd);
-    heading_pid_set_limits(&ddk->pid, u_max, I_max);
-}
-
-wa_heading_config_t diff_drive_kin_get_avoidance_config(const ddk_t *ddk) {
-    if (!ddk) { wa_heading_config_t z = {0}; return z; }
-    return ddk->wa.config;
-}
-
-void diff_drive_kin_set_avoidance_config(ddk_t *ddk, const wa_heading_config_t *cfg) {
-    if (!ddk || !cfg) return;
-    ddk->wa.config = *cfg;
-}
-
-bool diff_drive_kin_process_message(ddk_t *ddk, message_t *msg) {
-    if (!ddk || !msg) return false;
-    return wall_avoidance_heading_process_message(&ddk->wa, msg);
-}
-
-ddk_behavior_t diff_drive_kin_step(ddk_t *ddk, float v_cmd, double dtheta, double measured_heading_rad) {
-    if (!ddk) return DDK_BEHAVIOR_IDLE;
-
-    /* Timekeeping */
-    const uint32_t now_ms = current_time_milliseconds();
-    if ((now_ms - ddk->pwm_epoch_ms) >= ddk->cfg.pwm_period_ms) {
-        ddk->pwm_epoch_ms = now_ms;
+    if (ddk != NULL && ddk->initialized && ddk->config.avoidance_enabled != enabled) {
+        ddk_config_t config = ddk->config;
+        config.avoidance_enabled = enabled;
+        (void)diff_drive_kin_set_config(ddk, &config);
     }
-    const float subphase = pwm_phase01(now_ms, ddk->pwm_epoch_ms, ddk->cfg.pwm_period_ms);
+}
 
-    /* Avoidance may preempt */
-    const double heading_for_wa = isnan_local(measured_heading_rad)
-                                ? heading_detection_estimate(&ddk->hd)
-                                : measured_heading_rad;
-    if (ddk->cfg.avoidance_enabled) {
-        if (wall_avoidance_heading_step(&ddk->wa, true, (float)heading_for_wa)) {
-            ddk->behavior = DDK_BEHAVIOR_AVOIDANCE;
-            return ddk->behavior;
-        }
+bool diff_drive_kin_set_pid_config(ddk_t *ddk, const heading_pid_config_t *config) {
+    if (ddk == NULL || !ddk->initialized || !heading_pid_set_config(&ddk->pid, config)) {
+        return false;
     }
+    diff_drive_kin_stop(ddk);
+    return true;
+}
 
-    /* Update commands */
-    ddk->v_cmd = clampf(v_cmd, 0.0f, 1.0f);
-    ddk->psi_target = wrap_pi(ddk->psi_target + dtheta);
-    heading_pid_set_target(&ddk->pid, ddk->psi_target);
+bool diff_drive_kin_set_pid(ddk_t *ddk, float kp, float ki, float kd,
+                          float max_output, float integral_term_max) {
+    if (ddk == NULL || !ddk->initialized) {
+        return false;
+    }
+    heading_pid_config_t c = ddk->pid.config;
+    c.kp = kp;
+    c.ki = ki;
+    c.kd = kd;
+    c.max_output = max_output;
+    c.integral_term_max = integral_term_max;
+    return diff_drive_kin_set_pid_config(ddk, &c);
+}
 
-    /* Steering command (PID or sign-based) */
-    double steer_u = 0.0;
-    if (ddk->cfg.pid_enabled) {
-        if (isnan_local(measured_heading_rad)) {
-            steer_u = heading_pid_update(&ddk->pid);
-        } else {
-            steer_u = heading_pid_update_from_heading(&ddk->pid, measured_heading_rad);
-        }
-        ddk->behavior = DDK_BEHAVIOR_NORMAL;
+wa_magnetometer_config_t diff_drive_kin_get_avoidance_config(const ddk_t *ddk) {
+    wa_magnetometer_config_t c;
+    if (ddk != NULL && ddk->initialized) {
+        c = ddk->wa.config;
     } else {
-        /* No PID: just use sign of dtheta to bias wheels (single step). */
-        steer_u = (dtheta > 0.0) ? +1.0 : (dtheta < 0.0 ? -1.0 : 0.0);
-        ddk->behavior = DDK_BEHAVIOR_PID_DISABLED;
+        wall_avoidance_magnetometer_config_default(&c);
     }
+    return c;
+}
 
-    /* Hard stop when v_cmd ~ 0 */
-    if (ddk->v_cmd <= DDK_V_STOP_EPS) {
-        pogobot_motor_set(motorL, motorStop);
-        pogobot_motor_set(motorR, motorStop);
-        pogobot_motor_dir_set(motorL, ddk->motors.dir_left);
-        pogobot_motor_dir_set(motorR, ddk->motors.dir_right);
+bool diff_drive_kin_set_avoidance_config(ddk_t *ddk, const wa_magnetometer_config_t *config) {
+    if (ddk == NULL || !ddk->initialized || config == NULL ||
+        config->heading_ccw_sign != ddk->config.heading_ccw_sign ||
+        !wall_avoidance_magnetometer_set_config(&ddk->wa, config)) {
+        return false;
+    }
+    diff_drive_kin_stop(ddk);
+    return true;
+}
+
+bool diff_drive_kin_set_target(ddk_t *ddk, float target_rad, uint32_t reference_id) {
+    if (ddk == NULL || !ddk->initialized || ddk->fault != DDK_FAULT_NONE ||
+        (ddk->have_reference && ddk->reference_id != reference_id) ||
+        ddk->wa.phase == WA_MAGNETOMETER_TURNING || ddk->wa.phase == WA_MAGNETOMETER_SETTLING ||
+        ddk->wa.phase == WA_MAGNETOMETER_COMMITTING) {
+        return false;
+    }
+    return heading_pid_set_target(&ddk->pid, target_rad, reference_id);
+}
+
+void diff_drive_kin_publish_heading(ddk_t *ddk, const heading_sample_t *heading) {
+    if (ddk == NULL || !ddk->initialized) {
+        return;
+    }
+    if (heading == NULL) {
+        ddk->heading.valid = false;
+        return;
+    }
+    heading_sample_t sample = *heading; /* permits aliasing &ddk->heading */
+    if (!ddk->have_reference) {
+        ddk->reference_id = sample.reference_id;
+        ddk->have_reference = true;
+        if (ddk->pid.target_valid && ddk->pid.reference_id != sample.reference_id) {
+            heading_pid_clear_target(&ddk->pid);
+        }
+    } else if (ddk->reference_id != sample.reference_id) {
+        ddk->reference_id = sample.reference_id;
+        ddk->reference_changed_pending = true;
+        ddk->reference_barrier_ms = sample.sample_ms;
+        ddk->wait_new_reference_sample = true;
+        ddk->have_input_timestamp = false;
+        heading_pid_clear_target(&ddk->pid);
+        /* WA sees reference_id in either its next observe or update call and
+         * clears its own bearing memory BEFORE associating any new packet. */
+    }
+    sample.valid = sample.valid && isfinite(sample.angle_rad);
+    if (sample.valid && ddk->have_input_timestamp) {
+        uint32_t dt = (uint32_t)(sample.sample_ms - ddk->last_input_sample_ms);
+        if (dt >= POGO_HEADING_HALF_TIME_RANGE) {
+            ddk->heading.valid = false; /* Reject older data, retain ordering watermark. */
+            return;
+        }
+        if (dt == 0u && ddk->heading.valid) {
+            return; /* Same timestamp is the same observation, not a new angle. */
+        }
+    }
+    ddk->heading = sample;
+    if (sample.valid) {
+        ddk->heading.angle_rad = heading_wrap_pi(sample.angle_rad);
+        ddk->last_input_sample_ms = sample.sample_ms;
+        ddk->have_input_timestamp = true;
+    }
+}
+
+bool diff_drive_kin_process_message_at(ddk_t *ddk, const message_t *message, uint32_t now_ms) {
+    return ddk != NULL && ddk->initialized &&
+        wall_avoidance_magnetometer_process_message(&ddk->wa, message, &ddk->heading, now_ms);
+}
+
+bool diff_drive_kin_process_message(ddk_t *ddk, const message_t *message) {
+    return diff_drive_kin_process_message_at(ddk, message, (uint32_t)current_time_milliseconds());
+}
+
+uint32_t diff_drive_kin_heading_age_limit(const ddk_t *ddk) {
+    if (ddk == NULL || !ddk->initialized) {
+        return 0u;
+    }
+    uint32_t limit = ddk->config.heading_max_age_ms;
+    if (ddk->pid.config.max_age_ms < limit) {
+        limit = ddk->pid.config.max_age_ms;
+    }
+    if (ddk->config.avoidance_enabled && ddk->wa.config.heading_max_age_ms < limit) {
+        limit = ddk->wa.config.heading_max_age_ms;
+    }
+    return limit;
+}
+
+static bool command_valid(const ddk_command_t *command) {
+    return command != NULL &&
+        (command->mode == DDK_MOTION_STOP || command->mode == DDK_MOTION_FORWARD ||
+         command->mode == DDK_MOTION_PIVOT) &&
+        isfinite(command->forward_ratio) && command->forward_ratio >= 0.0f &&
+        command->forward_ratio <= 1.0f && isfinite(command->dtheta_rad);
+}
+
+ddk_behavior_t diff_drive_kin_step_command(
+    ddk_t *ddk, const ddk_command_t *command,
+    const heading_sample_t *heading, uint32_t now_ms) {
+    if (ddk == NULL || !ddk->initialized) {
+        return fail(ddk, DDK_FAULT_NOT_INITIALIZED);
+    }
+    if (!command_valid(command)) {
+        return fail(ddk, DDK_FAULT_INVALID_COMMAND);
+    }
+    diff_drive_kin_publish_heading(ddk, heading);
+    if (command->mode == DDK_MOTION_STOP ||
+        (command->mode == DDK_MOTION_FORWARD && command->forward_ratio <= ddk->config.stop_epsilon)) {
+        /* Intentional inhibit is different from a transient invalid sensor.
+         * Cancel the maneuver, keep faults, and reacquire a target on resumption. */
+        diff_drive_kin_stop(ddk);
         return ddk->behavior;
     }
-
-    /* Differential duty-cycle drive */
-    apply_diff_drive_pwm(ddk, steer_u, ddk->v_cmd, subphase);
+    ddk->inhibited = false;
+    heading_sample_t input = ddk->heading;
+    bool usable = heading_sample_is_usable(&input, now_ms, diff_drive_kin_heading_age_limit(ddk));
+    /* Do not begin a new maneuver using the cached sample that announced a
+     * reference switch while the coordinator is still waiting for a post-stop
+     * sample. Its reference_id still reaches WA so old bearings are discarded. */
+    input.valid = usable && (!ddk->wait_new_reference_sample ||
+        heading_time_is_newer(input.sample_ms, ddk->reference_barrier_ms));
+    /* Always step WA on sensor loss, even while the final command will be STOP.
+     * Thus a stuck/ambiguous turn's watchdog is never frozen by an outer guard. */
+    ddk->wall_output = wall_avoidance_magnetometer_update(&ddk->wa, &input, now_ms);
+    if (ddk->wall_output.fault != WA_MAGNETOMETER_FAULT_NONE) {
+        ddk->fault = DDK_FAULT_AVOIDANCE;
+    }
+    if (ddk->fault != DDK_FAULT_NONE) {
+        return fail(ddk, ddk->fault);
+    }
+    if (!calibrated_motors_is_valid(&ddk->motors)) {
+        return fail(ddk, DDK_FAULT_MOTOR_CALIBRATION);
+    }
+    if (ddk->reference_changed_pending) {
+        ddk->reference_changed_pending = false;
+        return stopped(ddk, DDK_BEHAVIOR_REFERENCE_CHANGED);
+    }
+    if (ddk->wait_new_reference_sample) {
+        if (!usable || !heading_time_is_newer(input.sample_ms, ddk->reference_barrier_ms)) {
+            return stopped(ddk, DDK_BEHAVIOR_REFERENCE_CHANGED);
+        }
+        ddk->wait_new_reference_sample = false;
+    }
+    if (!usable) {
+        return stopped(ddk, DDK_BEHAVIOR_HEADING_UNAVAILABLE);
+    }
+    if (ddk->wall_output.action == WA_MAGNETOMETER_ACTION_STOP) {
+        return stopped(ddk, ddk->wall_output.reason == WA_MAGNETOMETER_REASON_REFERENCE_CHANGED ?
+            DDK_BEHAVIOR_REFERENCE_CHANGED : DDK_BEHAVIOR_AVOIDANCE);
+    }
+    if (ddk->wall_output.action == WA_MAGNETOMETER_ACTION_TURN_LEFT ||
+        ddk->wall_output.action == WA_MAGNETOMETER_ACTION_TURN_RIGHT) {
+        heading_pid_reset(&ddk->pid);
+        ddk->pid_result.steering = 0.0f;
+        ddk->pid_result.status = HEADING_PID_UNAVAILABLE;
+        float turn = ddk->wall_output.turn_speed_ratio;
+        if (ddk->wall_output.action == WA_MAGNETOMETER_ACTION_TURN_RIGHT) {
+            turn = -turn;
+        }
+        ddk->v_cmd = 0.0f;
+        ddk->motor_steering = turn;
+        if (!calibrated_motors_apply(&ddk->motors, -turn, turn)) {
+            return fail(ddk, DDK_FAULT_MOTOR_CALIBRATION);
+        }
+        ddk->behavior = DDK_BEHAVIOR_AVOIDANCE;
+        return ddk->behavior;
+    }
+    bool committing = ddk->wall_output.action == WA_MAGNETOMETER_ACTION_FORWARD_COMMIT;
+    if (committing && ddk->wall_output.new_heading_target) {
+        heading_pid_clear_target(&ddk->pid);
+        (void)heading_pid_set_target(&ddk->pid, ddk->wall_output.target_heading_rad, input.reference_id);
+    }
+    if (!ddk->pid.target_valid) {
+        (void)heading_pid_set_target(&ddk->pid, input.angle_rad, input.reference_id);
+    }
+    if (!committing) {
+        /* Wrap the increment BEFORE addition so very large finite inputs cannot
+         * overflow the target sum. No increments are accumulated during override. */
+        float target = heading_wrap_pi(ddk->pid.target_rad + heading_wrap_pi(command->dtheta_rad));
+        (void)heading_pid_set_target(&ddk->pid, target, input.reference_id);
+    }
+    bool pivoting = command->mode == DDK_MOTION_PIVOT && !committing;
+    ddk->v_cmd = pivoting ? 0.0f :
+        (committing ? ddk->wall_output.forward_speed_ratio : command->forward_ratio);
+    float limit = pivoting ? ddk->pid.config.max_output :
+        calibrated_motors_forward_limit(ddk->v_cmd, ddk->pid.config.max_output);
+    bool use_pid = ddk->config.pid_enabled || committing || pivoting;
+    heading_pid_enable(&ddk->pid, use_pid);
+    float steering;
+    if (use_pid) {
+        ddk->pid_result = heading_pid_step(&ddk->pid, &input, now_ms, limit);
+        if (!heading_pid_result_is_usable(ddk->pid_result)) {
+            return stopped(ddk, DDK_BEHAVIOR_HEADING_UNAVAILABLE);
+        }
+        steering = ddk->pid_result.steering;
+    } else {
+        /* Retain the old sign-of-increment fallback only as an explicitly
+         * PID-disabled mode. This is open loop, not a second feedback law. */
+        steering = command->dtheta_rad > 0.0f ? limit :
+            (command->dtheta_rad < 0.0f ? -limit : 0.0f);
+        ddk->pid_result.steering = 0.0f;
+        ddk->pid_result.status = HEADING_PID_DISABLED;
+    }
+    ddk->motor_steering = (float)ddk->config.heading_ccw_sign * steering;
+    bool applied = pivoting ?
+        calibrated_motors_apply(&ddk->motors, -ddk->motor_steering, ddk->motor_steering) :
+        calibrated_motors_apply_forward(&ddk->motors, ddk->v_cmd, ddk->motor_steering);
+    if (!applied) {
+        return fail(ddk, DDK_FAULT_MOTOR_CALIBRATION);
+    }
+    ddk->behavior = committing ? DDK_BEHAVIOR_COMMITTING : (pivoting ? DDK_BEHAVIOR_PIVOT :
+        (use_pid ? DDK_BEHAVIOR_NORMAL : DDK_BEHAVIOR_PID_DISABLED));
     return ddk->behavior;
 }
 
+ddk_behavior_t diff_drive_kin_step_with_heading(
+    ddk_t *ddk, float v_cmd, float dtheta_rad,
+    const heading_sample_t *heading, uint32_t now_ms) {
+    ddk_command_t command;
+    command.mode = DDK_MOTION_FORWARD;
+    command.forward_ratio = v_cmd;
+    command.dtheta_rad = dtheta_rad;
+    return diff_drive_kin_step_command(ddk, &command, heading, now_ms);
+}

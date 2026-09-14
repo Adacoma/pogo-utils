@@ -2,136 +2,178 @@
 #define DIFF_DRIVE_KINEMATICS_H
 
 /**
- * @file diff_drive_kinematics.h
- * @brief Differential-drive kinematics with absolute speed (0..1) and per-step dtheta increment.
+ * @file kinematics.h
+ * @brief Sensor-independent motion coordinator (API v2, float-only control).
  *
- * This module exposes a high-level motion layer for 2-wheeled Pogobots:
- *   - Input speed is an ABSOLUTE command v_cmd in [0,1], interpreted as a duty-cycle ratio
- *     for motorFull (0 = stop, 1 = always on).
- *   - Input steering is a per-step INCREMENT dtheta (radians) added to the internal target
- *     heading; if PID is enabled, it tracks that target.
- *   - Heading-based wall avoidance can preempt the motion when active.
+ * Receives a heading_sample_t produced by EITHER photosensors or magnetometer.
+ * It owns one PID, one angle-aware avoidance state, and one calibrated motor
+ * mapper. No estimator/calibration workspace, hidden read, photostart, or PWM
+ * scheduler lives here. The application owns startup and acquisition timing.
  *
- * Behavior can be queried at any time; PID and avoidance are togglable.
+ * Each step selects ONE final motor pair: explicit STOP/fault has priority;
+ * avoidance overrides ordinary motion for directed turns and stopped settling;
+ * forward commit and normal heading hold use the SAME PID. Commit adopts the
+ * settled escape target and retains it after the commit interval ends.
  *
- * C11; opening braces on the same line.
+ * v_cmd is calibrated MOTOR POWER in [0,1], not m/s or a software PWM duty cycle.
+ * L=v-u, R=v+u preserves the normalized mean and cannot reverse in FORWARD mode.
+ * Full-power forward leaves no steering headroom under this policy.
+ * dtheta is a target increment per call, not a rate. It is ignored during
+ * avoidance/commit/stops/unavailable-heading ticks, not queued for later.
+ *
+ * This replaces the old public ABI. There is no NaN-means-read-photosensors
+ * convention or embedded hd. See README.md for migration and source selection.
  */
-
-#include <stdbool.h>
-#include <stdint.h>
-#include "pogobase.h"
-#include "photostart.h"
-#include "heading_detection.h"
+#include "heading_sample.h"
 #include "heading_PID.h"
-#include "wall_avoidance_heading.h"
+#include "calibrated_motors.h"
+#include "wall_avoidance_magnetometer.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/** @brief Current behavior/mode executed by the kinematics layer. */
+#define DIFF_DRIVE_KINEMATICS_API_VERSION 2
+
 typedef enum {
     DDK_BEHAVIOR_IDLE = 0,
     DDK_BEHAVIOR_NORMAL,
     DDK_BEHAVIOR_AVOIDANCE,
-    DDK_BEHAVIOR_PID_DISABLED
+    DDK_BEHAVIOR_PID_DISABLED,
+    DDK_BEHAVIOR_COMMITTING,
+    DDK_BEHAVIOR_STOPPED,
+    DDK_BEHAVIOR_HEADING_UNAVAILABLE,
+    DDK_BEHAVIOR_REFERENCE_CHANGED,
+    DDK_BEHAVIOR_FAULT,
+    DDK_BEHAVIOR_PIVOT
 } ddk_behavior_t;
 
-/** @brief Motor mapping parameters (mirrors run_and_tumble.c pattern). */
-typedef struct {
-    uint16_t motor_left;    /**< Typically motorFull. */
-    uint8_t       dir_left;      /**< Direction bit for left motor. */
-    uint16_t motor_right;   /**< Typically motorFull. */
-    uint8_t       dir_right;     /**< Direction bit for right motor. */
-} ddk_motors_t;
+typedef enum {
+    DDK_FAULT_NONE = 0,
+    DDK_FAULT_NOT_INITIALIZED,
+    DDK_FAULT_MOTOR_CALIBRATION,
+    DDK_FAULT_INVALID_COMMAND,
+    DDK_FAULT_AVOIDANCE
+} ddk_fault_t;
 
-/** @brief Configuration for the kinematics module. */
+typedef enum {
+    DDK_MOTION_STOP = 0,
+    DDK_MOTION_FORWARD,
+    DDK_MOTION_PIVOT /**< Explicit shortest-path heading PID with opposite motors. */
+} ddk_motion_mode_t;
+
 typedef struct {
-    bool  pid_enabled;           /**< Enable heading PID (default: true). */
-    bool  avoidance_enabled;     /**< Enable wall avoidance (default: true). */
-    uint16_t pwm_period_ms;      /**< Time-slice period for duty-cycle driving (default: 50 ms). */
-    float steer_mix;             /**< Mix for differential steering in [0,1], default 1.0 (aggressive). */
+    ddk_motion_mode_t mode;
+    float forward_ratio;  /**< Used only in FORWARD mode. Zero means STOP. */
+    float dtheta_rad;     /**< Target increment in the CURRENT heading convention. */
+} ddk_command_t;
+
+typedef calibrated_motors_config_t ddk_motors_t;
+
+typedef struct {
+    bool pid_enabled;       /**< Normal tracking; commit/pivot ALWAYS use PID. */
+    bool avoidance_enabled;
+    uint32_t heading_max_age_ms; /**< Default 500; effective limit also checks PID/WA. */
+    float stop_epsilon;     /**< Default 0.02; <=this forward request explicitly stops. */
+    int8_t heading_ccw_sign;/**< +1: L slower/R faster increases heading; else -1. */
 } ddk_config_t;
 
-/** @brief Main state for the differential-drive kinematics. */
 typedef struct {
-    // submodules
-    heading_detection_t  hd;
-    heading_pid_t        pid;
-    wa_heading_state_t   wa;
-
-    // config/state
-    ddk_config_t         cfg;
-    ddk_motors_t         motors;
-
-    float                v_cmd;          /**< Last commanded absolute speed [0..1]. */
-    double               psi_target;     /**< Target heading (rad), wrapped (-pi,pi]. */
-    uint32_t             t_prev_ms;      /**< Last update timestamp (ms). */
-    ddk_behavior_t       behavior;       /**< Current behavior. */
-
-    // duty-cycle scheduling
-    uint32_t             pwm_epoch_ms;   /**< Start time of current PWM window. */
+    heading_pid_t pid;
+    wa_magnetometer_state_t wa;
+    calibrated_motors_t motors;
+    ddk_config_t config;
+    heading_sample_t heading; /**< Latest published snapshot; callback reads cache. */
+    wa_magnetometer_output_t wall_output;
+    heading_pid_result_t pid_result;
+    ddk_behavior_t behavior;
+    ddk_fault_t fault;
+    float v_cmd;            /**< Effective forward power; zero during stops/turns. */
+    float motor_steering;   /**< Signed correction AFTER heading_ccw_sign. */
+    bool initialized;
+    bool inhibited;
+    bool have_reference;
+    uint32_t reference_id;
+    bool reference_changed_pending;
+    bool wait_new_reference_sample;
+    uint32_t reference_barrier_ms;
+    bool have_input_timestamp;
+    uint32_t last_input_sample_ms;
 } ddk_t;
 
-/** Initialization / configuration */
+void diff_drive_kin_config_default(ddk_config_t *config);
+/** NULL config/motors selects defaults/persistent motor calibration. Stops first.
+ * Returns false with a stopped fault on invalid settings/calibration. */
+bool diff_drive_kin_init(ddk_t *ddk, const ddk_config_t *config,
+                        const ddk_motors_t *motors, uint32_t random_seed);
+bool diff_drive_kin_init_default(ddk_t *ddk);
 
-/** @brief Initialize with defaults and motor directions read from memory. */
-void diff_drive_kin_init_default(ddk_t *ddk);
-
-/** @brief Override the full configuration block. */
-void diff_drive_kin_set_config(ddk_t *ddk, const ddk_config_t *cfg);
-
-/** @brief Enable/disable the heading PID (keeps integrator memory). */
+/** Setters intentionally stop/cancel motion, clear targets for relatching, and
+ * preserve latched faults. Call during configuration, NOT every tick. */
+bool diff_drive_kin_set_config(ddk_t *ddk, const ddk_config_t *config);
 void diff_drive_kin_set_pid_enabled(ddk_t *ddk, bool enabled);
-
-/** @brief Enable/disable heading-based wall avoidance. */
 void diff_drive_kin_set_avoidance_enabled(ddk_t *ddk, bool enabled);
+bool diff_drive_kin_set_pid_config(ddk_t *ddk, const heading_pid_config_t *config);
+bool diff_drive_kin_set_pid(ddk_t *ddk, float kp, float ki, float kd,
+                          float max_output, float integral_term_max);
+wa_magnetometer_config_t diff_drive_kin_get_avoidance_config(const ddk_t *ddk);
+/** heading_ccw_sign must match ddk config; there is ONE authority for the sign. */
+bool diff_drive_kin_set_avoidance_config(ddk_t *ddk, const wa_magnetometer_config_t *config);
 
-/** @brief Set PID gains and limits; forwarded to the internal heading_pid_t. */
-void diff_drive_kin_set_pid(ddk_t *ddk, double Kp, double Ki, double Kd, double u_max, double I_max);
+/** Normal targets auto-latch on first usable heading. This explicit setter binds
+ * a chosen absolute target to its reference; it is not applied while avoiding.
+ * Returns false during an escape or on a known reference mismatch. */
+bool diff_drive_kin_set_target(ddk_t *ddk, float target_rad, uint32_t reference_id);
 
-/** @brief Access and tweak the underlying avoidance config. */
-wa_heading_config_t diff_drive_kin_get_avoidance_config(const ddk_t *ddk);
-void diff_drive_kin_set_avoidance_config(ddk_t *ddk, const wa_heading_config_t *cfg);
-
-/** Attach/detach an OPTIONAL photostart calibrator.
- *  Pass NULL to disable normalization. The caller owns the lifetime.
+/** Cache only, no acquisition or motor I/O. Optional: step() publishes too.
+ * Use after changing sources, before delivering queued messages, to announce
+ * the new frame. A changed reference clears PID target; actual STOP is applied
+ * on the next step. Call stop() before changing source/configuration in an app.
  */
-void diff_drive_kin_set_photostart(ddk_t *ddk, photostart_t *ps);
+void diff_drive_kin_publish_heading(ddk_t *ddk, const heading_sample_t *heading);
 
-/** Runtime control */
+/** Uses the cached heading and original timestamp, never an extra sensor read.
+ * The _at variant exposes callback/receive time for replay and tests. */
+bool diff_drive_kin_process_message_at(ddk_t *ddk, const message_t *message, uint32_t now_ms);
+bool diff_drive_kin_process_message(ddk_t *ddk, const message_t *message);
 
-/**
- * @brief Feed radio/IR messages to the avoidance state machine.
- * @return true if the message was consumed by avoidance.
- */
-bool diff_drive_kin_process_message(ddk_t *ddk, message_t *msg);
-
-/**
- * @brief One control tick using ABSOLUTE speed and per-step heading INCREMENT.
+/** Step must keep running with an INVALID heading on read outages. This allows
+ * escape watchdogs to continue while motors are stopped. Do NOT turn a sensor
+ * outage into an explicit STOP command (that intentionally cancels a maneuver).
  *
- * @param ddk     Module state.
- * @param v_cmd   Absolute forward command in [0,1] (duty-cycle of motorFull).
- * @param dtheta  Per-step increment (radians) added to the heading target this tick.
- * @param measured_heading_rad  If NaN, the function reads heading via ddk->hd; else it uses this value.
- *
- * @return Current behavior after this step.
+ * Source/reference changes stop for at least one tick and require a newer usable
+ * sample before relatching. Mechanical/avoidance faults survive frame changes,
+ * mode toggles, configuration setters and ordinary stop commands.
  */
-ddk_behavior_t diff_drive_kin_step(ddk_t *ddk, float v_cmd, double dtheta, double measured_heading_rad);
+ddk_behavior_t diff_drive_kin_step_command(
+    ddk_t *ddk, const ddk_command_t *command,
+    const heading_sample_t *heading, uint32_t now_ms);
 
-/** @brief Current behavior mode. */
+ddk_behavior_t diff_drive_kin_step_with_heading(
+    ddk_t *ddk, float v_cmd, float dtheta_rad,
+    const heading_sample_t *heading, uint32_t now_ms);
+
+/** Explicit stop/inhibit cancels maneuvers and relatches on resumption. Faults
+ * remain latched. Calling step with a nonzero command resumes intentionally. */
+void diff_drive_kin_stop(ddk_t *ddk);
+/** Deliberate recovery: stops, clears fault/observations/target/reference history.
+ * It does not recalibrate the sensor or repair invalid stored motor calibration.
+ * Application must re-establish a safe pose and an appropriate heading window. */
+void diff_drive_kin_reset(ddk_t *ddk);
+
+uint32_t diff_drive_kin_heading_age_limit(const ddk_t *ddk);
 static inline ddk_behavior_t diff_drive_kin_get_behavior(const ddk_t *ddk) {
-    return ddk ? ddk->behavior : DDK_BEHAVIOR_IDLE;
+    return ddk != NULL ? ddk->behavior : DDK_BEHAVIOR_IDLE;
 }
-
-/** @brief Last commanded absolute speed [0..1]. */
 static inline float diff_drive_kin_get_v_cmd(const ddk_t *ddk) {
-    return ddk ? ddk->v_cmd : 0.0f;
+    return ddk != NULL ? ddk->v_cmd : 0.0f;
+}
+static inline bool diff_drive_kin_is_avoiding(const ddk_t *ddk) {
+    return ddk != NULL && (ddk->behavior == DDK_BEHAVIOR_AVOIDANCE ||
+        ddk->behavior == DDK_BEHAVIOR_COMMITTING || ddk->fault == DDK_FAULT_AVOIDANCE);
 }
 
 #ifdef __cplusplus
 }
 #endif
-
 #endif /* DIFF_DRIVE_KINEMATICS_H */
-

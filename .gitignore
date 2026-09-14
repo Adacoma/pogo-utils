@@ -88,6 +88,7 @@ examples/ESN_int8_PRANC/ESN_int8_PRANC
 examples/MLP_int8_dyn/MLP_int8_dyn
 examples/MLP_int8_dyn_act/MLP_int8_dyn_act
 examples/ssr/ssr
+examples/magnetometer_heading_detection/magnetometer_heading_detection
 
 # Generated figures
 *.pdf
