@@ -273,6 +273,11 @@ typedef struct {
     uint32_t heading_reference_id;
     controller_state_t controller_state;
     uint32_t controller_phase_started_ms;
+    /* Runtime avoidance faults are recoverable after startup; retain their
+     * cause and count because resetting the coordinator clears its fault. */
+    wa_magnetometer_fault_t last_runtime_recovery_fault;
+    uint32_t runtime_recovery_count;
+    bool runtime_recovery_active;
     int8_t effective_pid_steering_sign;
     bool pid_sign_estimated;
     float pid_sign_confidence;
@@ -421,6 +426,33 @@ static void counter_increment(uint32_t *counter) {
     if (*counter != UINT32_MAX) {
         ++*counter;
     }
+}
+
+static bool runtime_avoidance_fault_active(void) {
+    return mydata->drive.fault == DDK_FAULT_AVOIDANCE ||
+        mydata->drive.wall_output.fault != WA_MAGNETOMETER_FAULT_NONE ||
+        mydata->drive.wa.fault != WA_MAGNETOMETER_FAULT_NONE;
+}
+
+static void recover_runtime_avoidance_fault(uint32_t now) {
+    wa_magnetometer_fault_t fault = mydata->drive.wall_output.fault;
+    if (fault == WA_MAGNETOMETER_FAULT_NONE) {
+        fault = mydata->drive.wa.fault;
+    }
+    mydata->last_runtime_recovery_fault = fault;
+    counter_increment(&mydata->runtime_recovery_count);
+
+    /* This is a short post-start recovery, not recalibration. The fitted
+     * magnetic model and heading reference ID remain valid; only stale motion,
+     * avoidance, PID, and median-window state are discarded. */
+    diff_drive_kin_reset(&mydata->drive);
+    magnetometer_heading_detection_reset_filter(&mydata->heading_detection);
+    mydata->vicsek_paused = true;
+    mydata->vicsek_suggestion_valid = false;
+    mydata->previous_wall_owned = false;
+    mydata->cluster_turn_active = false;
+    mydata->last_vicsek_update_ms = now;
+    mydata->runtime_recovery_active = true;
 }
 
 static uint32_t vicsek_random_u32(void) {
@@ -920,6 +952,8 @@ static void vicsek_enter(void) {
     mydata->cluster_turn_active = false;
     mydata->previous_wall_owned = false;
     mydata->vicsek_paused = true;
+    mydata->last_runtime_recovery_fault = WA_MAGNETOMETER_FAULT_NONE;
+    mydata->runtime_recovery_active = false;
     magnetometer_heading_detection_reset_filter(&mydata->heading_detection);
     estimate_steering_sign();
     ddk_config_t config = mydata->drive.config;
@@ -1055,6 +1089,10 @@ static void update_main_led(void) {
     if (mydata->drive.fault != DDK_FAULT_NONE ||
         mydata->drive.wall_output.fault != WA_MAGNETOMETER_FAULT_NONE) {
         pogobot_led_setColor(255, 0, 255);
+        return;
+    }
+    if (mydata->runtime_recovery_active) {
+        pogobot_led_setColor(255, 80, 0); /* Brief post-start recovery. */
         return;
     }
     uint32_t now = now_ms();
@@ -1300,6 +1338,15 @@ void user_step(void) {
     vicsek_after_motion(now);
     wall_avoidance_magnetometer_update_leds(&mydata->drive.wa, now);
     wall_log_step(now);
+    /* Log the latched cause before reset. A successful nonzero motor command
+     * ends the visible recovery interval; sensor outages remain safely stopped. */
+    if (runtime_avoidance_fault_active()) {
+        recover_runtime_avoidance_fault(now);
+    } else if (mydata->runtime_recovery_active &&
+               (mydata->drive.motors.left_pwm != 0u ||
+                mydata->drive.motors.right_pwm != 0u)) {
+        mydata->runtime_recovery_active = false;
+    }
     update_main_led();
     pid_log_step(now);
     vicsek_log_step(now);
@@ -1308,6 +1355,9 @@ void user_step(void) {
 #ifdef SIMULATOR
 static void create_data_schema(void) {
     data_add_column_int8("controller_state");
+    data_add_column_int8("runtime_recovery_active");
+    data_add_column_int8("runtime_recovery_fault");
+    data_add_column_int32("runtime_recovery_count");
     data_add_column_int8("calibration_fit_ok");
     data_add_column_int8("mag_heading_valid");
     data_add_column_int8("target_heading_valid");
@@ -1371,6 +1421,12 @@ static void create_data_schema(void) {
 static void export_data(void) {
     uint32_t now = now_ms();
     data_set_value_int8("controller_state", (int8_t)mydata->controller_state);
+    data_set_value_int8("runtime_recovery_active", (int8_t)mydata->runtime_recovery_active);
+    data_set_value_int8("runtime_recovery_fault",
+                        (int8_t)mydata->last_runtime_recovery_fault);
+    data_set_value_int32("runtime_recovery_count",
+        (int32_t)(mydata->runtime_recovery_count > INT32_MAX ?
+            INT32_MAX : mydata->runtime_recovery_count));
     data_set_value_int8("calibration_fit_ok", (int8_t)mydata->heading_detection.model.fit_ok);
     data_set_value_int8("mag_heading_valid",
                         (int8_t)magnetometer_heading_is_fresh(now));

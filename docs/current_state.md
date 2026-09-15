@@ -54,6 +54,10 @@ by hardware or experimental validation.
   representation, validates exact slot boundaries and allocation state, and
   prevents API-level double-free cycles. Invalid inputs fail closed without a
   public error-reporting channel.
+- In the Vicsek application, wall-avoidance faults reached after successful
+  startup now trigger a local state reset instead of permanently latching
+  the coordinator in STOP. Calibration and its heading reference are retained;
+  the coordinator, avoidance state, and heading median window are reset.
 
 ## What remains unknown
 
@@ -76,6 +80,10 @@ by hardware or experimental validation.
   and Q16.16 add/subtract/absolute-value saturation logic.
 - The second milestone hardened `tiny_alloc`; its exact boundary checks trade
   constant-time pointer operations for O(number of slots) worst-case walks.
+- A physical-robot report of permanent violet stops is consistent with the
+  runtime avoidance-fault latch. The Vicsek application now records the
+  cause/count and shows amber while reacquiring a heading; hardware validation
+  remains pending.
 - Build validation, resource profiling, behavioral regression testing, and
   scientific result reproduction have not begun.
 
@@ -131,3 +139,6 @@ These are implementation decisions, not yet documented experimental findings.
 8. Record experimental hypotheses, metrics, datasets, configurations, and
    acceptance criteria before drawing scientific conclusions from simulations
    or robot runs.
+9. Flash the updated Vicsek firmware on representative robots and verify that
+   induced heading dropouts and difficult wall escapes recover within the
+   intended one-to-three-second interval without permanent violet stops.
