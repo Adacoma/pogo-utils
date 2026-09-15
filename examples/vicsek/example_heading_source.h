@@ -8,9 +8,9 @@
  * NOT a pogo-utils library header. Keep beside the examples. Compile either
  * example with -DEXAMPLE_USE_MAGNETOMETER=0 for the old light-gradient backend;
  * default 1 uses the magnetometer. No library rebuild is needed for this flag.
- * The chosen detector/workspace is owned by this application's USERDATA.
+ * The chosen detector is owned by this application's USERDATA.
  *
- * This helper owns motors ONLY during startup calibration/waiting/failure.
+ * This helper owns motors ONLY during flash loading/warm-up/failure.
  * Once it returns READY, it only acquires/publishes a heading. The example's
  * PID or kinematics then owns live motion. It never calls both acquisitions.
  */
@@ -37,6 +37,7 @@
 
 #if EXAMPLE_USE_MAGNETOMETER
 #include "pogo-utils/heading_sample_magnetometer.h"
+#include "pogo-utils/magnetometer_calibration_flash.h"
 #else
 #include "pogo-utils/photostart.h"
 #include "pogo-utils/heading_sample_photosensors.h"
@@ -44,7 +45,6 @@
 
 typedef enum {
     EXAMPLE_SOURCE_STARTING = 0,
-    EXAMPLE_SOURCE_WAITING,
     EXAMPLE_SOURCE_READY,
     EXAMPLE_SOURCE_FATAL
 } example_source_phase_t;
@@ -52,7 +52,7 @@ typedef enum {
 typedef struct {
 #if EXAMPLE_USE_MAGNETOMETER
     magnetometer_heading_detection_t detector;
-    magnetometer_heading_calibration_t calibration;
+    magnetometer_calibration_metadata_t calibration_metadata;
 #else
     heading_detection_t detector;
     photostart_t photostart;
@@ -86,14 +86,19 @@ static inline bool example_heading_source_init(
     calibrated_motors_stop(motors);
 #if EXAMPLE_USE_MAGNETOMETER
     magnetometer_heading_detection_init(&source->detector);
-    /* Defaults preserve the supplied optimized fit/collection policy. */
-    if (!magnetometer_heading_calibration_start(&source->calibration, NULL)) {
-        return example_source_fail(source, motors, "cannot start calibration");
+    magnetometer_calibration_flash_status_t flash_status =
+        magnetometer_calibration_flash_load(&source->detector,
+                                             &source->calibration_metadata);
+    if (flash_status != MAGNETOMETER_CALIBRATION_FLASH_OK) {
+        return example_source_fail(source, motors,
+            magnetometer_calibration_flash_status_string(flash_status));
     }
-    if (magnetometer_heading_calibration_wants_rotation(&source->calibration)) {
-        float ratio = (float)motorHalf / (float)motorFull;
-        (void)calibrated_motors_apply(motors, ratio, -ratio);
+    source->reference_id = source->calibration_metadata.calibration_id;
+    if (EXAMPLE_AUTO_STEERING_SIGN &&
+        source->calibration_metadata.heading_ccw_sign_valid) {
+        source->heading_ccw_sign = source->calibration_metadata.heading_ccw_sign;
     }
+    source->phase_started_ms = (uint32_t)current_time_milliseconds();
 #else
     heading_detection_init(&source->detector);
     heading_detection_set_chirality(&source->detector, HEADING_CCW);
@@ -118,42 +123,25 @@ static inline bool example_heading_source_step(
     }
 #if EXAMPLE_USE_MAGNETOMETER
     if (source->phase == EXAMPLE_SOURCE_STARTING) {
-        magnetometer_heading_calibration_state_t state = magnetometer_heading_calibration_step(
-            &source->detector, &source->calibration);
-        if (magnetometer_heading_calibration_wants_rotation(&source->calibration)) {
-            float ratio = (float)motorHalf / (float)motorFull;
-            (void)calibrated_motors_apply(motors, ratio, -ratio);
-        } else {
-            calibrated_motors_stop(motors);
-        }
-        if (state == MAGNETOMETER_HEADING_CAL_FAILED) {
+        calibrated_motors_stop(motors);
+        (void)magnetometer_heading_detection_update(&source->detector);
+        uint32_t startup_now = (uint32_t)current_time_milliseconds();
+        source->sample = heading_sample_from_magnetometer(
+            &source->detector, source->reference_id, startup_now, true);
+        if (source->sample.valid) {
+            printf("# HEADING_DEMO_READY,robot=%u,calibration_id=%lu,steering_sign=%d,stored_sign=%u,agreement_permille=%u\n",
+                   (unsigned)pogobot_helper_getid(), (unsigned long)source->reference_id,
+                   (int)source->heading_ccw_sign,
+                   (unsigned)source->calibration_metadata.heading_ccw_sign_valid,
+                   (unsigned)source->calibration_metadata.heading_ccw_sign_consistency_permille);
+            source->phase = EXAMPLE_SOURCE_READY;
+        } else if ((uint32_t)(startup_now - source->phase_started_ms) >= 3000u) {
             return example_source_fail(source, motors,
-                magnetometer_heading_error_string(source->calibration.error));
-        }
-        if (state == MAGNETOMETER_HEADING_CAL_READY) {
-            float agreement = 0.0f;
-            bool estimated = EXAMPLE_AUTO_STEERING_SIGN && heading_magnetometer_estimate_ccw_sign(
-                &source->detector, &source->calibration, (float)motorHalf / (float)motorFull,
-                &source->heading_ccw_sign, &agreement);
-            ++source->reference_id;
-            printf("# HEADING_DEMO_CALIBRATED,robot=%u,steering_sign=%d,estimated=%u,agreement_permille=%u\n",
-                   (unsigned)pogobot_helper_getid(), (int)source->heading_ccw_sign,
-                   (unsigned)estimated, (unsigned)(agreement * 1000.0f + 0.5f));
-            source->phase = EXAMPLE_SOURCE_WAITING;
-            source->phase_started_ms = (uint32_t)current_time_milliseconds();
+                "magnetometer heading did not become usable during startup");
         }
         return false;
     }
     uint32_t now = (uint32_t)current_time_milliseconds();
-    if (source->phase == EXAMPLE_SOURCE_WAITING) {
-        calibrated_motors_stop(motors);
-        pogobot_led_setColor(25, 8, 0);
-        if ((uint32_t)(now - source->phase_started_ms) < 5000u) {
-            return false;
-        }
-        source->phase = EXAMPLE_SOURCE_READY;
-        magnetometer_heading_detection_reset_filter(&source->detector);
-    }
     /* Refill after a long outage; do not mix old and new median windows. */
     uint32_t limit = max_age_ms < source->detector.max_age_ms ? max_age_ms : source->detector.max_age_ms;
     if (source->detector.heading_valid &&

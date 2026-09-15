@@ -108,10 +108,11 @@ objects:
         max_linear_speed: 100.0
         max_angular_speed: 2.0
         linear_noise_stddev: 0
-        angular_noise_stddev: 5.0
-        angular_systematic_bias_domain: [-200, 200]
+        #angular_noise_stddev: 5.0
+        angular_noise_stddev: 1.0
+        #angular_systematic_bias_domain: [-200, 200]
 
-        photosensors_systematic_bias_domain: [-30, 30] # Systematic bias to apply to each 3 photosensor of each robot, to simulate real-robot biases.
+        #photosensors_systematic_bias_domain: [-30, 30] # Systematic bias to apply to each 3 photosensor of each robot, to simulate real-robot biases.
                                                         #  Domain pair between -32767 and 32767.
         photosensors_noise_stddev: 0.0  # Stddev of a gaussian noise to apply to photosensor detected light levels.
 
@@ -149,6 +150,12 @@ objects:
 parameters:
     # Configuration parameters
     todo: 0
+
+# Produced by running examples/magnetometer_calibration with the matching
+# conf/heading_PID_calibration.yaml before this mission.
+flash_state:
+    input_file: "heading_PID.pgflash"
+    output_file: "heading_PID.pgflash"
 
 # MODELINE "{{{1
 # vim:expandtab:softtabstop=4:shiftwidth=4:fileencoding=utf-8

@@ -46,7 +46,7 @@ void user_init(void) {
     msg_tx_fn = NULL;
     ddk_config_t config;
     diff_drive_kin_config_default(&config);
-    config.avoidance_enabled = false; /* Do not compete with calibration motion. */
+    config.avoidance_enabled = false; /* Enabled after heading startup if requested. */
     config.heading_ccw_sign = EXAMPLE_STEERING_SIGN;
     mydata->fatal = !diff_drive_kin_init(&mydata->drive, &config, NULL,
         (uint32_t)pogobot_helper_getRandSeed());

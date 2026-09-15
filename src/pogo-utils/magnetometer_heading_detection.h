@@ -3,31 +3,29 @@
 
 /**
  * @file magnetometer_heading_detection.h
- * @brief Per-robot magnetometer calibration and calibrated heading estimation.
+ * @brief Per-robot flash-loaded magnetometer heading estimation.
  *
  * This is the OPTIMIZED algorithm extracted from
  * main_optimized_benchmark_heading_logs.c. It is not the photosensor gradient
  * algorithm, and it does not contain the legacy calibration, Vicsek controller,
  * wall avoidance, motor commands, LED commands, or UART printing.
  *
- * Typical use:
- *   1. Put one magnetometer_heading_detection_t and one
- *      magnetometer_heading_calibration_t in your robot's USERDATA.
- *   2. Initialize the detector, then start calibration collection.
- *   3. Call calibration_step() once per tick. Apply motor rotation ONLY while
- *      calibration_wants_rotation() is true; otherwise stop the motors during
- *      calibration. The example shows exactly where to do this.
- *   4. Once calibration is READY, call detection_update() once per tick.
- *      Use detection_get_heading() to obtain a valid, sufficiently recent angle.
+ * Typical mission use:
+ *   1. Put one magnetometer_heading_detection_t in the robot's USERDATA.
+ *   2. Initialize it and load a fitted model with
+ *      magnetometer_calibration_flash_load().
+ *   3. Apply application chirality, offset, filter, and age settings.
+ *   4. Call detection_update() once per tick and detection_get_heading() for a
+ *      valid, sufficiently recent angle.
  *
- * Alternative: fill a calibration workspace with add_sample() and call
- * detection_calibrate(). This needs no sensor access or robot motion and is
- * useful for replaying recorded calibration data.
+ * Collection and fitting are implemented separately in magnetometer_calibration
+ * and demonstrated by examples/magnetometer_calibration. The declarations below
+ * remain here for 0.1.x source compatibility, but mission code must not call them.
  *
  * Ownership and concurrency:
  *   - No malloc, shared mutable state, USERDATA declaration, or singleton here.
- *   - The caller owns BOTH objects. Do not share a workspace between robots or
- *     concurrent fits. No pointer to the workspace is retained by the detector.
+ *   - The caller owns every object. Do not share a calibration workspace between
+ *     robots or concurrent fits. No pointer to it is retained by the detector.
  *   - The workspace can be reused after a fit; its samples are not needed for
  *     live headings. Keep it in USERDATA/static storage rather than on a small
  *     embedded task stack. Objects must be initialized before use.
@@ -281,6 +279,19 @@ bool magnetometer_heading_detection_fixed_point_active(
     const magnetometer_heading_detection_t *hd);
 bool magnetometer_heading_detection_is_calibrated(
     const magnetometer_heading_detection_t *hd);
+
+/** Validate every retained fitted-model field needed by float/fixed heading.
+ * This rejects corrupt or non-finite persisted data without changing a detector.
+ */
+bool magnetometer_heading_model_is_valid(
+    const magnetometer_heading_model_t *model);
+
+/** Install a complete validated model, retaining detector runtime settings and
+ * timings while clearing the live sample/filter cache. Invalid input is ignored.
+ */
+bool magnetometer_heading_detection_install_model(
+    magnetometer_heading_detection_t *hd,
+    const magnetometer_heading_model_t *model);
 
 /* --------------------------- Calibration input --------------------------- */
 

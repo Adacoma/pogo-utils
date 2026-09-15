@@ -1,17 +1,16 @@
 /**
  * @file main_straight_pid.c
- * @brief Magnetometer calibration + reusable kinematics/PID/avoidance (API v2).
+ * @brief Flash-calibrated magnetometer + reusable kinematics/PID/avoidance.
  *
  * Link heading_PID.c, kinematics.c, calibrated_motors.c,
- * wall_avoidance_magnetometer.c, and the existing UNMODIFIED
- * magnetometer_heading_detection.c, exactly once. See the package README.
+ * wall_avoidance_magnetometer.c, the runtime heading detector, and the flash
+ * calibration loader exactly once. See the package README.
  *
- * Startup: optimized calibration -> five-second stopped hold -> full live
- * heading window -> heading-hold at nominal motorHalf. Calibration sampling
- * policy and numerical fit are unchanged from the supplied detector library.
+ * Startup loads a validated flash model and fills the live heading window;
+ * collection and numerical fitting exist only in the calibration firmware.
  *
- * The application owns calibration motion, ONE sensor acquisition per tick,
- * configuration, LEDs and diagnostics. Kinematics owns ALL live PID computation,
+ * The application owns ONE sensor acquisition per tick, configuration, LEDs
+ * and diagnostics. Kinematics owns ALL live PID computation,
  * wall arbitration and motor commands. Successful avoidance adopts the settled
  * escape heading; no inline PID, median implementation or software PWM remains.
  * All runtime mutable controller state is per-robot USERDATA.
@@ -20,6 +19,7 @@
 #include "pogobase.h"
 #include "pogo-utils/version.h"
 #include "pogo-utils/magnetometer_heading_detection.h"
+#include "pogo-utils/magnetometer_calibration_flash.h"
 #include "pogo-utils/kinematics.h"
 #include "pogo-utils/heading_sample_magnetometer.h"
 
@@ -35,9 +35,6 @@
 
 #define PI_F MAGNETOMETER_HEADING_PI_F
 
-#ifndef ENABLE_CALIBRATION_UART
-#define ENABLE_CALIBRATION_UART 0
-#endif
 #ifndef ENABLE_PID_UART
 #define ENABLE_PID_UART 0
 #endif
@@ -53,15 +50,8 @@
 #endif
 #endif
 
-#define CAL_PRINTF(...) do { \
-    if (ENABLE_CALIBRATION_UART) { \
-        printf(__VA_ARGS__); \
-    } \
-} while (0)
-
 /* Same straight-line PID gains/nominal speed as the previous main. */
 static int forward_speed = motorHalf;
-static int calibration_turn_speed = motorHalf;
 float pid_kp = 0.60f;
 float pid_ki = 0.10f;
 float pid_kd = 0.04f;
@@ -73,14 +63,11 @@ uint32_t pid_period_ms = 50u;
 uint32_t pid_log_period_ms = 200u;
 
 /* +1: L=base-diff, R=base+diff increases reported angle. -1: decreases it.
- * Auto mode reuses chronological calibration samples. It still assumes each
- * accepted inter-point rotation is <180 degrees and can alias otherwise.
- * This is an actuator SIGN estimate, not another magnetometer calibration.
- * Disable it and set pid_steering_sign explicitly if that assumption is invalid.
+ * Auto mode uses the sign stored by the dedicated calibration firmware.
+ * Disable it and set pid_steering_sign explicitly to ignore stored metadata.
  */
 bool pid_auto_steering_sign = true;
 float pid_steering_sign = 1.0f;
-uint32_t post_calibration_wait_ms = 5000u;
 float magnetometer_heading_offset_rad = 0.0f;
 float magnetometer_heading_filter_gain = 1.0f;
 uint32_t magnetometer_heading_max_age_ms = 500u;
@@ -128,17 +115,16 @@ typedef enum { SHOW_STATE, SHOW_ANGLE } main_led_display_type_t;
 main_led_display_type_t main_led_display_enum = SHOW_ANGLE;
 
 typedef enum {
-    CONTROLLER_CALIBRATING = 0,
-    CONTROLLER_WAITING = 1,
-    CONTROLLER_STRAIGHT = 2,
-    CONTROLLER_FATAL = 3
+    CONTROLLER_WARMING = 0,
+    CONTROLLER_STRAIGHT = 1,
+    CONTROLLER_FATAL = 2
 } controller_state_t;
 
 typedef struct {
     /* One coordinator owns PID + avoidance + calibrated motor mapping. */
     ddk_t drive;
     magnetometer_heading_detection_t heading_detection;
-    magnetometer_heading_calibration_t calibration;
+    magnetometer_calibration_metadata_t calibration_metadata;
     uint32_t heading_reference_id;
     controller_state_t controller_state;
     uint32_t controller_phase_started_ms;
@@ -179,42 +165,6 @@ static void enter_fatal_state(const char *reason) {
     printf("# FATAL,robot=%u,reason=%s\n", (unsigned)pogobot_helper_getid(), reason);
 }
 
-static void apply_calibration_motion(void) {
-    if (magnetometer_heading_calibration_wants_rotation(&mydata->calibration)) {
-        float ratio = (float)calibration_turn_speed / (float)motorFull;
-        (void)calibrated_motors_apply(&mydata->drive.motors, ratio, -ratio);
-    } else {
-        motor_stop();
-    }
-}
-
-static void magnetometer_calibration_step(void) {
-    uint16_t previous_count = mydata->calibration.n_collected;
-    magnetometer_heading_calibration_state_t state = magnetometer_heading_calibration_step(
-        &mydata->heading_detection, &mydata->calibration);
-    /* Immediate STOP on settling/reading/fitting/ready/failed. Fitting is exposed
-     * for one tick by the library so motors stop BEFORE its synchronous fit. */
-    apply_calibration_motion();
-    if (mydata->calibration.n_collected > previous_count) {
-        const int16_t *point = mydata->calibration.samples[mydata->calibration.n_collected - 1u];
-        CAL_PRINTF("CALPT,%d,%d,%d\n", (int)point[0], (int)point[1], (int)point[2]);
-    }
-    if (state == MAGNETOMETER_HEADING_CAL_FAILED) {
-        enter_fatal_state(magnetometer_heading_error_string(mydata->calibration.error));
-    } else if (state == MAGNETOMETER_HEADING_CAL_READY) {
-        printf("# CALIBRATION_OK,robot=%u,points=%u,attempts=%u,bins=%d,fixed_active=%u\n",
-               (unsigned)pogobot_helper_getid(), (unsigned)mydata->calibration.n_collected,
-               (unsigned)mydata->calibration.attempts, mydata->heading_detection.model.n_bins_used,
-               (unsigned)magnetometer_heading_detection_fixed_point_active(&mydata->heading_detection));
-        /* A successful fit establishes a new reference. Filter resets alone do
-         * not change this ID. Keep incrementing it if adding later recalibration. */
-        ++mydata->heading_reference_id;
-        mydata->controller_state = CONTROLLER_WAITING;
-        /* Wait the full interval AFTER fitting and diagnostics. */
-        mydata->controller_phase_started_ms = now_ms();
-    }
-}
-
 static bool magnetometer_heading_is_fresh(uint32_t now) {
     return magnetometer_heading_detection_is_fresh(&mydata->heading_detection, now);
 }
@@ -246,9 +196,13 @@ static void estimate_steering_sign(void) {
     mydata->effective_pid_steering_sign = pid_steering_sign < 0.0f ? -1 : 1;
     mydata->pid_sign_confidence = 0.0f;
     mydata->pid_sign_estimated = pid_auto_steering_sign &&
-        heading_magnetometer_estimate_ccw_sign(&mydata->heading_detection,
-            &mydata->calibration, (float)calibration_turn_speed / (float)motorFull,
-            &mydata->effective_pid_steering_sign, &mydata->pid_sign_confidence);
+        mydata->calibration_metadata.heading_ccw_sign_valid;
+    if (mydata->pid_sign_estimated) {
+        mydata->effective_pid_steering_sign =
+            mydata->calibration_metadata.heading_ccw_sign;
+        mydata->pid_sign_confidence =
+            (float)mydata->calibration_metadata.heading_ccw_sign_consistency_permille * 0.001f;
+    }
     if (pid_auto_steering_sign && !mydata->pid_sign_estimated) {
         printf("# PID: steering sign inconclusive; using configured sign %d.\n",
                (int)mydata->effective_pid_steering_sign);
@@ -260,7 +214,6 @@ static void straight_enter(void) {
     diff_drive_kin_reset(&mydata->drive);
     mydata->controller_state = CONTROLLER_STRAIGHT;
     mydata->last_pid_log_ms = now_ms();
-    magnetometer_heading_detection_reset_filter(&mydata->heading_detection);
     estimate_steering_sign();
     ddk_config_t config = mydata->drive.config;
     config.heading_ccw_sign = mydata->effective_pid_steering_sign;
@@ -382,12 +335,7 @@ static void pid_log_step(uint32_t now) {
 }
 
 static void update_main_led(void) {
-    if (mydata->controller_state == CONTROLLER_CALIBRATING) {
-        pogobot_led_setColor(255, 0, 255);
-        return;
-    }
-
-    if (mydata->controller_state == CONTROLLER_WAITING) {
+    if (mydata->controller_state == CONTROLLER_WARMING) {
         pogobot_led_setColor(255, 80, 0);
         return;
     }
@@ -440,9 +388,6 @@ static void update_main_led(void) {
 
 static bool controller_configuration_is_valid(void) {
     return forward_speed > 0 && forward_speed < motorFull &&
-        calibration_turn_speed != 0 &&
-        calibration_turn_speed >= -motorFull &&
-        calibration_turn_speed <= motorFull &&
         isfinite(pid_kp) && pid_kp >= 0.0f &&
         isfinite(pid_ki) && pid_ki >= 0.0f &&
         isfinite(pid_kd) && pid_kd >= 0.0f &&
@@ -465,7 +410,6 @@ static bool controller_configuration_is_valid(void) {
         magnetometer_heading_filter_gain <= 1.0f &&
         magnetometer_heading_max_age_ms >= pid_period_ms &&
         magnetometer_heading_max_age_ms < 0x80000000u &&
-        post_calibration_wait_ms < 0x80000000u &&
         isfinite(wall_avoidance_forward_speed_ratio) &&
         wall_avoidance_forward_speed_ratio > 0.0f &&
         wall_avoidance_forward_speed_ratio <= 1.0f &&
@@ -494,7 +438,7 @@ void user_init(void) {
     }
     ddk_config_t drive_config;
     diff_drive_kin_config_default(&drive_config);
-    drive_config.avoidance_enabled = false; /* No avoidance during calibration. */
+    drive_config.avoidance_enabled = false; /* No avoidance during startup warm-up. */
     drive_config.heading_ccw_sign = pid_steering_sign < 0.0f ? -1 : 1;
     drive_config.heading_max_age_ms = magnetometer_heading_max_age_ms;
     if (!diff_drive_kin_init(&mydata->drive, &drive_config, NULL, random_seed)) {
@@ -568,29 +512,31 @@ void user_init(void) {
     mydata->heading_detection.max_age_ms = magnetometer_heading_max_age_ms;
     magnetometer_heading_detection_set_fixed_point(&mydata->heading_detection,
                                                     magnetometer_use_fixed_point);
-    magnetometer_heading_calibration_config_t calibration_config;
-    magnetometer_heading_calibration_config_default(&calibration_config);
-    if (!magnetometer_heading_calibration_start(&mydata->calibration, &calibration_config)) {
-        enter_fatal_state("could not start magnetometer calibration");
+    magnetometer_calibration_flash_status_t flash_status =
+        magnetometer_calibration_flash_load(&mydata->heading_detection,
+                                             &mydata->calibration_metadata);
+    if (flash_status != MAGNETOMETER_CALIBRATION_FLASH_OK) {
+        enter_fatal_state(magnetometer_calibration_flash_status_string(flash_status));
         return;
     }
-    mydata->controller_state = CONTROLLER_CALIBRATING;
-    apply_calibration_motion();
+    mydata->heading_reference_id = mydata->calibration_metadata.calibration_id;
+    mydata->controller_state = CONTROLLER_WARMING;
+    mydata->controller_phase_started_ms = now_ms();
     update_main_led();
 }
 
 void user_step(void) {
-    if (mydata->controller_state == CONTROLLER_CALIBRATING) {
-        magnetometer_calibration_step();
-        update_main_led();
-        return;
-    }
-    if (mydata->controller_state == CONTROLLER_WAITING) {
+    if (mydata->controller_state == CONTROLLER_WARMING) {
         motor_stop();
-        update_main_led();
-        if ((uint32_t)(now_ms() - mydata->controller_phase_started_ms) >= post_calibration_wait_ms) {
+        (void)magnetometer_heading_update();
+        uint32_t now = now_ms();
+        heading_sample_t input = heading_snapshot(now);
+        if (input.valid) {
             straight_enter();
+        } else if ((uint32_t)(now - mydata->controller_phase_started_ms) >= 3000u) {
+            enter_fatal_state("magnetometer heading did not become usable during startup");
         }
+        update_main_led();
         return;
     }
     if (mydata->controller_state == CONTROLLER_FATAL) {
@@ -711,7 +657,6 @@ static void export_data(void) {
 
 static void global_setup(void) {
     init_from_configuration(forward_speed);
-    init_from_configuration(calibration_turn_speed);
     init_from_configuration(pid_kp);
     init_from_configuration(pid_ki);
     init_from_configuration(pid_kd);
@@ -724,7 +669,6 @@ static void global_setup(void) {
     init_from_configuration(pid_steering_sign);
     init_from_configuration(pid_log_period_ms);
 
-    init_from_configuration(post_calibration_wait_ms);
     init_from_configuration(magnetometer_heading_offset_rad);
     init_from_configuration(magnetometer_heading_filter_gain);
     init_from_configuration(magnetometer_heading_max_age_ms);

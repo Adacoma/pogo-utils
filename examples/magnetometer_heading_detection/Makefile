@@ -1,20 +1,20 @@
 
 # Get the absolute path of the Makefile
 MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
-MAKEFILE_DIR := $(notdir $(patsubst %/,%,$(dir $(MAKEFILE_PATH))))
+MAKEFILE_DIR ?= $(notdir $(patsubst %/,%,$(dir $(MAKEFILE_PATH))))
 
 ##### Detect OS #####
 OS := $(shell uname)
 ifeq ($(OS), Darwin)  # macOS
     WHOLE_ARCHIVE_FLAG = -Wl,-force_load
 	SIM_LD_FLAGS_BOX2D = -L/usr/local/lib -Wl,-force_load,/usr/local/lib/libbox2d.a
-	SIM_LD_FLAGS_POGOSIM = -Wl,-force_load,/usr/local/lib/libpogosim.a -Wl,-force_load,/usr/local/lib/libpogo-utils.a
+	SIM_LD_FLAGS_POGOSIM = -Wl,-force_load,/usr/local/lib/libpogosim.a -lpogo-utils
     STDCPP_LIB = -lc++
 	SIM_LD_EXT = -L/usr/local/lib -L/opt/homebrew/lib
 	SIM_INCLUDES_EXT = -I/usr/local/include -I/opt/homebrew/include
 else  # Linux
 	SIM_LD_FLAGS_BOX2D = -lbox2d
-	SIM_LD_FLAGS_POGOSIM = -Wl,--whole-archive -lpogosim -lpogo-utils -Wl,--no-whole-archive
+	SIM_LD_FLAGS_POGOSIM = -Wl,--whole-archive -lpogosim -Wl,--no-whole-archive -lpogo-utils
     WHOLE_ARCHIVE_FLAG = -Wl,--whole-archive
     STDCPP_LIB = -lstdc++
 	SIM_LD_EXT = -L/usr/local/lib
@@ -52,7 +52,8 @@ endif
 
 TTY?=/dev/ttyUSB0
 
-SRCS := $(filter-out SDL_FontCache.c, $(notdir $(wildcard *.c)) $(notdir $(wildcard $(POGOSIM_SRC_DIR)/*.c)) $(notdir $(wildcard $(POGOUTILS_SRC_DIR)/*.c)))
+POGOUTILS_EXCLUDED_SRCS ?= magnetometer_calibration.c
+SRCS := $(filter-out SDL_FontCache.c $(POGOUTILS_EXCLUDED_SRCS), $(notdir $(wildcard *.c)) $(notdir $(wildcard $(POGOSIM_SRC_DIR)/*.c)) $(notdir $(wildcard $(POGOUTILS_SRC_DIR)/*.c)))
 OBJECTS=$(SRCS:.c=.o)
 OBJECTS_BUILD = $(patsubst %.c,build/bin/%.o,$(notdir $(SRCS)))
 DEP_FILES=$(patsubst %.c,build/bin/%.d,$(notdir $(SRCS)))

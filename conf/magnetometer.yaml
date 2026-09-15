@@ -146,6 +146,12 @@ parameters:
     # Configuration parameters
     todo: 0
 
+# Produced by running examples/magnetometer_calibration with the matching
+# conf/magnetometer_calibration.yaml before this mission.
+flash_state:
+    input_file: "magnetometer.pgflash"
+    output_file: "magnetometer.pgflash"
+
 # MODELINE "{{{1
 # vim:expandtab:softtabstop=4:shiftwidth=4:fileencoding=utf-8
 # vim:foldmethod=marker

@@ -39,6 +39,7 @@
 # Debug files
 *.dSYM/
 *.su
+*.pgflash
 *.idb
 *.pdb
 
@@ -89,6 +90,7 @@ examples/MLP_int8_dyn/MLP_int8_dyn
 examples/MLP_int8_dyn_act/MLP_int8_dyn_act
 examples/ssr/ssr
 examples/magnetometer_heading_detection/magnetometer_heading_detection
+examples/magnetometer_calibration/magnetometer_calibration
 examples/go_straight/go_straight
 examples/vicsek/vicsek
 
@@ -100,4 +102,3 @@ examples/vicsek/vicsek
 *.bak
 *.old
 tmp/
-

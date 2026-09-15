@@ -1,0 +1,46 @@
+---
+
+# Calibration/export partner for conf/magnetometer.yaml. Keep the category and
+# robot ID set aligned with that mission: Pogosim validates identities exactly.
+boundary_condition: solid
+arena_file: arenas/square.csv
+arena_surface: 1.0e6
+enable_data_logging: false
+enable_console_logging: true
+console_filename: "frames/magnetometer_calibration_console.txt"
+simulation_time: 200.0
+time_step: 0.01
+seed: 0
+GUI: true
+initial_formation: power_lloyd
+
+objects:
+    robots:
+        type: pogobot
+        nb: 4
+        geometry: disk
+        radius: 26.5
+        body_linear_damping: 0.3
+        body_angular_damping: 0.3
+        body_density: 10.0
+        body_friction: 0.3
+        body_restitution: 0.5
+        max_linear_speed: 100.0
+        max_angular_speed: 2.0
+        communication_radius: 80.0
+        msg_success_rate:
+            type: static
+            rate: 1.0
+    walls:
+        type: pogowall
+        geometry: arena
+        communication_radius: 100
+        msg_success_rate:
+            type: static
+            rate: 1.0
+
+parameters:
+    todo: 0
+
+flash_state:
+    output_file: "magnetometer.pgflash"

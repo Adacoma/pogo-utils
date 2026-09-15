@@ -32,7 +32,12 @@ the repository does not provide a single central runtime.
   [`heading_detection`](../src/pogo-utils/heading_detection.h) implement the
   photosensor start and heading path.
 - [`magnetometer_heading_detection`](../src/pogo-utils/magnetometer_heading_detection.h)
-  implements cooperative calibration and filtered magnetometer heading.
+  implements filtered heading from an already-fitted model.
+- [`magnetometer_calibration`](../src/pogo-utils/magnetometer_calibration.h) contains
+  the separately linked collector/fitter; its
+  [`flash API`](../src/pogo-utils/magnetometer_calibration_flash.h) stores and
+  loads versioned, checksummed models. See the
+  [`dedicated example`](../examples/magnetometer_calibration).
 - [`heading_PID`](../src/pogo-utils/heading_PID.h) performs heading control
   without owning sensor, clock, or motor I/O.
 - [`wall_avoidance_magnetometer`](../src/pogo-utils/wall_avoidance_magnetometer.h)

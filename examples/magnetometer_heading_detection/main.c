@@ -1,23 +1,17 @@
 /**
  * @file example_magnetometer_heading_detection.c
- * @brief Calibrate, wait five seconds, then display/log heading and run/tumble.
+ * @brief Load flash calibration, display/log heading, and optionally run/tumble.
  *
  * This follows example_heading_detection.c's USERDATA and Pogobot callbacks,
- * but uses magnetometer calibration instead of photosensors/photostart.
- * Compile/link magnetometer_heading_detection.c into pogo-utils (or directly
- * into this application), and install its header beside heading_detection.h.
- * Do NOT #include the library .c file and also link its object a second time.
- *
- * The calibration library deliberately does not own motors, LEDs, or logging.
- * This example applies its requested rotation and stops motors for settling,
- * reading, fitting, and the post-calibration hold. All timing/UART shown here
- * is outside the library's computation stopwatch intervals.
+ * but uses the magnetometer model previously written by the dedicated
+ * magnetometer_calibration example. No collection or fitting code is linked.
  *
  * Supervise the first run. Calibration assumes roughly planar rotation, and
  * this minimal run-and-tumble example has no wall avoidance (like the supplied
  * photosensor example). Use a bounded, supervised area or disable locomotion.
  */
 #include "pogobase.h"
+#include "pogo-utils/magnetometer_calibration_flash.h"
 #include "pogo-utils/magnetometer_heading_detection.h"
 #include "pogo-utils/version.h"
 
@@ -30,22 +24,12 @@
 
 /* These are APPLICATION switches. Unlike library feature switches they can
  * be changed only for this example without rebuilding the library.
- *
- * For stationary/manual heading tests, set BOTH automatic calibration and
- * run-and-tumble to zero. The experimenter then rotates the robot during the
- * indicated ROTATING intervals and holds it still for each median batch.
  */
-#ifndef EXAMPLE_AUTOMATIC_CALIBRATION
-#define EXAMPLE_AUTOMATIC_CALIBRATION 1
-#endif
 #ifndef EXAMPLE_RUN_AND_TUMBLE
 #define EXAMPLE_RUN_AND_TUMBLE 1
 #endif
 #ifndef EXAMPLE_ENABLE_HEADING_UART
 #define EXAMPLE_ENABLE_HEADING_UART 1
-#endif
-#ifndef EXAMPLE_ENABLE_CALPT_UART
-#define EXAMPLE_ENABLE_CALPT_UART 0
 #endif
 #ifndef EXAMPLE_HEADING_LOG_PERIOD_MS
 #define EXAMPLE_HEADING_LOG_PERIOD_MS 200u
@@ -57,32 +41,26 @@
 #if EXAMPLE_HEADING_LOG_PERIOD_MS < 1
 #error "EXAMPLE_HEADING_LOG_PERIOD_MS must be positive"
 #endif
-#if (EXAMPLE_AUTOMATIC_CALIBRATION != 0 && EXAMPLE_AUTOMATIC_CALIBRATION != 1) || \
-    (EXAMPLE_RUN_AND_TUMBLE != 0 && EXAMPLE_RUN_AND_TUMBLE != 1) || \
-    (EXAMPLE_ENABLE_HEADING_UART != 0 && EXAMPLE_ENABLE_HEADING_UART != 1) || \
-    (EXAMPLE_ENABLE_CALPT_UART != 0 && EXAMPLE_ENABLE_CALPT_UART != 1)
+#if (EXAMPLE_RUN_AND_TUMBLE != 0 && EXAMPLE_RUN_AND_TUMBLE != 1) || \
+    (EXAMPLE_ENABLE_HEADING_UART != 0 && EXAMPLE_ENABLE_HEADING_UART != 1)
 #error "Example on/off switches must be 0 or 1"
 #endif
 
-#define POST_CALIBRATION_WAIT_MS 5000u
+#define STARTUP_WARMUP_TIMEOUT_MS 3000u
 #define RUN_DURATION_MS 800u
 #define TUMBLE_DURATION_MS 300u
 #define PI_F MAGNETOMETER_HEADING_PI_F
 
 typedef enum {
-    EXAMPLE_CALIBRATING,
-    EXAMPLE_WAITING,
+    EXAMPLE_WARMING,
     EXAMPLE_RUNNING,
     EXAMPLE_TUMBLING,
     EXAMPLE_FATAL
 } example_phase_t;
 
 typedef struct {
-    /* Both objects are private to this robot, including in a multi-robot sim.
-     * Only heading_detection is needed after calibration. Keeping the workspace
-     * here allows later recalibration without heap allocation. */
     magnetometer_heading_detection_t heading_detection;
-    magnetometer_heading_calibration_t calibration;
+    magnetometer_calibration_metadata_t calibration_metadata;
 
     example_phase_t phase;
     uint32_t phase_start_ms;
@@ -132,16 +110,6 @@ static bool motor_calibration_valid(void) {
     return mydata->motor_power_left > 0u && mydata->motor_power_left <= motorFull &&
            mydata->motor_power_right > 0u && mydata->motor_power_right <= motorFull &&
            mydata->motor_dir_left_fwd <= 1u && mydata->motor_dir_right_fwd <= 1u;
-}
-
-static void apply_calibration_motion(void) {
-    if (magnetometer_heading_calibration_wants_rotation(&mydata->calibration)) {
-        /* Opposite signed speeds rotate while limiting translation. */
-        motor_set_signed(motorL, motorHalf, mydata->motor_dir_left_fwd);
-        motor_set_signed(motorR, -motorHalf, mydata->motor_dir_right_fwd);
-    } else {
-        motor_stop();
-    }
 }
 
 static void enter_fatal(const char *reason) {
@@ -227,9 +195,7 @@ static void log_heading(uint32_t now) {
 void user_init(void) {
     memset(mydata, 0, sizeof(*mydata));
     srand(pogobot_helper_getRandSeed());
-    /* Use the optimized controller's 20 Hz default, not the photosensor
-     * example's 60 Hz. The configured retry_ms is a minimum, not a guarantee
-     * that sampling happens faster than this application callback frequency. */
+    /* Five successful 20 Hz reads normally fill the live median in 250 ms. */
     main_loop_hz = 20;
     max_nb_processed_msg_per_tick = 0;
     msg_rx_fn = NULL;
@@ -247,7 +213,7 @@ void user_init(void) {
     mydata->motor_dir_left_fwd = directions[1];
     mydata->motor_power_right = powers[0];
     mydata->motor_power_left = powers[1];
-    if ((EXAMPLE_AUTOMATIC_CALIBRATION || EXAMPLE_RUN_AND_TUMBLE) && !motor_calibration_valid()) {
+    if (EXAMPLE_RUN_AND_TUMBLE && !motor_calibration_valid()) {
         enter_fatal("missing/invalid stored motor calibration; calibrate motors first");
         return;
     }
@@ -262,23 +228,21 @@ void user_init(void) {
      * selects the optimized float affine map, not the old unoptimized fit.
      */
 
-    magnetometer_heading_calibration_config_t config;
-    magnetometer_heading_calibration_config_default(&config);
-    config.automatic_rotation = EXAMPLE_AUTOMATIC_CALIBRATION != 0;
-    if (!magnetometer_heading_calibration_start(&mydata->calibration, &config)) {
-        enter_fatal("invalid magnetometer collection configuration");
+    magnetometer_calibration_flash_status_t flash_status =
+        magnetometer_calibration_flash_load(&mydata->heading_detection,
+                                             &mydata->calibration_metadata);
+    if (flash_status != MAGNETOMETER_CALIBRATION_FLASH_OK) {
+        enter_fatal(magnetometer_calibration_flash_status_string(flash_status));
         return;
     }
-    mydata->phase = EXAMPLE_CALIBRATING;
-    apply_calibration_motion(); /* Start rotation in this same callback. */
-    pogobot_led_setColor(25, 0, 25);
-    printf("# CALIBRATION,robot=%u,target=%u,automatic=%u,clock=pogobot_stopwatch_us\n",
-           (unsigned)pogobot_helper_getid(), (unsigned)config.target_points,
-           (unsigned)(config.automatic_rotation ? 1u : 0u));
-    if (!config.automatic_rotation) {
-        printf("# MANUAL,robot=%u,action=rotate_now_then_hold_when_requested\n",
-               (unsigned)pogobot_helper_getid());
-    }
+    mydata->phase = EXAMPLE_WARMING;
+    mydata->phase_start_ms = (uint32_t)current_time_milliseconds();
+    pogobot_led_setColor(25, 8, 0);
+    printf("# MAG_CAL_LOADED,robot=%u,id=%lu,bins=%u,fixed=%u\n",
+           (unsigned)pogobot_helper_getid(),
+           (unsigned long)mydata->calibration_metadata.calibration_id,
+           (unsigned)mydata->calibration_metadata.bins_used,
+           (unsigned)mydata->heading_detection.model.fixed_ready);
 }
 
 void user_step(void) {
@@ -286,72 +250,34 @@ void user_step(void) {
         motor_stop();
         return;
     }
-    if (mydata->phase == EXAMPLE_CALIBRATING) {
-        magnetometer_heading_calibration_state_t previous = mydata->calibration.state;
-        uint16_t previous_count = mydata->calibration.n_collected;
-        magnetometer_heading_calibration_state_t state = magnetometer_heading_calibration_step(
-            &mydata->heading_detection, &mydata->calibration);
-        apply_calibration_motion(); /* STOP on SETTLING/READING/FITTING/READY/FAILED. */
-        if (EXAMPLE_ENABLE_CALPT_UART && mydata->calibration.n_collected > previous_count) {
-            const int16_t *p = mydata->calibration.samples[mydata->calibration.n_collected - 1u];
-            printf("CALPT,%d,%d,%d\n", (int)p[0], (int)p[1], (int)p[2]);
-        }
-        if (!EXAMPLE_AUTOMATIC_CALIBRATION && state != previous) {
-            if (state == MAGNETOMETER_HEADING_CAL_ROTATING) {
-                printf("# MANUAL,robot=%u,action=rotate_now\n", (unsigned)pogobot_helper_getid());
-            } else if (state == MAGNETOMETER_HEADING_CAL_SETTLING) {
-                printf("# MANUAL,robot=%u,action=hold_still\n", (unsigned)pogobot_helper_getid());
-            }
-        }
-        if (state == MAGNETOMETER_HEADING_CAL_FAILED) {
-            enter_fatal(magnetometer_heading_error_string(mydata->calibration.error));
-            print_timing("fit", &mydata->heading_detection.fit_timing);
-            return;
-        }
-        if (state == MAGNETOMETER_HEADING_CAL_READY) {
-            mydata->phase = EXAMPLE_WAITING;
-            printf("# CALIBRATION_OK,robot=%u,points=%u,attempts=%u,bins=%d,fixed_active=%u\n",
-                   (unsigned)pogobot_helper_getid(), (unsigned)mydata->calibration.n_collected,
-                   (unsigned)mydata->calibration.attempts,
-                   mydata->heading_detection.model.n_bins_used,
-                   (unsigned)(magnetometer_heading_detection_fixed_point_active(
-                       &mydata->heading_detection) ? 1u : 0u));
-            print_timing("fit", &mydata->heading_detection.fit_timing);
-            print_timing("collection_medians", &mydata->calibration.median_timing);
-            print_timing("collection_acceptance", &mydata->calibration.acceptance_timing);
-            /* Start the full five-second hold AFTER computation and logging. */
-            mydata->phase_start_ms = (uint32_t)current_time_milliseconds();
-            pogobot_led_setColor(25, 8, 0);
-        }
-        return;
-    }
-
-    uint32_t now = (uint32_t)current_time_milliseconds();
-    if (mydata->phase == EXAMPLE_WAITING) {
-        motor_stop();
-        pogobot_led_setColor(25, 8, 0);
-        if ((uint32_t)(now - mydata->phase_start_ms) < POST_CALIBRATION_WAIT_MS) {
-            return;
-        }
-        mydata->phase = EXAMPLE_RUNNING;
-        mydata->phase_start_ms = now;
-    }
-
     /* One sensor read and one filtered update per active callback. Do NOT call
      * estimate() as well: that would read the sensor again and skip filtering.
      * A failed update can still leave a recently cached heading available. */
     (void)magnetometer_heading_detection_update(&mydata->heading_detection);
-    now = (uint32_t)current_time_milliseconds();
+    uint32_t now = (uint32_t)current_time_milliseconds();
     float heading;
     bool fresh = magnetometer_heading_detection_get_heading(
         &mydata->heading_detection, now, &heading);
+    if (mydata->phase == EXAMPLE_WARMING) {
+        motor_stop();
+        if (fresh && mydata->heading_detection.window_count >= MAGNETOMETER_HEADING_WINDOW) {
+            mydata->phase = EXAMPLE_RUNNING;
+            mydata->phase_start_ms = now;
+        } else if ((uint32_t)(now - mydata->phase_start_ms) >= STARTUP_WARMUP_TIMEOUT_MS) {
+            enter_fatal("magnetometer heading did not become usable during startup");
+            return;
+        } else {
+            pogobot_led_setColor(25, 8, 0);
+            return;
+        }
+    }
     if (fresh) {
         show_heading_led(heading);
     } else {
         /* Application safety policy, not a library command: stop once the
          * cached heading becomes stale. Brief misses (<500 ms) use the cache. */
         motor_stop();
-        pogobot_led_setColor(25, 0, 25);
+        pogobot_led_setColor(25, 8, 0);
     }
     log_heading(now); /* Angle is the measured, filtered heading, not a target. */
 #if EXAMPLE_LIVE_TIMING_SAMPLES > 0

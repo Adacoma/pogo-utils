@@ -20,9 +20,11 @@ by hardware or experimental validation.
 - All example categories and the available Pogosim configuration files, with
   closer inspection of the current kinematics, Vicsek, SSR, and distributed
   MNIST integrations.
-- Existing build artifacts and repository cleanliness. No fresh build,
-  simulator run, automated test run, or physical-robot experiment has yet been
-  performed for this assessment.
+- Existing build artifacts and repository cleanliness. A fresh temporary
+  library/example build and focused host test have now been performed; no
+  simulator run or physical-robot experiment has been performed.
+- Pogosim's flash-state lifecycle and installed user-flash API, including its
+  whole-64-KiB erase and 256-byte page operations.
 
 ## Understood
 
@@ -62,6 +64,10 @@ by hardware or experimental validation.
   startup now trigger a local state reset instead of permanently latching
   the coordinator in STOP. Calibration and its heading reference are retained;
   the coordinator, avoidance state, and heading median window are reset.
+- Magnetometer collection/fitting is now separately linked. Its dedicated
+  example stores a versioned, checksummed model and canonical steering sign in
+  flash; magnetometer missions only load the model, adapt sign chirality, and
+  warm their live sample window.
 
 ## What remains unknown
 
@@ -91,8 +97,10 @@ by hardware or experimental validation.
   runtime avoidance-fault latch. The Vicsek application now records the
   cause/count and shows amber while reacquiring a heading; hardware validation
   remains pending.
-- Build validation, resource profiling, behavioral regression testing, and
-  scientific result reproduction have not begun.
+- The library, calibration example, and five flash-loading simulator targets
+  compile. Focused host tests cover round trips, chirality, malformed records,
+  model bounds, and failed-write verification. No Pogosim run or physical-robot
+  experiment has been performed; broader validation remains open.
 
 ## Current scientific decisions
 
@@ -110,6 +118,9 @@ The following choices are encoded in the current implementation:
 - Low-precision inference and optional fixed-point heading estimation are used
   where useful, while validation gates or floating-point paths remain where the
   implementation needs them.
+- Magnetometer flash records are portable by policy: they are checksummed and
+  versioned but not bound to a robot or motor configuration. Application
+  chirality, offset, filtering, and timeouts are not persisted.
 
 These are implementation decisions, not yet documented experimental findings.
 
@@ -139,8 +150,8 @@ These are implementation decisions, not yet documented experimental findings.
    legacy motion and wall-avoidance modules.
 5. Add host-side tests for platform-neutral numerics, angle/time wraparound,
    PID state transitions, optimizer invariants, and serialization boundaries.
-6. Add deterministic simulator regressions for heading calibration, avoidance,
-   Vicsek alignment, and SSR phase/convergence behavior.
+6. Run the paired magnetometer flash export/import scenarios, then add
+   deterministic regressions for avoidance, Vicsek alignment, and SSR behavior.
 7. Clarify licensing, compatibility guarantees, and the intended
    install/package interface.
 8. Record experimental hypotheses, metrics, datasets, configurations, and

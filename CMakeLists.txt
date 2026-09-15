@@ -85,6 +85,16 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
 )
 
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(test_magnetometer_calibration_flash
+        tests/test_magnetometer_calibration_flash.c)
+    target_link_libraries(test_magnetometer_calibration_flash
+        PRIVATE ${PROJECT_NAME} m)
+    add_test(NAME magnetometer_calibration_flash
+        COMMAND test_magnetometer_calibration_flash)
+endif()
+
 ###### BUILD EXAMPLES ######
 # Find all subdirectories in examples
 file(GLOB EXAMPLE_DIRS RELATIVE ${CMAKE_SOURCE_DIR}/examples ${CMAKE_SOURCE_DIR}/examples/*)
