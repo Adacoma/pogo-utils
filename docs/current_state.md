@@ -54,6 +54,10 @@ by hardware or experimental validation.
   representation, validates exact slot boundaries and allocation state, and
   prevents API-level double-free cycles. Invalid inputs fail closed without a
   public error-reporting channel.
+- SEP-CMA-ES now has explicit population limits, checked workspace arithmetic,
+  numeric parameter validation, and strict one-ask/one-tell sequencing. Its
+  generation update reuses caller workspace rather than consuming a
+  dimension-dependent stack allocation.
 - In the Vicsek application, wall-avoidance faults reached after successful
   startup now trigger a local state reset instead of permanently latching
   the coordinator in STOP. Calibration and its heading reference are retained;
@@ -80,6 +84,9 @@ by hardware or experimental validation.
   and Q16.16 add/subtract/absolute-value saturation logic.
 - The second milestone hardened `tiny_alloc`; its exact boundary checks trade
   constant-time pointer operations for O(number of slots) worst-case walks.
+- The SEP-CMA-ES milestone rejects invalid or oversized populations, exposes
+  initialization status without changing the legacy initializer signature,
+  and makes partial unified-factory allocation failure recoverable.
 - A physical-robot report of permanent violet stops is consistent with the
   runtime avoidance-fault latch. The Vicsek application now records the
   cause/count and shows amber while reacquiring a heading; hardware validation
@@ -124,8 +131,8 @@ These are implementation decisions, not yet documented experimental findings.
 1. Add targeted tests for the corrected MLP, Q16.16, and `tiny_alloc` normal,
    boundary, overflow, invalid-pointer, and double-free cases, then run them
    when compilation is permitted.
-2. Enforce optimizer configuration and ask/tell invariants, then harden the SSR
-   and distributed-MNIST message protocols.
+2. Enforce the remaining unified optimizer default/override contract, then
+   harden the SSR and distributed-MNIST message protocols.
 3. Perform a clean library and example build against pinned SDK and simulator
    revisions; record toolchains, warnings, binary sizes, RAM, and stack use.
 4. Define the supported public API surface and document migration from the

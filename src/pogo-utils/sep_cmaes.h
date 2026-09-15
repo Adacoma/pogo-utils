@@ -48,7 +48,13 @@
 extern "C" {
 #endif
 
+#include <stddef.h>
 #include <stdint.h>
+
+/* Keep the fixed ranking cache and insertion-sort work bounded on embedded
+ * targets. Dimension-dependent storage remains entirely caller-owned. */
+#define SEP_CMAES_MAX_MU 32
+#define SEP_CMAES_MAX_LAMBDA 256
 
 /** Optimization direction. */
 typedef enum {
@@ -60,7 +66,9 @@ typedef enum {
  * @brief Tunable parameters for SEP‑CMA‑ES.
  *
  * Values here follow standard CMA‑ES heuristics. For embedded use, keep λ small (e.g., 4..12)
- * and choose μ=⌊λ/2⌋ with log‑weights.
+ * and choose μ=⌊λ/2⌋ with log‑weights. Valid sizes satisfy
+ * `1 <= mu <= min(lambda, SEP_CMAES_MAX_MU)` and
+ * `lambda <= SEP_CMAES_MAX_LAMBDA`.
  */
 typedef struct {
     sep_mode_t mode;     /**< Minimize/Maximize. */
@@ -126,15 +134,17 @@ typedef struct {
     uint32_t iter_total;      /**< # of ask–tell calls so far. */
     uint32_t gen;             /**< Generation counter. */
     int k_in_gen;             /**< How many offspring evaluated in current generation [0..λ]. */
+    int initialized;          /**< Nonzero only after complete input validation. */
     int have_initial;         /**< 0 until sep_cmaes_tell_initial() is called. */
+    int ask_pending;          /**< Nonzero between one successful ask and its tell. */
 
     /* Derived */
     float mu_w;               /**< Effective selection mass: 1/sum w_i^2. */
     float w_sum;              /**< Sum of weights (should be 1). */
     float chi_n;              /**< E||N(0,I)|| for CSA. */
 
-    /* μ-best cache (no malloc, μ<=32 assumed) */
-    float best_fit_mu[32];
+    /* μ-best cache (no malloc, bounded by SEP_CMAES_MAX_MU). */
+    float best_fit_mu[SEP_CMAES_MAX_MU];
     int mu_filled;
 } sep_cmaes_t;
 
@@ -155,7 +165,15 @@ typedef struct {
  * @param store_y   Buffer for μ best steps of current generation (length μ*n).
  * @param fit_buf   Fitness buffer for λ offspring (length λ).
  * @param idx       Index buffer for sorting (length λ).
- * @param params    Parameters; sensible defaults if NULL or fields ≤0 where relevant.
+ * @param params    Parameters. NULL selects the complete default parameter set.
+ *                  With a non-NULL block, lambda and mu must satisfy the
+ *                  documented limits; non-positive scalar adaptation fields
+ *                  select their individual defaults.
+ *
+ * Invalid arguments leave `es` zeroed and safely inert. Caller buffers must
+ * have the documented lengths, must not overlap, and borrowed bounds/weights
+ * must remain valid for the lifetime of `es`. Use ::sep_cmaes_initialized() to
+ * distinguish successful initialization without changing this legacy void API.
  */
 void sep_cmaes_init(sep_cmaes_t *es, int n,
                     float *restrict x, float *restrict x_try,
@@ -176,7 +194,11 @@ void sep_cmaes_tell_initial(sep_cmaes_t *es, float f0);
  *
  * One candidate per call. After λ calls to ::sep_cmaes_tell() (per generation), internal parameters are updated.
  *
- * @return Pointer to candidate of length n, or NULL if called before ::sep_cmaes_tell_initial().
+ * Exactly one candidate may be outstanding. A repeated ask before tell returns
+ * NULL without modifying the current candidate.
+ *
+ * @return Pointer to a candidate of length n, or NULL if the state is not
+ *         ready or a previous candidate is still outstanding.
  */
 const float *sep_cmaes_ask(sep_cmaes_t *es);
 
@@ -186,7 +208,12 @@ const float *sep_cmaes_ask(sep_cmaes_t *es);
  * When λ candidates have been told within a generation, this performs the mean, covariance, and sigma updates.
  *
  * @param es     Handle.
- * @param f_try  Fitness of the most recent candidate returned by ask().
+ * @param f_try  Finite fitness of the most recent candidate returned by ask().
+ *
+ * A tell without one outstanding ask does nothing. A non-finite fitness does
+ * not update the optimizer, but consumes the outstanding candidate so the
+ * caller may continue with a new ask.
+ *
  * @return       Current best fitness after potential improvement.
  */
 float sep_cmaes_tell(sep_cmaes_t *es, float f_try);
@@ -199,15 +226,27 @@ typedef float (*sep_objective_fn)(const float *x, int n, void *userdata);
 float sep_cmaes_step(sep_cmaes_t *es, sep_objective_fn fn, void *userdata);
 
 /* Inline getters */
-static inline const float *sep_cmaes_get_x(const sep_cmaes_t *es) { return es->x; }
-static inline float sep_cmaes_sigma(const sep_cmaes_t *es) { return es->sigma; }
-static inline uint32_t sep_cmaes_iterations(const sep_cmaes_t *es) { return es->iter_total; }
-static inline uint32_t sep_cmaes_generation(const sep_cmaes_t *es) { return es->gen; }
-static inline int sep_cmaes_ready(const sep_cmaes_t *es) { return es && es->have_initial; }
+static inline int sep_cmaes_initialized(const sep_cmaes_t *es) {
+    return es && es->initialized;
+}
+static inline const float *sep_cmaes_get_x(const sep_cmaes_t *es) {
+    return sep_cmaes_initialized(es) ? es->x : NULL;
+}
+static inline float sep_cmaes_sigma(const sep_cmaes_t *es) {
+    return sep_cmaes_initialized(es) ? es->sigma : 0.0f;
+}
+static inline uint32_t sep_cmaes_iterations(const sep_cmaes_t *es) {
+    return sep_cmaes_initialized(es) ? es->iter_total : 0u;
+}
+static inline uint32_t sep_cmaes_generation(const sep_cmaes_t *es) {
+    return sep_cmaes_initialized(es) ? es->gen : 0u;
+}
+static inline int sep_cmaes_ready(const sep_cmaes_t *es) {
+    return sep_cmaes_initialized(es) && es->have_initial;
+}
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* POGO_UTILS_SEP_CMAES_H */
-

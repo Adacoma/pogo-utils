@@ -79,6 +79,12 @@ example continues and dereferences the null optimizer.
 
 ### SEP-CMA-ES lacks robust parameter and resource bounds
 
+Status: fixed locally on 2026-09-15; not compiled or executed as part of this
+audit. Population sizes, workspace-size arithmetic, numeric parameters,
+bounds, and weights are now validated. The fixed cache limits are explicit,
+ask--tell ordering is enforced, and generation recombination reuses a caller
+workspace instead of allocating dimension-dependent stack memory.
+
 The direct SEP-CMA-ES API does not safely handle `lambda == 0`. This produces
 invalid weight calculations and later writes `fit_buf[0]`. Values of `mu`
 above 32 are only partially supported: some operations use the configured
@@ -197,7 +203,8 @@ kilobyte state require measurement on target hardware.
 2. Verify the locally hardened `tiny_alloc` with targeted overflow, invalid
    layout, boundary, double-free, exhaustion, and reallocation tests when
    compilation is permitted.
-3. Enforce optimizer configuration invariants and ask/tell state.
+3. Enforce the remaining unified optimizer configuration/default contract and
+   validate SEP-CMA-ES changes with targeted tests.
 4. Version and validate network messages; bound or remove SSR clock correction.
 5. Correct distributed MNIST timing, epoch handling, and mass-loss behavior.
 6. Replace remaining undefined fixed-point operations and unbounded VLAs.

@@ -95,6 +95,14 @@ void user_init(void) {
                    mydata->fit_buf, mydata->idx,
                    &p);
 
+    /* Invalid dimensions, population parameters, bounds, or workspaces leave
+     * the legacy void initializer safely inert and must not be used below. */
+    if (!sep_cmaes_initialized(&mydata->es)) {
+        printf("[SEP-CMAES] invalid configuration or workspace\n");
+        pogobot_led_setColors(25, 0, 0, 0);
+        return;
+    }
+
     float f0 = sphere_fn(mydata->x, D);
     sep_cmaes_tell_initial(&mydata->es, f0);
 
@@ -103,6 +111,12 @@ void user_init(void) {
 }
 
 void user_step(void) {
+    if (!sep_cmaes_ready(&mydata->es)) {
+        /* Keep an invalid direct-API example inert rather than dereferencing
+         * a missing candidate/mean on every control tick. */
+        pogobot_led_setColors(25, 0, 0, 0);
+        return;
+    }
     const int evals_per_tick = 1;
     for (int k = 0; k < evals_per_tick; ++k) {
         (void)sep_cmaes_step(&mydata->es, sphere_adapter, NULL);
@@ -132,4 +146,3 @@ int main(void) {
     pogobot_start(user_init, user_step);
     return 0;
 }
-

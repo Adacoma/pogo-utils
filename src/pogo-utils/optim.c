@@ -65,8 +65,19 @@ static inline opt_mode_t map_mode(opt_algo_t algo, opt_mode_t m){
     (void)algo; return m;
 }
 
+static uint16_t sep_default_lambda(int n) {
+    /* Avoid signed overflow in 2*n before applying the default cap. */
+    if (n <= 2) return 4u;
+    if (n >= 32) return 64u;
+    return (uint16_t)(2 * n);
+}
+
+static uint16_t sep_default_mu(uint16_t lambda) {
+    uint16_t mu = (uint16_t)(lambda / 2u);
+    return mu > 0u ? mu : 1u;
+}
+
 opt_cfg_t opt_default_cfg(opt_algo_t algo, int n){
-    (void)n;
     opt_cfg_t c; memset(&c, 0, sizeof(c));
     c.use_defaults = 1;
 
@@ -102,8 +113,8 @@ opt_cfg_t opt_default_cfg(opt_algo_t algo, int n){
         c.P.sep.sigma_min = 1e-6f; c.P.sep.sigma_max = 2.0f;
         c.P.sep.weights = NULL; /* default log weights inside backend */
         c.P.sep.cc = c.P.sep.cs = c.P.sep.c1 = c.P.sep.cmu = c.P.sep.damps = 0.0f;
-        c.sz.lambda = (uint16_t)OPT_CLAMP(2*n, 4, 64); /* small by default */
-        c.sz.mu     = (uint16_t)OPT_CLAMP(c.sz.lambda/2, 2, c.sz.lambda);
+        c.sz.lambda = sep_default_lambda(n); /* small and overflow-safe by default */
+        c.sz.mu = sep_default_mu(c.sz.lambda);
     } break;
 
     case OPT_SOCIAL_LEARNING:
@@ -225,8 +236,14 @@ int opt_create(opt_t **self_out, tiny_alloc_t *ta, int n,
     } break;
 
     case OPT_SEP_CMAES: {
-        const uint16_t lambda = cfg.sz.lambda ? cfg.sz.lambda : (uint16_t)OPT_CLAMP(2*n,4,64);
-        const uint16_t mu     = cfg.sz.mu     ? cfg.sz.mu     : (uint16_t)OPT_CLAMP(lambda/2,2,lambda);
+        const uint16_t lambda = cfg.sz.lambda ? cfg.sz.lambda : sep_default_lambda(n);
+        const uint16_t mu = cfg.sz.mu ? cfg.sz.mu : sep_default_mu(lambda);
+        if (lambda < 1u || lambda > SEP_CMAES_MAX_LAMBDA ||
+            mu < 1u || mu > SEP_CMAES_MAX_MU || mu > lambda ||
+            (size_t)mu > SIZE_MAX / (size_t)n) {
+            goto fail;
+        }
+        const size_t stored_steps = (size_t)mu * (size_t)n;
 
         float *x  = (float*)tiny_calloc(ta, n, sizeof(float));
         float *xt = (float*)tiny_calloc(ta, n, sizeof(float));
@@ -235,22 +252,24 @@ int opt_create(opt_t **self_out, tiny_alloc_t *ta, int n,
         float *pc = (float*)tiny_calloc(ta, n, sizeof(float));
         float *zt = (float*)tiny_calloc(ta, n, sizeof(float));
         float *yt = (float*)tiny_calloc(ta, n, sizeof(float));
-        float *sy = (float*)tiny_calloc(ta, (size_t)mu * (size_t)n, sizeof(float));
+        float *sy = (float*)tiny_calloc(ta, stored_steps, sizeof(float));
         float *fb = (float*)tiny_calloc(ta, lambda, sizeof(float));
         int   *ix = (int  *)tiny_calloc(ta, lambda, sizeof(int));
-        if (!x || !xt || !cd || !ps || !pc || !zt || !yt || !sy || !fb || !ix) goto fail;
-
+        /* Publish partial allocations before checking them so opt_destroy()
+         * can return every successful block if a later request failed. */
         self->buf.sep.x=x; self->buf.sep.x_try=xt; self->buf.sep.c_diag=cd;
         self->buf.sep.p_sigma=ps; self->buf.sep.p_c=pc;
         self->buf.sep.z_try=zt; self->buf.sep.y_try=yt; self->buf.sep.store_y=sy;
         self->buf.sep.fit_buf=fb; self->buf.sep.idx=ix;
         self->buf.sep.lambda=lambda; self->buf.sep.mu=mu;
+        if (!x || !xt || !cd || !ps || !pc || !zt || !yt || !sy || !fb || !ix) goto fail;
 
         sep_params_t P = cfg.P.sep;
         P.mode = (mode==OPT_MINIMIZE)?SEP_MINIMIZE:SEP_MAXIMIZE;
         P.lambda = lambda; P.mu = mu; P.lo = LO; P.hi = HI;
 
         sep_cmaes_init(&self->o.sep, n, x, xt, cd, ps, pc, zt, yt, sy, fb, ix, &P);
+        if (!sep_cmaes_initialized(&self->o.sep)) goto fail;
         self->x_ptr = x;
     } break;
 
@@ -494,5 +513,3 @@ void opt_randomize_x(opt_t *self, uint32_t seed){
     opt_set_x(self, x);
     if (x != tmp) tiny_free(self->ta, x);
 }
-
-

@@ -50,8 +50,8 @@ typedef struct {
     /* Extra knobs that affect buffer sizing (optional; 0 => default) */
     struct {
         /* SEP-CMA-ES */
-        uint16_t lambda;   /* population size; if 0 use default */
-        uint16_t mu;       /* parents; if 0 use default */
+        uint16_t lambda;   /* 1..SEP_CMAES_MAX_LAMBDA; 0 uses default */
+        uint16_t mu;       /* 1..min(lambda, SEP_CMAES_MAX_MU); 0 uses default */
 
         /* Social learning (SL/HIT) */
         uint16_t repo_capacity;  /* if 0 use default */
@@ -118,4 +118,3 @@ void opt_randomize_x(opt_t *self, uint32_t seed);
 #ifdef __cplusplus
 }
 #endif
-
