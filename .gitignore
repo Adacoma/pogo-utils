@@ -93,6 +93,7 @@ examples/magnetometer_heading_detection/magnetometer_heading_detection
 examples/magnetometer_calibration/magnetometer_calibration
 examples/go_straight/go_straight
 examples/vicsek/vicsek
+examples/acu/acu
 
 # Generated figures
 *.pdf

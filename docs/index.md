@@ -48,8 +48,9 @@ the repository does not provide a single central runtime.
   [`calibrated_motors`](../src/pogo-utils/calibrated_motors.h) maps the result to
   calibrated wheel commands.
 
-The [`kinematics`](../examples/kinematics) and
-[`vicsek`](../examples/vicsek) examples are the main integration references.
+The [`kinematics`](../examples/kinematics),
+[`vicsek`](../examples/vicsek), and static [`ACU`](../examples/acu) examples are
+the main integration references.
 
 ### Swarm and distributed algorithms
 
@@ -57,6 +58,10 @@ The [`kinematics`](../examples/kinematics) and
   consensus, and spectral estimation. See the [`ssr` example](../examples/ssr).
 - The [`vicsek` example](../examples/vicsek) combines neighbor alignment with
   the current sensing, PID, kinematics, and avoidance stack.
+- The static [`ACU` example](../examples/acu) adds continuous alignment,
+  angular diffusion, crowd-dependent speed, and relayed collective U-turns.
+  It deliberately excludes the optimizer and social-learning machinery from
+  its read-only `libs/ACU-selfadapt` reference implementation.
 - [`distributed_MLP_int8_MNIST`](../examples/distributed_MLP_int8_MNIST) combines
   compressed local classifiers through vector push-sum consensus.
 

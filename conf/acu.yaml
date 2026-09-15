@@ -1,0 +1,96 @@
+---
+
+# Static ACU mission corresponding to the reference repository's fixed
+# "flock + wall following" genotype. It imports calibration-only firmware
+# output and contains no optimizer, fitness, genotype, HIT, or FT settings.
+window_width: 600
+window_height: 600
+boundary_condition: solid
+arena_file: arenas/disk.csv
+arena_surface: 2.0e6
+
+delete_old_files: true
+enable_data_logging: true
+data_filename: "frames/acu_data.feather"
+enable_console_logging: true
+console_filename: "frames/acu_console.txt"
+save_data_period: 1.0
+save_video_period: -1.0
+frames_name: "frames/acu_f{:010.4f}.png"
+
+simulation_time: 500.0
+time_step: 0.01
+seed: 0
+GUI: true
+GUI_speed_up: 30.0
+show_time: true
+show_scale_bar: true
+show_communication_channels: false
+show_communication_channels_above_all: false
+show_lateral_LEDs: false
+show_light_levels: false
+initial_formation: power_lloyd
+communication_ignore_occlusions: false
+arena_temperature: 25.0
+
+objects:
+    robots:
+        type: pogobot
+        nb: 60
+        geometry: disk
+        radius: 26.5
+        body_linear_damping: 0.3
+        body_angular_damping: 0.3
+        body_density: 10.0
+        body_friction: 0.3
+        body_restitution: 0.5
+        max_linear_speed: 100.0
+        max_angular_speed: 2.0
+        linear_noise_stddev: 0.0
+        angular_noise_stddev: 0.0
+        communication_radius: 80.0
+        msg_success_rate:
+            type: dynamic
+            alpha: 0.000001
+            beta: 3.0708
+            gamma: 2.3234
+            delta: 1.1897
+    walls:
+        type: pogowall
+        geometry: arena
+        communication_radius: 100.0
+        msg_success_rate:
+            type: static
+            rate: 1.0
+
+parameters:
+    # Bounded neighbor table and explicit 20 Hz beacons.
+    max_age: 1000
+    beacon_period_ms: 50
+    acu_rx_messages_per_tick: 16
+    include_self_in_avg: true
+    broadcast_angle_when_avoiding_walls: true
+    include_avoiding_neighbors: true
+
+    # Static physical ACU parameters. beta and sigma are the reference
+    # normalized values after the source controller's factor-of-ten scaling.
+    acu_beta_rad_per_s: 9.0
+    acu_noise_sigma_rad_sqrt_s: 0.0
+    acu_base_speed_ratio: 0.80
+    acu_u_turn_angle_rad: 1.2566370614
+    acu_crowd_depth: 0.0
+    acu_target_neighbors: 6.0
+    acu_crowd_width_neighbors: 4.0
+    acu_crowd_factor_max: 2.0
+    acu_max_dt_s: 0.05
+    acu_log_period_ms: 1000
+
+    enable_cluster_u_turn: true
+    cluster_u_turn_duration_ms: 1500
+    enable_wall_avoidance: true
+    main_led_display: angle
+
+# Produced first by examples/magnetometer_calibration with the paired file.
+flash_state:
+    input_file: "acu.pgflash"
+    output_file: "acu.pgflash"

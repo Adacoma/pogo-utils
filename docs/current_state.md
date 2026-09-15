@@ -1,6 +1,6 @@
 # Current project state
 
-Last updated: 2026-09-15.
+Last updated: 2026-09-16.
 
 This file is a concise engineering and scientific handoff. Statements under
 "Understood" describe the current implementation, not guarantees established
@@ -25,6 +25,8 @@ by hardware or experimental validation.
   simulator run or physical-robot experiment has been performed.
 - Pogosim's flash-state lifecycle and installed user-flash API, including its
   whole-64-KiB erase and 256-byte page operations.
+- The linked `libs/ACU-selfadapt` ACU law, fixed-genotype configuration, and
+  separation between motility parameters and HIT/FT optimization machinery.
 
 ## Understood
 
@@ -68,6 +70,10 @@ by hardware or experimental validation.
   example stores a versioned, checksummed model and canonical steering sign in
   flash; magnetometer missions only load the model, adapt sign chirality, and
   warm their live sample window.
+- The new static ACU example uses five immutable motility parameters with the
+  current flash-heading, PID, kinematics, wall-recovery, and bounded wire
+  protocol stack. It does not link optimizer, fitness, genotype, HIT/FT, or
+  calibration-fitting code.
 
 ## What remains unknown
 
@@ -101,6 +107,11 @@ by hardware or experimental validation.
   compile. Focused host tests cover round trips, chirality, malformed records,
   model bounds, and failed-write verification. No Pogosim run or physical-robot
   experiment has been performed; broader validation remains open.
+- The static ACU simulator executable compiles without warnings and its paired
+  flash export/import YAML parses. It has not been launched in Pogosim or on
+  physical robots. Firmware compilation is currently blocked before source
+  compilation because this checkout's `pogobot-sdk` link lacks the referenced
+  `tools/variables.mak`.
 
 ## Current scientific decisions
 
@@ -121,6 +132,9 @@ The following choices are encoded in the current implementation:
 - Magnetometer flash records are portable by policy: they are checksummed and
   versioned but not bound to a robot or motor configuration. Application
   chirality, offset, filtering, and timeouts are not persisted.
+- ACU's fixed reference genotype is represented in physical units: beta
+  9 rad/s, sigma 0 rad/sqrt(s), speed 0.8, U-turn phase 0.4 pi, and crowding
+  depth 0. Local wall encounters start 1.5-second, hop-bounded U-turn events.
 
 These are implementation decisions, not yet documented experimental findings.
 
@@ -160,3 +174,6 @@ These are implementation decisions, not yet documented experimental findings.
 9. Flash the updated Vicsek firmware on representative robots and verify that
    induced heading dropouts and difficult wall escapes recover within the
    intended one-to-three-second interval without permanent violet stops.
+10. Run the paired ACU calibration/mission scenarios, compare its trajectory
+    statistics with the fixed reference controller, and then validate binary
+    size, RAM, timing, wall recovery, and collective turns on hardware.

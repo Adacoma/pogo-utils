@@ -6,7 +6,8 @@
 
 # Get the absolute path of the Makefile
 MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
-MAKEFILE_DIR := $(notdir $(patsubst %/,%,$(dir $(MAKEFILE_PATH))))
+# A sibling example may set its target name before including this shared file.
+MAKEFILE_DIR ?= $(notdir $(patsubst %/,%,$(dir $(MAKEFILE_PATH))))
 
 ##### Detect OS #####
 OS := $(shell uname)
