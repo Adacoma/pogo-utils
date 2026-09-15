@@ -90,6 +90,7 @@ examples/MLP_int8_dyn_act/MLP_int8_dyn_act
 examples/ssr/ssr
 examples/magnetometer_heading_detection/magnetometer_heading_detection
 examples/go_straight/go_straight
+examples/vicsek/vicsek
 
 # Generated figures
 *.pdf
