@@ -398,11 +398,12 @@ void mlp_i8_forward_ws(const mlp_i8_dyn_t *net,
                 break;
         }
 
-        /* advance hidden buffers if not output */
+        /* Advance hidden buffers if this was not the output layer. Select the
+         * next destination from the buffer just written so the following
+         * hidden layer never reads and writes the same workspace region. */
         if (layer != (uint8_t)(total_layers - 1u)) {
-            int8_t *tmp = cur;
             cur = layer_out;
-            nxt = (tmp == h1) ? h2 : h1;
+            nxt = (cur == h1) ? h2 : h1;
         }
     }
 }
