@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(pogo-utils VERSION 1.0.0 LANGUAGES C CXX)
+project(pogo-utils VERSION 0.1.0 LANGUAGES C CXX)
 include(GNUInstallDirs)
 
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules" ${CMAKE_MODULE_PATH})
@@ -112,4 +112,3 @@ foreach(EXAMPLE ${EXAMPLE_DIRS})
         add_dependencies(examples example_${EXAMPLE})
     endif()
 endforeach()
-
