@@ -79,22 +79,22 @@ static inline int16_t q1_15_from_q16_16(q16_16_t x) {
  * The operation is performed in 64-bit to detect overflow.
  */
 static inline q16_16_t q16_16_add(q16_16_t a, q16_16_t b) {
-    int32_t s = (int32_t)(a + b);
-    /* if overflow: signs of (s^a) and (s^b) differ at sign bit */
-    int32_t ov = ((s ^ a) & (s ^ b)) >> 31;
-    if (ov) return (s < 0) ? Q16_16_MIN : Q16_16_MAX; /* saturated */
-    return s;
-
+    /* Widen before adding: overflowing int32_t first would be undefined. */
+    const int64_t sum = (int64_t)a + (int64_t)b;
+    if (sum > (int64_t)Q16_16_MAX) return Q16_16_MAX;
+    if (sum < (int64_t)Q16_16_MIN) return Q16_16_MIN;
+    return (q16_16_t)sum;
 }
 
 /*
  * Q16.16 Subtraction with Saturation.
  */
 static inline q16_16_t q16_16_sub(q16_16_t a, q16_16_t b) {
-    int32_t s = (int32_t)(a - b);
-    int32_t ov = ((s ^ a) & (s ^ ~b)) >> 31;
-    if (ov) return (s < 0) ? Q16_16_MIN : Q16_16_MAX;
-    return s;
+    /* Widen before subtracting for defined overflow detection and clamping. */
+    const int64_t difference = (int64_t)a - (int64_t)b;
+    if (difference > (int64_t)Q16_16_MAX) return Q16_16_MAX;
+    if (difference < (int64_t)Q16_16_MIN) return Q16_16_MIN;
+    return (q16_16_t)difference;
 }
 
 /* --- Multiply: one 64-bit product, then down-shift and saturate --- */
@@ -126,13 +126,11 @@ static inline int32_t q16_16_mul32_r(int32_t a, int32_t b) {
 }
 
 
-/* --- Branch-free saturating abs (handles INT32_MIN -> Q16_16_MAX) --- */
+/* --- Saturating abs (handles INT32_MIN -> Q16_16_MAX) --- */
 static inline q16_16_t q16_16_abs(q16_16_t x) {
-    /* Standard branch-free abs, then fix INT_MIN to saturate */
-    int32_t m = x >> 31;                 /* all 1s if negative, else 0 */
-    int32_t v = (x ^ m) - m;             /* abs w/o branch */
-    /* If x == INT_MIN, v overflows back to INT_MIN => saturate to MAX */
-    return (v == Q16_16_MIN) ? Q16_16_MAX : v;
+    /* Negating INT32_MIN is undefined, so handle its saturation explicitly. */
+    if (x == Q16_16_MIN) return Q16_16_MAX;
+    return (x < 0) ? (q16_16_t)-x : x;
 }
 
 #define Q16_16_RECIP_TABLE_SIZE 256
