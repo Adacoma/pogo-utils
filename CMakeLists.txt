@@ -69,7 +69,8 @@ install(TARGETS ${PROJECT_NAME}
 # Install header files
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/src/pogo-utils/  # Path to the header files
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}  # Install location
-    FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"  # Only install .h and .hpp files
+    FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"  # Only install public headers
+    PATTERN "*_internal.h" EXCLUDE
 )
 
 # Generate and install CMake config files
@@ -87,6 +88,13 @@ install(FILES
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(test_flash_file
+        tests/test_flash_file.c)
+    target_link_libraries(test_flash_file
+        PRIVATE ${PROJECT_NAME})
+    add_test(NAME flash_file
+        COMMAND test_flash_file)
+
     add_executable(test_magnetometer_calibration_flash
         tests/test_magnetometer_calibration_flash.c)
     target_link_libraries(test_magnetometer_calibration_flash

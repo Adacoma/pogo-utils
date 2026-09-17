@@ -1090,6 +1090,8 @@ bool magnetometer_heading_detection_install_model(
 
 #if defined(MHD_BUILD_CALIBRATION)
 
+/* Populate one complete, internally consistent policy. memset also initializes
+ * any future reserved fields to zero before explicit defaults are assigned. */
 void magnetometer_heading_calibration_config_default(
     magnetometer_heading_calibration_config_t *config) {
     if (config == NULL) {
@@ -1113,6 +1115,8 @@ void magnetometer_heading_calibration_init(magnetometer_heading_calibration_t *c
     if (cal == NULL) {
         return;
     }
+    /* This intentionally clears the large sample/scratch arrays as well as the
+     * visible counters, making reuse deterministic after READY or FAILED. */
     memset(cal, 0, sizeof(*cal));
     magnetometer_heading_calibration_config_default(&cal->config);
     cal->state = MAGNETOMETER_HEADING_CAL_IDLE;
@@ -1125,6 +1129,8 @@ bool magnetometer_heading_calibration_add_sample(
         cal->n_collected >= N_CAL) {
         return false;
     }
+    /* Offline samples bypass median and spacing filters by design; replay/test
+     * callers are responsible for supplying representative full-rotation data. */
     uint16_t i = cal->n_collected;
     cal->samples[i][0] = mx;
     cal->samples[i][1] = my;
@@ -1199,6 +1205,8 @@ static bool deadline_reached(uint32_t now, uint32_t deadline) {
 
 static void collection_next_interval(magnetometer_heading_calibration_t *cal,
                                      uint32_t now) {
+    /* This helper is the single gate deciding whether acquisition continues or
+     * the state machine exposes FITTING/stop to the application. */
     if (cal->n_collected >= cal->config.target_points ||
         cal->attempts >= cal->config.max_attempts) {
         /* Do not fit yet. Expose a STOP request first; next tick performs math.
@@ -1206,6 +1214,7 @@ static void collection_next_interval(magnetometer_heading_calibration_t *cal,
         cal->state = MAGNETOMETER_HEADING_CAL_FITTING;
         return;
     }
+    /* attempts counts point-acquisition intervals, not individual sensor reads. */
     cal->attempts++;
     cal->deadline_ms = now + cal->step_ms;
     cal->state = MAGNETOMETER_HEADING_CAL_ROTATING;
@@ -1236,6 +1245,8 @@ bool magnetometer_heading_calibration_start(
 
 bool magnetometer_heading_calibration_wants_rotation(
     const magnetometer_heading_calibration_t *cal) {
+    /* Manual collection deliberately returns false: the caller/user supplies
+     * motion externally while still respecting settling and reading phases. */
     return cal != NULL && cal->state == MAGNETOMETER_HEADING_CAL_ROTATING &&
            cal->config.automatic_rotation;
 }
@@ -1289,9 +1300,13 @@ magnetometer_heading_calibration_state_t magnetometer_heading_calibration_step(
         cal->state = MAGNETOMETER_HEADING_CAL_FAILED;
         return cal->state;
     }
+    /* Capture one timestamp for state/deadline decisions. Sensor reads below may
+     * block, so scheduling the next read uses a fresh time after each attempt. */
     const uint32_t now = (uint32_t)current_time_milliseconds();
     switch (cal->state) {
     case MAGNETOMETER_HEADING_CAL_ROTATING:
+        /* The library requests motion but never owns motors. When the interval
+         * ends, the returned SETTLING state tells the application to stop. */
         if (deadline_reached(now, cal->deadline_ms)) {
             cal->deadline_ms = now + cal->config.settle_ms;
             cal->state = MAGNETOMETER_HEADING_CAL_SETTLING;
@@ -1299,6 +1314,7 @@ magnetometer_heading_calibration_state_t magnetometer_heading_calibration_step(
         break;
 
     case MAGNETOMETER_HEADING_CAL_SETTLING:
+        /* Waiting before reads reduces motor-field/mechanical-transient bias. */
         if (deadline_reached(now, cal->deadline_ms)) {
             int16_t mx;
             int16_t my;
@@ -1313,6 +1329,7 @@ magnetometer_heading_calibration_state_t magnetometer_heading_calibration_step(
         break;
 
     case MAGNETOMETER_HEADING_CAL_READING: {
+        /* At most one sensor access per step keeps acquisition cooperative. */
         if (!deadline_reached(now, cal->reader_next_ms)) {
             break;
         }
@@ -1355,6 +1372,8 @@ magnetometer_heading_calibration_state_t magnetometer_heading_calibration_step(
     }
 
     case MAGNETOMETER_HEADING_CAL_FITTING:
+        /* Synchronous numerical work occurs only after a prior tick exposed a
+         * non-rotating FITTING state, giving the application time to stop. */
         (void)magnetometer_heading_detection_calibrate(hd, cal);
         break;
 
@@ -1372,6 +1391,7 @@ magnetometer_heading_calibration_state_t magnetometer_heading_calibration_step(
 }
 
 const char *magnetometer_heading_error_string(magnetometer_heading_error_t error) {
+    /* Static strings keep diagnostics available without heap or printf floats. */
     switch (error) {
     case MAGNETOMETER_HEADING_OK: return "ok";
     case MAGNETOMETER_HEADING_INVALID_ARGUMENT: return "invalid argument or state";

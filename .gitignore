@@ -103,3 +103,7 @@ examples/acu/acu
 *.bak
 *.old
 tmp/
+
+# External libs
+libs/
+

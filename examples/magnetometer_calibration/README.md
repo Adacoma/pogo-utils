@@ -5,9 +5,16 @@ It rotates each robot using its stored motor calibration, stores the fitted
 heading model in user flash, reads it back, and then remains stopped with a green
 LED. Amber means calibration is in progress; violet means a permanent failure.
 
-**Warning:** a successful calibration erases the complete 64 KiB user-writable
-flash section before writing page 0. Do not run it when other user-flash data
-must be retained.
+The first calibration on an unformatted user section initializes the two-page
+flash-file catalog and therefore erases the complete 64 KiB section. Later
+calibrations replace the fixed-size `magnetometer_calibration` file without
+changing its allocation or deleting other catalog files.
+
+Pogosim v0.10.10 may leave a new robot's flash array with allocator residue.
+For simulator builds, this calibration example treats an unrecognized page as
+first-use storage and formats it. A page already marked `PFFS` but failing
+catalog checks is not reformatted. Physical-robot builds do not apply this
+workaround to unknown data.
 
 In Pogosim, first run this executable with an export configuration whose robot
 categories and IDs exactly match the later mission. Then run the mission with a

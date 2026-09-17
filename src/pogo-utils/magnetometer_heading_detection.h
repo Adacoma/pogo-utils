@@ -40,6 +40,16 @@
  *   angle; CCW negates it; the configured offset is added afterward.
  *   Public angles are radians in (-pi, pi]. This canonicalizes the -pi endpoint
  *   to +pi, unlike the old controller's inclusive [-pi, pi] wrapper.
+ *
+ * Cooperative calibration state flow:
+ *
+ *   IDLE -> ROTATING -> SETTLING -> READING --accepted/rejected--> ROTATING
+ *                                      | enough points/attempts
+ *                                      v
+ *                                   FITTING -> READY or FAILED
+ *
+ * The application must apply motor commands after every step according to
+ * magnetometer_heading_calibration_wants_rotation(). No state owns the motors.
  */
 
 #include "pogobase.h"
@@ -141,18 +151,18 @@ typedef struct {
  * The float map is always retained as a fallback.
  */
 typedef struct {
-    float mean[3];
-    float e1[3];
-    float e2[3];
-    float u0;
-    float v0;
-    float w2[2][2];
-    float s_norm;
-    float affine[2][3];
-    float bias[2];
-    int32_t reference[3];
-    int32_t affine_q15[2][3];
-    int32_t bias_q2[2];
+    float mean[3];       /**< Mean raw vector; origin for fitted plane. */
+    float e1[3];         /**< First body-anchored basis vector in fitted plane. */
+    float e2[3];         /**< Orthogonal second vector completing plane basis. */
+    float u0;            /**< Ellipse center along projected e1 coordinate. */
+    float v0;            /**< Ellipse center along projected e2 coordinate. */
+    float w2[2][2];      /**< Symmetric 2-D ellipse-to-circle correction. */
+    float s_norm;        /**< Common normalization used while fitting conic. */
+    float affine[2][3];  /**< Precomposed raw-delta to corrected 2-D map. */
+    float bias[2];       /**< Precomposed float-map translation. */
+    int32_t reference[3]; /**< Integer origin subtracted by fixed-point path. */
+    int32_t affine_q15[2][3]; /**< Q15 direction map with a common scale. */
+    int32_t bias_q2[2];  /**< Fixed-map bias in the implementation's Q2 units. */
     int n_bins_used;             /**< Last refinement's occupied sectors. */
     bool fit_ok;
     bool fixed_ready;
@@ -216,31 +226,31 @@ typedef struct {
  * Samples are medians rounded to int16, exactly as in the optimized controller.
  */
 typedef struct {
-    magnetometer_heading_calibration_state_t state;
-    magnetometer_heading_error_t error;
-    magnetometer_heading_calibration_config_t config;
-    uint16_t n_collected;
-    uint16_t attempts;
-    uint32_t step_ms;
-    uint32_t deadline_ms;
-    int16_t samples[MAGNETOMETER_HEADING_CAL_CAPACITY][3];
-    int32_t last_sample_x2[3];
-    bool have_last_sample;
+    magnetometer_heading_calibration_state_t state; /**< Cooperative phase. */
+    magnetometer_heading_error_t error; /**< Terminal fit/config error detail. */
+    magnetometer_heading_calibration_config_t config; /**< Validated policy copy. */
+    uint16_t n_collected; /**< Accepted median vectors currently in samples. */
+    uint16_t attempts;    /**< Completed point attempts, accepted or rejected. */
+    uint32_t step_ms;     /**< Current adaptive rotation-interval duration. */
+    uint32_t deadline_ms; /**< Wrap-safe deadline for active phase. */
+    int16_t samples[MAGNETOMETER_HEADING_CAL_CAPACITY][3]; /**< Accepted XYZ medians. */
+    int32_t last_sample_x2[3]; /**< Twice previous median for exact half counts. */
+    bool have_last_sample; /**< Whether distance rejection has a predecessor. */
 
-    uint8_t reader_count;
-    uint8_t reader_attempts;
-    uint32_t reader_next_ms;
-    int16_t reader_x[MAGNETOMETER_HEADING_CAL_READER_CAPACITY];
-    int16_t reader_y[MAGNETOMETER_HEADING_CAL_READER_CAPACITY];
-    int16_t reader_z[MAGNETOMETER_HEADING_CAL_READER_CAPACITY];
+    uint8_t reader_count;    /**< Successful raw reads in current median batch. */
+    uint8_t reader_attempts; /**< Reads tried in current batch, including failures. */
+    uint32_t reader_next_ms; /**< Earliest time for next nonblocking attempt. */
+    int16_t reader_x[MAGNETOMETER_HEADING_CAL_READER_CAPACITY]; /**< X batch scratch. */
+    int16_t reader_y[MAGNETOMETER_HEADING_CAL_READER_CAPACITY]; /**< Y batch scratch. */
+    int16_t reader_z[MAGNETOMETER_HEADING_CAL_READER_CAPACITY]; /**< Z batch scratch. */
 
-    float u_buf[MAGNETOMETER_HEADING_CAL_CAPACITY];
-    float v_buf[MAGNETOMETER_HEADING_CAL_CAPACITY];
-    float bin_su[MAGNETOMETER_HEADING_CAL_BINS];
-    float bin_sv[MAGNETOMETER_HEADING_CAL_BINS];
-    int bin_n[MAGNETOMETER_HEADING_CAL_BINS];
-    float bin_mu[MAGNETOMETER_HEADING_CAL_BINS];
-    float bin_mv[MAGNETOMETER_HEADING_CAL_BINS];
+    float u_buf[MAGNETOMETER_HEADING_CAL_CAPACITY]; /**< Projected plane coordinate. */
+    float v_buf[MAGNETOMETER_HEADING_CAL_CAPACITY]; /**< Projected plane coordinate. */
+    float bin_su[MAGNETOMETER_HEADING_CAL_BINS]; /**< Per-sector u sums. */
+    float bin_sv[MAGNETOMETER_HEADING_CAL_BINS]; /**< Per-sector v sums. */
+    int bin_n[MAGNETOMETER_HEADING_CAL_BINS]; /**< Per-sector sample counts. */
+    float bin_mu[MAGNETOMETER_HEADING_CAL_BINS]; /**< Occupied-sector u means. */
+    float bin_mv[MAGNETOMETER_HEADING_CAL_BINS]; /**< Occupied-sector v means. */
     /* A candidate is fitted here. Only a successful fit replaces hd->model;
      * a failed recalibration never destroys an earlier valid detector model. */
     magnetometer_heading_model_t candidate;

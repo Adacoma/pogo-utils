@@ -1,6 +1,6 @@
 # Current project state
 
-Last updated: 2026-09-16.
+Last updated: 2026-09-17.
 
 This file is a concise engineering and scientific handoff. Statements under
 "Understood" describe the current implementation, not guarantees established
@@ -20,11 +20,15 @@ by hardware or experimental validation.
 - All example categories and the available Pogosim configuration files, with
   closer inspection of the current kinematics, Vicsek, SSR, and distributed
   MNIST integrations.
-- Existing build artifacts and repository cleanliness. A fresh temporary
-  library/example build and focused host test have now been performed; no
-  simulator run or physical-robot experiment has been performed.
+- Existing build artifacts and repository cleanliness. Fresh temporary
+  library/example builds, focused host tests, and headless and GUI-paced
+  calibration simulator runs have been performed; no physical-robot experiment
+  has been performed.
 - Pogosim's flash-state lifecycle and installed user-flash API, including its
   whole-64-KiB erase and 256-byte page operations.
+- The new bounded flash-file format: two catalog pages, ten stable ID slots,
+  optional names, contiguous one-to-eight-page files, and fixed-size in-place
+  replacement under the platform page-rewrite assumption.
 - The linked `libs/ACU-selfadapt` ACU law, fixed-genotype configuration, and
   separation between motility parameters and HIT/FT optimization machinery.
 
@@ -70,6 +74,10 @@ by hardware or experimental validation.
   example stores a versioned, checksummed model and canonical steering sign in
   flash; magnetometer missions only load the model, adapt sign chirality, and
   warm their live sample window.
+- Magnetometer calibration now uses reserved flash-file ID 1 and preserves
+  unrelated catalog files after initial formatting. Raw-page loading and the
+  old destructive erase/store API have been removed; old flash images require
+  recalibration into the catalog format.
 - The new static ACU example uses five immutable motility parameters with the
   current flash-heading, PID, kinematics, wall-recovery, and bounded wire
   protocol stack. It does not link optimizer, fitness, genotype, HIT/FT, or
@@ -105,13 +113,25 @@ by hardware or experimental validation.
   remains pending.
 - The library, calibration example, and five flash-loading simulator targets
   compile. Focused host tests cover round trips, chirality, malformed records,
-  model bounds, and failed-write verification. No Pogosim run or physical-robot
-  experiment has been performed; broader validation remains open.
+  model bounds, and failed-write verification. A GUI-paced run with Pogosim's
+  mixed uninitialized flash contents now formats and stores all four calibration
+  records successfully; mission import and physical-robot validation remain
+  open.
 - The static ACU simulator executable compiles without warnings and its paired
   flash export/import YAML parses. It has not been launched in Pogosim or on
   physical robots. Firmware compilation is currently blocked before source
   compilation because this checkout's `pogobot-sdk` link lacks the referenced
   `tools/variables.mak`.
+- Flash-file host tests cover formatting, direct-ID and name lookup, both
+  catalog pages, fast and secure reads, multi-page CRCs, fixed-size replacement,
+  deletion/reuse, damaged catalogs/data, verification failure, and preservation
+  of an unrelated file during magnetometer replacement. Pogosim v0.10.10 can
+  expose uninitialized allocator contents as fresh flash. Simulator calibration
+  formats unrecognized non-catalog data, while malformed `PFFS` catalogs still
+  fail closed and physical-robot builds retain conservative handling.
+- Flash-file and magnetometer-calibration production sources now document their
+  serialized byte layouts, ownership and RAM assumptions, state transitions,
+  numerical conventions, mutation ordering, and failure semantics in place.
 
 ## Current scientific decisions
 
@@ -135,6 +155,9 @@ The following choices are encoded in the current implementation:
 - ACU's fixed reference genotype is represented in physical units: beta
   9 rad/s, sigma 0 rad/sqrt(s), speed 0.8, U-turn phase 0.4 pi, and crowding
   depth 0. Local wall encounters start 1.5-second, hop-bounded U-turn events.
+- Flash-file IDs, page counts, and extents are bounded. Fast reads skip CRCs;
+  secure reads validate the selected catalog and complete file. Replacement is
+  deliberately in-place and non-transactional, and cannot resize a file.
 
 These are implementation decisions, not yet documented experimental findings.
 

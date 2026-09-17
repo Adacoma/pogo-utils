@@ -38,6 +38,9 @@ the repository does not provide a single central runtime.
   [`flash API`](../src/pogo-utils/magnetometer_calibration_flash.h) stores and
   loads versioned, checksummed models. See the
   [`dedicated example`](../examples/magnetometer_calibration).
+- [`flash_file`](../src/pogo-utils/flash_file.h) provides the bounded two-page
+  catalog used for persistent full-page files. Its [design notes](flash_files.md)
+  document stable IDs, fast and secure readers, and replacement constraints.
 - [`heading_PID`](../src/pogo-utils/heading_PID.h) performs heading control
   without owning sensor, clock, or motor I/O.
 - [`wall_avoidance_magnetometer`](../src/pogo-utils/wall_avoidance_magnetometer.h)
