@@ -95,6 +95,19 @@ if(BUILD_TESTING)
     add_test(NAME flash_file
         COMMAND test_flash_file)
 
+    # Compile the physical erase branch against a strict NOR page-program
+    # model; the regular simulator mock permits overwriting without erase.
+    add_executable(test_flash_file_nor
+        tests/test_flash_file_nor.c
+        src/pogo-utils/flash_file_read.c
+        src/pogo-utils/flash_file_secure.c
+        src/pogo-utils/flash_file_write.c
+        src/pogo-utils/flash_file_status.c)
+    target_include_directories(test_flash_file_nor PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/stubs ${CMAKE_SOURCE_DIR})
+    target_compile_definitions(test_flash_file_nor PRIVATE REAL_ROBOT)
+    add_test(NAME flash_file_nor COMMAND test_flash_file_nor)
+
     add_executable(test_magnetometer_calibration_flash
         tests/test_magnetometer_calibration_flash.c)
     target_link_libraries(test_magnetometer_calibration_flash

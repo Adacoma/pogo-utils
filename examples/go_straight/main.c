@@ -34,6 +34,7 @@
 #endif
 
 #define PI_F MAGNETOMETER_HEADING_PI_F
+#define RUNTIME_RECOVERY_PAUSE_MS 500u
 
 #ifndef ENABLE_PID_UART
 #define ENABLE_PID_UART 0
@@ -117,7 +118,8 @@ main_led_display_type_t main_led_display_enum = SHOW_ANGLE;
 typedef enum {
     CONTROLLER_WARMING = 0,
     CONTROLLER_STRAIGHT = 1,
-    CONTROLLER_FATAL = 2
+    CONTROLLER_FATAL = 2,
+    CONTROLLER_RECOVERING = 3 /**< Post-start motion fault; never latched. */
 } controller_state_t;
 
 typedef struct {
@@ -128,6 +130,7 @@ typedef struct {
     uint32_t heading_reference_id;
     controller_state_t controller_state;
     uint32_t controller_phase_started_ms;
+    uint32_t runtime_recovery_count; /**< Saturating count of post-start resets. */
     int8_t effective_pid_steering_sign;
     bool pid_sign_estimated;
     float pid_sign_confidence;
@@ -227,6 +230,33 @@ static void straight_enter(void) {
            mydata->pid_sign_estimated ? 1 : 0,
            round_float_to_int(mydata->pid_sign_confidence * 1000.0f));
     pogobot_led_setColor(0, 0, 255);
+}
+
+/** Recover a runtime motion fault without discarding flash calibration.
+ * A hand-moved robot can produce a heading jump while turning; both the wall
+ * state and coordinator latch that fault until explicitly reset. The pause
+ * below lets motion settle and refills the live median before a new target is
+ * acquired. Genuine setup failures remain in CONTROLLER_FATAL instead. */
+static void begin_runtime_recovery(uint32_t now) {
+    wa_magnetometer_fault_t fault = mydata->drive.wall_output.fault;
+    if (fault == WA_MAGNETOMETER_FAULT_NONE) {
+        fault = mydata->drive.wa.fault;
+    }
+    if (mydata->runtime_recovery_count != UINT32_MAX) {
+        ++mydata->runtime_recovery_count;
+    }
+    printf("# RECOVERY_START,robot=%u,ms=%lu,count=%lu,drive_fault=%u,wall_fault=%s\n",
+           (unsigned)pogobot_helper_getid(), (unsigned long)now,
+           (unsigned long)mydata->runtime_recovery_count,
+           (unsigned)mydata->drive.fault,
+           wall_avoidance_magnetometer_fault_string(fault));
+    diff_drive_kin_reset(&mydata->drive);
+    magnetometer_heading_detection_reset_filter(&mydata->heading_detection);
+    /* Remove LED indications derived from discarded wall observations. */
+    wall_avoidance_magnetometer_update_leds(&mydata->drive.wa, now);
+    mydata->controller_state = CONTROLLER_RECOVERING;
+    mydata->controller_phase_started_ms = now;
+    motor_stop();
 }
 
 
@@ -340,6 +370,11 @@ static void update_main_led(void) {
         return;
     }
 
+    if (mydata->controller_state == CONTROLLER_RECOVERING) {
+        pogobot_led_setColor(25, 8, 0); /* Short stopped recovery, not fatal. */
+        return;
+    }
+
     if (mydata->controller_state == CONTROLLER_FATAL) {
         pogobot_led_setColor(255, 0, 255);
         return;
@@ -352,7 +387,7 @@ static void update_main_led(void) {
     }
     uint32_t now = now_ms();
     if (!magnetometer_heading_is_fresh(now)) {
-        pogobot_led_setColor(255, 0, 255);
+        pogobot_led_setColor(25, 8, 0); /* Runtime sensor outage may recover. */
         return;
     }
 
@@ -544,6 +579,27 @@ void user_step(void) {
         update_main_led();
         return;
     }
+    if (mydata->controller_state == CONTROLLER_RECOVERING) {
+        motor_stop();
+        (void)magnetometer_heading_update();
+        uint32_t now = now_ms();
+        heading_sample_t input = heading_snapshot(now);
+        /* Twenty-Hz sensing continues while stopped. The filter must provide
+         * a fresh heading after at least 500 ms before normal control resumes.
+         * If sensing or motor validity is unavailable, keep retrying without
+         * claiming that normal motion has resumed. */
+        if ((uint32_t)(now - mydata->controller_phase_started_ms) >=
+                RUNTIME_RECOVERY_PAUSE_MS &&
+            input.valid && mydata->drive.fault == DDK_FAULT_NONE) {
+            mydata->controller_state = CONTROLLER_STRAIGHT;
+            mydata->last_pid_log_ms = now;
+            printf("# RECOVERY_RESUME,robot=%u,ms=%lu,paused_ms=%lu\n",
+                   (unsigned)pogobot_helper_getid(), (unsigned long)now,
+                   (unsigned long)(uint32_t)(now - mydata->controller_phase_started_ms));
+        }
+        update_main_led();
+        return;
+    }
 
     if (mydata->drive.config.avoidance_enabled != enable_wall_avoidance) {
         diff_drive_kin_set_avoidance_enabled(&mydata->drive, enable_wall_avoidance);
@@ -558,6 +614,14 @@ void user_step(void) {
         (float)forward_speed / (float)motorFull, 0.0f, &input, now);
     wall_avoidance_magnetometer_update_leds(&mydata->drive.wa, now);
     wall_log_step(now);
+    if (mydata->drive.fault != DDK_FAULT_NONE ||
+        mydata->drive.wall_output.fault != WA_MAGNETOMETER_FAULT_NONE ||
+        mydata->drive.wa.fault != WA_MAGNETOMETER_FAULT_NONE) {
+        /* Log the latched cause before reset, then restart after a short pause.
+         * A continuing physical blockage can cause another bounded recovery,
+         * but it cannot strand the software in its FAULT state forever. */
+        begin_runtime_recovery(now);
+    }
     update_main_led();
     pid_log_step(now);
 }

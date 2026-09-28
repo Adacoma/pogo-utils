@@ -25,6 +25,12 @@ _Static_assert(POGO_FLASH_FILE_CATALOG_HEADER_SIZE +
 _Static_assert(POGO_FLASH_FILE_MAX_FILES ==
     POGO_FLASH_FILE_CATALOG_PAGES * POGO_FLASH_FILE_ENTRIES_PER_CATALOG,
     "stable IDs must map exactly onto catalog slots");
+_Static_assert(POGO_FLASH_FILE_ERASE_SECTOR_PAGES *
+    POGO_FLASH_FILE_PAGE_SIZE == 4096 &&
+    POGO_FLASH_FILE_MAX_PAGES <= POGO_FLASH_FILE_ERASE_SECTOR_PAGES &&
+    POGO_FLASH_FILE_DATA_FIRST_PAGE == POGO_FLASH_FILE_ERASE_SECTOR_PAGES &&
+    POGO_FLASH_FILE_MAX_FILES < 256 / POGO_FLASH_FILE_ERASE_SECTOR_PAGES,
+    "each file needs one dedicated 4 KiB erase sector");
 
 uint16_t pogo_flash_file_internal_get_u16(const uint8_t *p) {
     /* Byte assembly is valid for unaligned buffers and every host endianness. */
@@ -41,7 +47,7 @@ bool pogo_flash_file_internal_catalog_header_valid(
     const uint8_t page[POGO_FLASH_FILE_PAGE_SIZE],
     uint8_t expected_catalog_index) {
     /* Header byte 7 is reserved. Requiring zero makes future incompatible
-     * layouts fail explicitly instead of being misread as version 1. */
+     * layouts fail explicitly instead of being misread as version 2. */
     return memcmp(page, catalog_magic, sizeof(catalog_magic)) == 0 &&
         page[4] == POGO_FLASH_FILE_CATALOG_VERSION &&
         page[5] == expected_catalog_index &&
@@ -79,6 +85,8 @@ bool pogo_flash_file_internal_decode_entry(
         entry[1] != 0u || page_count == 0u ||
         page_count > POGO_FLASH_FILE_MAX_PAGES ||
         first_page < POGO_FLASH_FILE_DATA_FIRST_PAGE || end_page > 256u ||
+        first_page % POGO_FLASH_FILE_ERASE_SECTOR_PAGES != 0u ||
+        end_page > (unsigned)first_page + POGO_FLASH_FILE_ERASE_SECTOR_PAGES ||
         name_length > POGO_FLASH_FILE_MAX_NAME) {
         return false;
     }

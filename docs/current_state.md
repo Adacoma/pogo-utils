@@ -22,13 +22,13 @@ by hardware or experimental validation.
   MNIST integrations.
 - Existing build artifacts and repository cleanliness. Fresh temporary
   library/example builds, focused host tests, and headless and GUI-paced
-  calibration simulator runs have been performed; no physical-robot experiment
-  has been performed.
+  calibration simulator runs have been performed. Physical-robot evidence so
+  far comes from user-reported serial output for robot 23342.
 - Pogosim's flash-state lifecycle and installed user-flash API, including its
-  whole-64-KiB erase and 256-byte page operations.
-- The new bounded flash-file format: two catalog pages, ten stable ID slots,
-  optional names, contiguous one-to-eight-page files, and fixed-size in-place
-  replacement under the platform page-rewrite assumption.
+  whole-64-KiB erase and 256-byte page operations; the physical SPI driver
+  additionally exposes 4 KiB sector erase.
+- The bounded flash-file v2 layout: two catalog pages in one erase sector,
+  ten stable ID slots, and one dedicated data sector per 1-to-8-page file.
 - The linked `libs/ACU-selfadapt` ACU law, fixed-genotype configuration, and
   separation between motility parameters and HIT/FT optimization machinery.
 
@@ -70,6 +70,10 @@ by hardware or experimental validation.
   startup now trigger a local state reset instead of permanently latching
   the coordinator in STOP. Calibration and its heading reference are retained;
   the coordinator, avoidance state, and heading median window are reset.
+- `go_straight` now resets post-start motion faults, pauses for at least 500 ms
+  while refilling its heading window, and resumes with a fresh heading without
+  recalibration. Permanent sensor or motor failure can still prevent safe
+  motion. Physical validation is pending.
 - Magnetometer collection/fitting is now separately linked. Its dedicated
   example stores a versioned, checksummed model and canonical steering sign in
   flash; magnetometer missions only load the model, adapt sign chirality, and
@@ -125,17 +129,31 @@ by hardware or experimental validation.
 - Flash-file host tests cover formatting, direct-ID and name lookup, both
   catalog pages, fast and secure reads, multi-page CRCs, fixed-size replacement,
   deletion/reuse, damaged catalogs/data, verification failure, and preservation
-  of an unrelated file during magnetometer replacement. Pogosim v0.10.10 can
-  expose uninitialized allocator contents as fresh flash. Simulator calibration
-  formats unrecognized non-catalog data, while malformed `PFFS` catalogs still
-  fail closed and physical-robot builds retain conservative handling.
+  of an unrelated file during magnetometer replacement. A separate v2 host
+  test models NOR programming as bitwise AND and checks sector erasure and
+  preservation across create/replace/delete. Create now autoformats absent or
+  corrupt catalogs, deliberately erasing all user files; read-only paths never
+  do so. Pogosim v0.10.10 can expose uninitialized allocator contents as flash.
 - Flash-file and magnetometer-calibration production sources now document their
   serialized byte layouts, ownership and RAM assumptions, state transitions,
   numerical conventions, mutation ordering, and failure semantics in place.
 - A read-only `examples/flash_file` inventory now scans stable IDs 1..10,
-  reports each file's catalog metadata, and validates catalog/data CRCs. Its
+  reports each file's catalog metadata, and validates both catalog CRCs even
+  when slots are empty, plus every occupied file's data CRC. Its
   short Pogosim configuration imports the four-robot magnetometer archive.
-  This example has not yet been compiled or simulated in this session.
+  On robot 23342, the earlier inventory reported ten empty slots after the
+  calibration program stopped with a violet fatal LED. Its serial log reported
+  `MAG_CAL_FATAL` with `flash-file catalog error` and a 354 ms step against a
+  50 ms budget. A later read-only inventory found page 0's CRC stored as
+  `90012c70` versus `98092d7b` calculated, with empty slot and generation
+  bytes still zero. The calculated value is exactly an empty v1 page-0 CRC;
+  the stored CRC contains only a subset of its one bits, consistent with
+  programming NOR flash without erasing first. The v2 writer erases dedicated
+  4 KiB sectors; calibration logs exact PFFS failures and gives fitting/storage
+  separate 1 Hz ticks. On robot 23342, explicit v2 format completed; subsequent
+  calibration reached green and inventory found ID 1 at page 16 with valid CRC,
+  one occupied and nine empty slots. Autoformat on another physical robot is
+  not yet validated.
 
 ## Current scientific decisions
 
@@ -159,9 +177,9 @@ The following choices are encoded in the current implementation:
 - ACU's fixed reference genotype is represented in physical units: beta
   9 rad/s, sigma 0 rad/sqrt(s), speed 0.8, U-turn phase 0.4 pi, and crowding
   depth 0. Local wall encounters start 1.5-second, hop-bounded U-turn events.
-- Flash-file IDs, page counts, and extents are bounded. Fast reads skip CRCs;
-  secure reads validate the selected catalog and complete file. Replacement is
-  deliberately in-place and non-transactional, and cannot resize a file.
+- Flash-file IDs, page counts, and sectors are bounded. Fast reads skip CRCs;
+  secure reads validate the selected catalog and complete file. Replacement
+  erases and rewrites the same sector non-transactionally; it cannot resize a file.
 
 These are implementation decisions, not yet documented experimental findings.
 
@@ -191,17 +209,17 @@ These are implementation decisions, not yet documented experimental findings.
    legacy motion and wall-avoidance modules.
 5. Add host-side tests for platform-neutral numerics, angle/time wraparound,
    PID state transitions, optimizer invariants, and serialization boundaries.
-6. Build and run the new flash-file inventory against an exported calibration
-   archive, then run the paired magnetometer flash export/import scenarios and add
-   deterministic regressions for avoidance, Vicsek alignment, and SSR behavior.
+6. Validate create-time autoformat on a second physical robot with disposable
+   user-flash contents, then run paired Pogosim flash
+   export/import scenarios and deterministic motion regressions.
 7. Clarify licensing, compatibility guarantees, and the intended
    install/package interface.
 8. Record experimental hypotheses, metrics, datasets, configurations, and
    acceptance criteria before drawing scientific conclusions from simulations
    or robot runs.
-9. Flash the updated Vicsek firmware on representative robots and verify that
-   induced heading dropouts and difficult wall escapes recover within the
-   intended one-to-three-second interval without permanent violet stops.
+9. Flash the updated `go_straight` and Vicsek firmware on representative robots;
+   verify that manual heading jumps, transient read loss, and difficult wall
+   escapes recover without permanent violet stops, recording recovery logs.
 10. Run the paired ACU calibration/mission scenarios, compare its trajectory
     statistics with the fixed reference controller, and then validate binary
     size, RAM, timing, wall recovery, and collective turns on hardware.

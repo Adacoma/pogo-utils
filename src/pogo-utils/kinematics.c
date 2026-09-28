@@ -114,6 +114,9 @@ void diff_drive_kin_reset(ddk_t *ddk) {
     ddk->fault = calibrated_motors_is_valid(&ddk->motors) ?
         DDK_FAULT_NONE : DDK_FAULT_MOTOR_CALIBRATION;
     wall_avoidance_magnetometer_reset(&ddk->wa);
+    /* The wall reset defaults to enabled; restore the coordinator's requested
+     * mode so recovery cannot silently re-enable avoidance. */
+    wall_avoidance_magnetometer_set_enabled(&ddk->wa, ddk->config.avoidance_enabled);
     memset(&ddk->wall_output, 0, sizeof(ddk->wall_output));
     ddk->have_reference = false;
     ddk->have_input_timestamp = false;

@@ -8,14 +8,33 @@
  *
  * Policy is intentionally narrow: reserved ID 1 must be absent or already be a
  * one-page record of the current PMAG format. Its allocation is never resized,
- * renamed, or moved. Formatting is performed only on first use (plus the
- * documented Pogosim uninitialized-memory workaround below).
+ * renamed, or moved. Creating ID 1 also initializes an absent/corrupt PFFS
+ * catalog, which erases the full user section as requested by write policy.
  */
 #include "magnetometer_calibration_flash_internal.h"
 #include "flash_file.h"
 #include "pogobase.h"
 
-#include <string.h>
+#include <stdio.h>
+
+/** Log the exact PFFS operation and result before the public calibration API
+ * maps several low-level errors to one storage/verification status. The log is
+ * emitted only by the writer linked into calibration firmware. */
+static void report_flash_error(const char *stage,
+                               pogo_flash_file_status_t status) {
+    printf("# MAG_CAL_FLASH_ERROR,robot=%u,stage=%s,status=%u,reason=%s\n",
+           (unsigned)pogobot_helper_getid(), stage, (unsigned)status,
+           pogo_flash_file_status_string(status));
+}
+
+/** Make the destructive recovery decision visible in calibration's serial log.
+ * The generic create API also handles corruption in the other catalog page,
+ * which a direct-ID fast lookup may not inspect. */
+static void report_reformat(pogo_flash_file_status_t reason) {
+    printf("# MAG_CAL_FLASH_REFORMAT,robot=%u,reason=%s,"
+           "erases_all_user_files=1\n", (unsigned)pogobot_helper_getid(),
+           pogo_flash_file_status_string(reason));
+}
 
 magnetometer_calibration_flash_status_t
 magnetometer_calibration_flash_store(
@@ -31,39 +50,21 @@ magnetometer_calibration_flash_store(
     if (prepared != MAGNETOMETER_CALIBRATION_FLASH_OK) return prepared;
 
     pogo_flash_file_info_t info; /* Existing ID-1 allocation, when present. */
+    const char *stage = "find"; /* Report the operation that first failed. */
     pogo_flash_file_status_t file_status = pogo_flash_file_find(
         POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION, &info);
-#ifndef REAL_ROBOT
-    /* This branch is compiled out of physical firmware. It compensates for a
-     * Pogosim v0.10.10 construction bug, not for an old flash-file format. */
-    if (file_status == POGO_FLASH_FILE_CORRUPT_CATALOG) {
-        uint8_t catalog_page[MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE];
-        static const uint8_t catalog_magic[4] = {'P', 'F', 'F', 'S'};
-        read_page_flash(0u, (char *)catalog_page);
-        /* Pogosim v0.10.10 does not initialize a new robot's flash array, so
-         * it can contain allocator residue rather than 0x00 or erased 0xff.
-         * Simulator calibration may establish a catalog over such a page, but
-         * a recognizable damaged catalog still fails closed. */
-        if (memcmp(catalog_page, catalog_magic, sizeof(catalog_magic)) != 0) {
-            /* No PFFS signature means this simulator allocation has never held
-             * a recognizable catalog. The normal formatting path may claim it. */
-            file_status = POGO_FLASH_FILE_UNFORMATTED;
-        }
+    if (file_status == POGO_FLASH_FILE_UNFORMATTED ||
+        file_status == POGO_FLASH_FILE_CORRUPT_CATALOG) {
+        /* create() owns the format-and-retry policy. It will erase the entire
+         * user section, even if other records could have been recovered. */
+        report_reformat(file_status);
     }
-#endif
-    if (file_status == POGO_FLASH_FILE_UNFORMATTED) {
-        /* Formatting erases the complete user section. It is never attempted
-         * for an existing but malformed PFFS catalog. */
-        file_status = pogo_flash_file_format();
-        if (file_status != POGO_FLASH_FILE_OK)
-            return MAGNETOMETER_CALIBRATION_FLASH_VERIFY_FAILED;
-        /* A successful format creates two empty catalogs, so ID 1 is now known
-         * to be absent without performing another lookup. */
-        file_status = POGO_FLASH_FILE_NOT_FOUND;
-    }
-    if (file_status == POGO_FLASH_FILE_NOT_FOUND) {
-        /* Creation allocates one physical page and publishes the fixed name,
+    if (file_status == POGO_FLASH_FILE_NOT_FOUND ||
+        file_status == POGO_FLASH_FILE_UNFORMATTED ||
+        file_status == POGO_FLASH_FILE_CORRUPT_CATALOG) {
+        /* Creation initializes PFFS if needed, then publishes the fixed name,
          * payload version, CRC, and generation through catalog slot ID 1. */
+        stage = "create";
         file_status = pogo_flash_file_create(
             POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION,
             POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
@@ -73,14 +74,31 @@ magnetometer_calibration_flash_store(
          * payload schema. Replacement may change contents, never file shape. */
         if (info.page_count != 1u ||
             info.format_version != MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION) {
+            printf("# MAG_CAL_FLASH_ERROR,robot=%u,stage=existing-schema,"
+                   "pages=%u,version=%u\n",
+                   (unsigned)pogobot_helper_getid(), (unsigned)info.page_count,
+                   (unsigned)info.format_version);
             return MAGNETOMETER_CALIBRATION_FLASH_STORAGE_ERROR;
         }
+        stage = "replace";
         file_status = pogo_flash_file_replace(
             POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION, 1u, page);
+        if (file_status == POGO_FLASH_FILE_UNFORMATTED ||
+            file_status == POGO_FLASH_FILE_CORRUPT_CATALOG) {
+            /* find() reads only catalog 0. A damaged catalog 1 is discovered
+             * by the stronger replacement path; retry as destructive create. */
+            report_reformat(file_status);
+            stage = "create";
+            file_status = pogo_flash_file_create(
+                POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION,
+                POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
+                1u, MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION, page);
+        }
     }
     if (file_status != POGO_FLASH_FILE_OK) {
         /* Preserve the one public distinction calibration code can act on:
          * physical write/readback failure versus catalog/policy failure. */
+        report_flash_error(stage, file_status);
         return file_status == POGO_FLASH_FILE_VERIFY_FAILED ?
             MAGNETOMETER_CALIBRATION_FLASH_VERIFY_FAILED :
             MAGNETOMETER_CALIBRATION_FLASH_STORAGE_ERROR;

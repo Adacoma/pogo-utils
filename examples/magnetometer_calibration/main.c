@@ -28,6 +28,7 @@
 
 typedef enum {
     CALIBRATION_COLLECTING = 0, /**< Cooperative collector/fitter is active. */
+    CALIBRATION_STORE_PENDING,  /**< Fit completed; store on the next slow tick. */
     CALIBRATION_STORED,         /**< Flash verified; remain safely stopped. */
     CALIBRATION_FATAL           /**< Unrecoverable startup/fit/store failure. */
 } calibration_phase_t;
@@ -183,6 +184,12 @@ void user_step(void) {
         stop_and_set_led(0u, 25u, 0u);
         return;
     }
+    if (mydata->phase == CALIBRATION_STORE_PENDING) {
+        /* The 64 KiB erase and verified page writes can take hundreds of
+         * milliseconds on hardware. Keep that work out of the fitting tick. */
+        store_calibration();
+        return;
+    }
     /* step() performs at most one scheduled sensor read, except FITTING which
      * runs the bounded synchronous numerical fit. */
     magnetometer_heading_calibration_state_t state =
@@ -191,10 +198,19 @@ void user_step(void) {
      * stops motors on entry to SETTLING and before synchronous FITTING. */
     apply_requested_motion();
     if (mydata->phase == CALIBRATION_FATAL) return;
+    if (state == MAGNETOMETER_HEADING_CAL_FITTING) {
+        /* The collector enters FITTING on a previous tick. Slow the scheduler
+         * before its synchronous fit and the later flash-store tick; collecting
+         * samples retains the original 20 Hz cadence. */
+        main_loop_hz = 1;
+        return;
+    }
     if (state == MAGNETOMETER_HEADING_CAL_FAILED) {
         enter_fatal(magnetometer_heading_error_string(mydata->calibration.error));
     } else if (state == MAGNETOMETER_HEADING_CAL_READY) {
-        store_calibration();
+        /* Stop is already requested by READY. Defer flash work so the fit and
+         * nonvolatile writes each receive a separate one-second step budget. */
+        mydata->phase = CALIBRATION_STORE_PENDING;
     }
 }
 

@@ -7,21 +7,21 @@
  *
  * Catalog pages 0 and 1 contain five fixed slots each. Stable file IDs 1..10
  * map directly to those slots, so ID lookup reads exactly one catalog page.
- * Files occupy 1..8 contiguous, complete 256-byte pages starting at page 2.
+ * Files occupy 1..8 contiguous, complete 256-byte pages in separate 4 KiB
+ * erase sectors starting at page 16.
  * Human-readable names are optional metadata; IDs are the persistent identity.
  *
  * The fast reader checks structural bounds but deliberately skips CRC checks.
  * The secure reader checks the catalog CRC and the CRC of every file page.
- * Replacement writes an existing extent in place and is not transactional: an
- * interrupted write is detected by the secure reader but cannot restore the
- * previous contents. The platform must support rewriting the selected pages.
+ * Replacement erases and rewrites the file's dedicated sector. Catalog changes
+ * erase and rewrite the dedicated catalog sector. These operations are not
+ * transactional: interrupted writes are detected but cannot be rolled back.
  *
  * On-flash organization (all page numbers are relative to the 64 KiB writable
  * user section):
  *
- *   page 0     catalog for IDs 1..5
- *   page 1     catalog for IDs 6..10
- *   pages 2..255 data extents allocated by first fit
+ *   pages 0..15   dedicated catalog erase sector (pages 0 and 1 hold entries)
+ *   pages 16..255 dedicated data erase sectors, one per file
  *
  * There is no heap allocation, directory tree, variable-length byte stream,
  * compaction, or open-file state. A "file page" is always exactly one physical
@@ -44,7 +44,8 @@ extern "C" {
 enum {
     POGO_FLASH_FILE_PAGE_SIZE = 256,    /**< Physical and logical page size. */
     POGO_FLASH_FILE_CATALOG_PAGES = 2, /**< Reserved metadata pages 0 and 1. */
-    POGO_FLASH_FILE_DATA_FIRST_PAGE = 2, /**< First allocatable physical page. */
+    POGO_FLASH_FILE_ERASE_SECTOR_PAGES = 16, /**< 4 KiB sector in 256-byte pages. */
+    POGO_FLASH_FILE_DATA_FIRST_PAGE = 16, /**< First allocatable sector/page. */
     POGO_FLASH_FILE_MAX_FILES = 10,    /**< Number of stable ID slots. */
     POGO_FLASH_FILE_MAX_PAGES = 8,     /**< Maximum contiguous pages per file. */
     POGO_FLASH_FILE_MAX_NAME = 32,     /**< Stored name bytes, excluding NUL. */
@@ -75,9 +76,9 @@ typedef struct {
 
 /** Result codes shared by reader and writer entry points.
  *
- * `UNFORMATTED` is distinct from `CORRUPT_CATALOG`: a caller may deliberately
- * format the former, whereas automatically formatting the latter could destroy
- * recoverable files. Read functions never modify flash for either result.
+ * `UNFORMATTED` is distinct from `CORRUPT_CATALOG` for diagnostics. Readers
+ * never modify flash for either result. create() formats on either result and
+ * thus can destroy recoverable files when a catalog is corrupt.
  */
 typedef enum {
     POGO_FLASH_FILE_OK = 0,             /**< Operation completed successfully. */
@@ -137,9 +138,9 @@ pogo_flash_file_status_t pogo_flash_file_read_page_secure(
 
 /** Erase the complete 64 KiB user section and initialize both catalogs.
  *
- * This is the only API that erases the whole user section. It is destructive
- * even when a catalog already exists; applications should call it only as an
- * explicit first-use or reset policy.
+ * This is the primitive that erases the whole user section. It is destructive
+ * even when a catalog already exists; create() invokes it automatically if
+ * the catalogs are absent or corrupt.
  */
 pogo_flash_file_status_t pogo_flash_file_format(void);
 
@@ -148,6 +149,10 @@ pogo_flash_file_status_t pogo_flash_file_format(void);
  * `name` may be NULL or empty for an unnamed file. Data pages are written and
  * verified before the catalog entry is published, so a data-write failure does
  * not make the new slot visible.
+ * If no valid catalog exists, creation first formats the entire 64 KiB user
+ * section. This deliberately destroys any existing files, including data that
+ * might have been recovered from a corrupt catalog. Invalid arguments and
+ * occupied IDs do not format an otherwise valid filesystem.
  */
 pogo_flash_file_status_t pogo_flash_file_create(
     uint8_t file_id,
@@ -156,11 +161,11 @@ pogo_flash_file_status_t pogo_flash_file_create(
     uint16_t format_version,
     const uint8_t *data);
 
-/** Replace an existing file in place. page_count must equal its stored size.
+/** Replace an existing file in its dedicated sector. The size stays fixed.
  *
- * Replacement is deliberately non-transactional: data pages are overwritten
- * before the catalog CRC/generation is updated. A reset or power loss may leave
- * the old catalog referring to partially new data.
+ * Replacement is deliberately non-transactional: the data sector is erased
+ * and programmed before the catalog CRC/generation is updated. A reset or
+ * power loss may leave the old catalog referring to incomplete new data.
  */
 pogo_flash_file_status_t pogo_flash_file_replace(
     uint8_t file_id,

@@ -58,18 +58,23 @@ int main(void) {
     assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_UNFORMATTED);
     assert(pogo_flash_file_find_by_name("x", &info) ==
            POGO_FLASH_FILE_UNFORMATTED);
+    /* A new-file write formats virgin storage without a separate reset app. */
     assert(pogo_flash_file_create(1u, "x", 1u, 1u, one_page) ==
-           POGO_FLASH_FILE_UNFORMATTED);
-    fake_flash[0][17] = 1u;
+           POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_OK);
+    fake_flash[0][17] = 0u; /* Damage page count in the existing ID-1 entry. */
     assert(pogo_flash_file_find(1u, &info) ==
            POGO_FLASH_FILE_CORRUPT_CATALOG);
+    /* A corrupt catalog triggers destructive recovery on the next create. */
+    assert(pogo_flash_file_create(2u, "y", 1u, 1u, one_page) ==
+           POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_NOT_FOUND);
 
     erase_write_section_flash();
     assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_UNFORMATTED);
     assert(pogo_flash_file_find_by_name("x", &info) ==
            POGO_FLASH_FILE_UNFORMATTED);
-    assert(pogo_flash_file_create(1u, "x", 1u, 1u, one_page) ==
-           POGO_FLASH_FILE_UNFORMATTED);
+    write_count = 0u;
     assert(pogo_flash_file_format() == POGO_FLASH_FILE_OK);
     assert(write_count == 2u);
     assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_NOT_FOUND);
@@ -79,7 +84,7 @@ int main(void) {
         POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
         1u, 3u, one_page) == POGO_FLASH_FILE_OK);
     assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_OK);
-    assert(info.id == 1u && info.first_page == 2u && info.page_count == 1u);
+    assert(info.id == 1u && info.first_page == 16u && info.page_count == 1u);
     assert(info.format_version == 3u && info.generation == 1u);
     assert(strcmp(info.name, POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION) == 0);
 
@@ -101,14 +106,14 @@ int main(void) {
     assert(pogo_flash_file_create(6u, "second_catalog", 1u, 1u, replacement) ==
            POGO_FLASH_FILE_OK);
     assert(pogo_flash_file_find(6u, &info) == POGO_FLASH_FILE_OK);
-    assert(info.first_page == 3u);
+    assert(info.first_page == 32u);
     assert(pogo_flash_file_create(4u, "second_catalog", 1u, 1u, one_page) ==
            POGO_FLASH_FILE_NAME_EXISTS);
 
     assert(pogo_flash_file_create(2u, "three_pages", 3u, 9u, three_pages) ==
            POGO_FLASH_FILE_OK);
     assert(pogo_flash_file_find(2u, &info) == POGO_FLASH_FILE_OK);
-    assert(info.first_page == 4u && info.page_count == 3u);
+    assert(info.first_page == 48u && info.page_count == 3u);
     read_count = 0u;
     assert(pogo_flash_file_read_page_secure(2u, 1u, output, NULL) ==
            POGO_FLASH_FILE_OK);
@@ -131,7 +136,7 @@ int main(void) {
 
     assert(pogo_flash_file_replace(1u, 1u, replacement) == POGO_FLASH_FILE_OK);
     assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_OK &&
-           info.first_page == 2u && info.page_count == 1u && info.generation == 2u);
+           info.first_page == 16u && info.page_count == 1u && info.generation == 2u);
     assert(pogo_flash_file_read_page_secure(1u, 0u, output, NULL) ==
            POGO_FLASH_FILE_OK);
     assert(memcmp(output, replacement, sizeof(output)) == 0);
@@ -170,7 +175,7 @@ int main(void) {
     assert(pogo_flash_file_create(3u, "reuses_hole", 1u, 1u, one_page) ==
            POGO_FLASH_FILE_OK);
     assert(pogo_flash_file_find(3u, &info) == POGO_FLASH_FILE_OK &&
-           info.first_page == 2u);
+           info.first_page == 16u);
 
     /* Every write is read back; corruption is reported immediately. */
     corrupt_next_write = true;
@@ -178,6 +183,20 @@ int main(void) {
            POGO_FLASH_FILE_VERIFY_FAILED);
     assert(pogo_flash_file_read_page_secure(3u, 0u, output, NULL) ==
            POGO_FLASH_FILE_BAD_CHECKSUM);
+
+    /* An ID-1 lookup reads catalog 0 only, but create must validate catalog 1
+     * before trusting the allocation map. Corruption resets both catalogs. */
+    fake_flash[1][POGO_FLASH_FILE_PAGE_SIZE - 1u] ^= 1u;
+    assert(pogo_flash_file_find(3u, &info) == POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_create(4u, "after_corruption", 1u, 1u,
+                                  one_page) == POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_find(3u, &info) == POGO_FLASH_FILE_NOT_FOUND);
+
+    /* A failed catalog initialization must not publish the new file. */
+    memset(fake_flash, 0, sizeof(fake_flash));
+    corrupt_next_write = true;
+    assert(pogo_flash_file_create(1u, "format_failure", 1u, 1u,
+                                  one_page) == POGO_FLASH_FILE_VERIFY_FAILED);
 
     puts("flash file tests passed");
     return 0;

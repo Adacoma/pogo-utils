@@ -39,8 +39,10 @@ the repository does not provide a single central runtime.
   loads versioned, checksummed models. See the
   [`dedicated example`](../examples/magnetometer_calibration).
 - [`flash_file`](../src/pogo-utils/flash_file.h) provides the bounded two-page
-  catalog used for persistent full-page files. Its [design notes](flash_files.md)
+  catalog and sector-isolated full-page files. Its [design notes](flash_files.md)
   document stable IDs, fast and secure readers, and replacement constraints.
+  The [inventory](../examples/flash_file) reads files; the explicit
+  [format utility](../examples/flash_file_format) erases all user files.
 - [`heading_PID`](../src/pogo-utils/heading_PID.h) performs heading control
   without owning sensor, clock, or motor I/O.
 - [`wall_avoidance_magnetometer`](../src/pogo-utils/wall_avoidance_magnetometer.h)

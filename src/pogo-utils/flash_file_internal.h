@@ -11,7 +11,7 @@
  * Each 256-byte catalog page is encoded explicitly in little-endian order:
  *
  *   0..3     ASCII magic "PFFS"
- *   4        catalog format version
+ *   4        catalog format version (2 for sector-isolated layout)
  *   5        catalog index (0 or 1)
  *   6        number of fixed entries (5)
  *   7        reserved, must be zero
@@ -39,7 +39,7 @@
 #include <stdint.h>
 
 enum {
-    POGO_FLASH_FILE_CATALOG_VERSION = 1,     /**< Serialized schema version. */
+    POGO_FLASH_FILE_CATALOG_VERSION = 2,     /**< Serialized schema version. */
     POGO_FLASH_FILE_CATALOG_HEADER_SIZE = 12, /**< Bytes before entry zero. */
     POGO_FLASH_FILE_ENTRY_SIZE = 48,         /**< Serialized bytes per slot. */
     POGO_FLASH_FILE_ENTRIES_PER_CATALOG = 5, /**< Fixed slots in one page. */

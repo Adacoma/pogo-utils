@@ -15,13 +15,18 @@
 static uint8_t fake_flash[256u][MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE];
 static bool corrupt_next_write;
 
+/* Calibration-only flash diagnostics use platform logging; the host test
+ * checks result codes and contents, so its logging stub can remain silent. */
+uint16_t pogobot_helper_getid(void) { return 0u; }
+void pogosim_printf(const char *format, ...) { (void)format; }
+
 void erase_write_section_flash(void) {
     memset(fake_flash, 0xff, sizeof(fake_flash));
 }
 
 void write_page_flash(uint8_t page, const void *data) {
-    /* The named-file writer is specified under the platform assumption that
-     * write_page_flash can replace an allocated page without changing size. */
+    /* Pogosim replaces page contents directly. The separate NOR test exercises
+     * the physical writer branch where sector erase precedes page program. */
     memcpy(fake_flash[page], data, MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE);
     if (corrupt_next_write) {
         fake_flash[page][20] ^= 1u;
@@ -76,9 +81,8 @@ static magnetometer_calibration_metadata_t valid_metadata(void) {
 }
 
 int main(void) {
-    /* Pogosim v0.10.10 can expose allocator residue in a fresh flash array.
-     * Simulator calibration establishes a catalog unless PFFS identifies a
-     * genuinely malformed catalog, which must still fail closed. */
+    /* Both uninitialized simulator flash and recognizable damaged catalogs
+     * are reformatted by the create path before calibration is published. */
     memset(fake_flash, 0xa5, sizeof(fake_flash));
     magnetometer_heading_detection_t detector;
     magnetometer_heading_detection_init(&detector);
@@ -87,11 +91,15 @@ int main(void) {
     assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
            MAGNETOMETER_CALIBRATION_FLASH_OK);
     assert(memcmp(fake_flash[0], "PFFS", 4u) == 0);
+    fake_flash[1][MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE - 1u] ^= 1u;
+    assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
+           MAGNETOMETER_CALIBRATION_FLASH_OK);
+    assert(fake_flash[1][4] == 2u);
     memset(fake_flash, 0xa5, sizeof(fake_flash));
     memcpy(fake_flash[0], "PFFS", 4u);
     assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
-           MAGNETOMETER_CALIBRATION_FLASH_STORAGE_ERROR);
-    assert(memcmp(fake_flash[0], "PFFS", 4u) == 0 && fake_flash[0][4] == 0xa5u);
+           MAGNETOMETER_CALIBRATION_FLASH_OK);
+    assert(memcmp(fake_flash[0], "PFFS", 4u) == 0 && fake_flash[0][4] == 2u);
 
     /* Some fresh allocations are instead uniformly zero-filled. */
     memset(fake_flash, 0, sizeof(fake_flash));
