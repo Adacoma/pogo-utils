@@ -5,6 +5,10 @@ section. It is intentionally bounded rather than a general filesystem: this
 keeps ID-based one-page reads fast and keeps writer/allocation code out of
 read-only mission binaries.
 
+For a read-only inventory of all ten stable IDs, see
+`examples/flash_file/README.md`. Its example program prints catalog metadata
+and performs a secure CRC check for each occupied file.
+
 ## Layout
 
 - Physical pages 0 and 1 are catalogs.

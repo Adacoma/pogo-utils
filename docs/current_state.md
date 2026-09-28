@@ -1,6 +1,6 @@
 # Current project state
 
-Last updated: 2026-09-17.
+Last updated: 2026-09-28.
 
 This file is a concise engineering and scientific handoff. Statements under
 "Understood" describe the current implementation, not guarantees established
@@ -132,6 +132,10 @@ by hardware or experimental validation.
 - Flash-file and magnetometer-calibration production sources now document their
   serialized byte layouts, ownership and RAM assumptions, state transitions,
   numerical conventions, mutation ordering, and failure semantics in place.
+- A read-only `examples/flash_file` inventory now scans stable IDs 1..10,
+  reports each file's catalog metadata, and validates catalog/data CRCs. Its
+  short Pogosim configuration imports the four-robot magnetometer archive.
+  This example has not yet been compiled or simulated in this session.
 
 ## Current scientific decisions
 
@@ -187,7 +191,8 @@ These are implementation decisions, not yet documented experimental findings.
    legacy motion and wall-avoidance modules.
 5. Add host-side tests for platform-neutral numerics, angle/time wraparound,
    PID state transitions, optimizer invariants, and serialization boundaries.
-6. Run the paired magnetometer flash export/import scenarios, then add
+6. Build and run the new flash-file inventory against an exported calibration
+   archive, then run the paired magnetometer flash export/import scenarios and add
    deterministic regressions for avoidance, Vicsek alignment, and SSR behavior.
 7. Clarify licensing, compatibility guarantees, and the intended
    install/package interface.
