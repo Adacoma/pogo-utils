@@ -63,6 +63,8 @@ the main integration references.
   consensus, and spectral estimation. See the [`ssr` example](../examples/ssr).
 - The [`vicsek` example](../examples/vicsek) combines neighbor alignment with
   the current sensing, PID, kinematics, and avoidance stack.
+- [`vicsek_u_turns`](../examples/vicsek_u_turns) preserves Vicsek alignment and
+  adds ACU-style, wall-triggered collective turn events.
 - The static [`ACU` example](../examples/acu) adds continuous alignment,
   angular diffusion, crowd-dependent speed, and relayed collective U-turns.
   It deliberately excludes the optimizer and social-learning machinery from

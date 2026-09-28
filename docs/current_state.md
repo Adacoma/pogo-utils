@@ -86,6 +86,9 @@ by hardware or experimental validation.
   current flash-heading, PID, kinematics, wall-recovery, and bounded wire
   protocol stack. It does not link optimizer, fitness, genotype, HIT/FT, or
   calibration-fitting code.
+- `vicsek_u_turns` keeps Vicsek's alignment and adds ACU-style turn events on
+  wall-avoidance entry, using a separate controller packet tag. Its simulator
+  target compiles; physical behavior and firmware size remain unverified.
 
 ## What remains unknown
 
