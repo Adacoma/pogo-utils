@@ -91,6 +91,8 @@ examples/MLP_int8_dyn_act/MLP_int8_dyn_act
 examples/ssr/ssr
 examples/magnetometer_heading_detection/magnetometer_heading_detection
 examples/magnetometer_calibration/magnetometer_calibration
+examples/flash_file/flash_file
+examples/flash_file_format/flash_file_format
 examples/go_straight/go_straight
 examples/vicsek/vicsek
 examples/vicsek_u_turns/vicsek_u_turns
@@ -107,4 +109,3 @@ tmp/
 
 # External libs
 libs/
-
