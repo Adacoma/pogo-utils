@@ -188,6 +188,20 @@ static const float cont_max_dt_s = 0.05f;
 #endif
 uint32_t vicsek_log_period_ms = 1000u;
 
+/* A two-robot antipodal mean is undefined. After brief, fresh evidence of
+ * opposition, only the higher-ID robot yields. Reverse first creates room
+ * before a time-bounded pivot; forward tracking follows even if the pivot
+ * could not finish. These constants do not estimate physical distance. */
+#define OPPOSITION_ENTER_RAD (150.0f * PI_F / 180.0f)
+#define OPPOSITION_EXIT_RAD (35.0f * PI_F / 180.0f)
+#define OPPOSITION_CONFIRM_MS 350u
+#define OPPOSITION_FRESH_MS 400u
+#define OPPOSITION_REVERSE_MS 600u
+/* Higher than the default forward ratio (400/motorFull), so a forward-moving
+ * leader does not simply close the gap while this robot backs away. */
+#define OPPOSITION_REVERSE_RATIO 0.65f
+#define OPPOSITION_MAX_PIVOT_MS 1800u
+
 /* ACU-style collective event layered on unchanged Vicsek alignment. It
  * begins on the rising edge of local wall avoidance and sends the CURRENT
  * measured heading plus a fixed angle. Local wall motion keeps priority;
@@ -288,6 +302,18 @@ typedef struct {
     uint32_t rx_ignored;
     uint32_t tx_attempts;
     uint32_t neighbor_capacity_drops;
+
+    /* Pairwise symmetry breaker; it owns neither the magnetometer nor motors.
+     * A candidate must persist, so one lost/misheard packet cannot pivot us. */
+    bool opposition_candidate_valid;
+    bool opposition_active;
+    bool opposition_reverse;
+    bool opposition_pivot;
+    uint16_t opposition_peer_id;
+    uint32_t opposition_candidate_since_ms;
+    uint32_t opposition_started_ms;
+    float opposition_target_rad;
+    uint32_t opposition_event_count;
 
     bool cluster_turn_active;
     bool cluster_local;
@@ -394,6 +420,10 @@ static void recover_runtime_avoidance_fault(uint32_t now) {
     mydata->vicsek_suggestion_valid = false;
     mydata->previous_wall_owned = false;
     mydata->cluster_turn_active = false;
+    mydata->opposition_candidate_valid = false;
+    mydata->opposition_active = false;
+    mydata->opposition_reverse = false;
+    mydata->opposition_pivot = false;
     mydata->last_vicsek_update_ms = now;
     mydata->runtime_recovery_active = true;
 }
@@ -740,6 +770,84 @@ void process_message(message_t *message) {
 #endif
 }
 
+/* ---------------- Pairwise antipodal-heading symmetry breaker ------------- */
+
+static bool opposition_update(const heading_sample_t *heading, uint32_t now) {
+    mydata->opposition_reverse = false;
+    mydata->opposition_pivot = false;
+    /* The ordinary wall/cluster owners must always win. In particular, a
+     * resumed sensor or a wall turn must not inherit an old pivot deadline. */
+    bool available = control_heading_usable(heading, now) &&
+        mydata->drive.fault == DDK_FAULT_NONE && !wall_owns_heading() &&
+        !cluster_window_active(now) && mydata->drive.pid.target_valid &&
+        mydata->drive.pid.reference_id == heading->reference_id &&
+        (mydata->drive.behavior == DDK_BEHAVIOR_NORMAL ||
+         (mydata->opposition_active &&
+          (mydata->drive.behavior == DDK_BEHAVIOR_REVERSE ||
+           mydata->drive.behavior == DDK_BEHAVIOR_PIVOT)));
+    if (!available) {
+        mydata->opposition_candidate_valid = false;
+        mydata->opposition_active = false;
+        return false;
+    }
+    uint32_t fresh_ms = max_age < OPPOSITION_FRESH_MS ? max_age : OPPOSITION_FRESH_MS;
+    const neighbor_t *peer = mydata->nb_neighbors == 1u ? &mydata->neighbors[0] : NULL;
+    if (peer != NULL && (peer->id >= pogobot_helper_getid() || peer->avoiding ||
+        (uint32_t)(now - peer->last_seen_ms) > fresh_ms ||
+        (mydata->opposition_active && peer->id != mydata->opposition_peer_id))) {
+        peer = NULL;
+    }
+    if (!mydata->opposition_active) {
+        if (peer == NULL) {
+            mydata->opposition_candidate_valid = false;
+            return false;
+        }
+        float peer_target = mrad_to_rad(peer->theta_mrad);
+        float gap = fabsf(heading_wrap_pi(peer_target - heading->angle_rad));
+        if (gap < OPPOSITION_ENTER_RAD) {
+            mydata->opposition_candidate_valid = false;
+            return false;
+        }
+        if (!mydata->opposition_candidate_valid ||
+            mydata->opposition_peer_id != peer->id) {
+            mydata->opposition_candidate_valid = true;
+            mydata->opposition_peer_id = peer->id;
+            mydata->opposition_candidate_since_ms = peer->last_seen_ms;
+            return false;
+        }
+        if ((uint32_t)(now - mydata->opposition_candidate_since_ms) <
+            OPPOSITION_CONFIRM_MS ||
+            peer->last_seen_ms == mydata->opposition_candidate_since_ms) {
+            /* A single old packet is not sustained evidence of opposition. */
+            return false;
+        }
+        mydata->opposition_active = true;
+        mydata->opposition_started_ms = now;
+        mydata->opposition_target_rad = peer_target;
+        counter_increment(&mydata->opposition_event_count);
+    }
+
+    /* Latch the lower-ID robot's target across brief packet loss: reversing
+     * often moves the robots outside IR range. Fresh matching packets may
+     * update it, but loss alone cannot send us straight back into contact. */
+    if (peer != NULL) {
+        mydata->opposition_target_rad = mrad_to_rad(peer->theta_mrad);
+    }
+    float gap = fabsf(heading_wrap_pi(
+        mydata->opposition_target_rad - heading->angle_rad));
+    uint32_t elapsed = (uint32_t)(now - mydata->opposition_started_ms);
+    if ((elapsed >= OPPOSITION_REVERSE_MS && gap <= OPPOSITION_EXIT_RAD) ||
+        (peer == NULL && elapsed >= OPPOSITION_REVERSE_MS + OPPOSITION_MAX_PIVOT_MS)) {
+        mydata->opposition_candidate_valid = false;
+        mydata->opposition_active = false;
+        return false;
+    }
+    mydata->opposition_reverse = elapsed < OPPOSITION_REVERSE_MS;
+    mydata->opposition_pivot = !mydata->opposition_reverse &&
+        elapsed < OPPOSITION_REVERSE_MS + OPPOSITION_MAX_PIVOT_MS;
+    return true;
+}
+
 /* ---------------------- Social target, never motor control ---------------- */
 
 static float vicsek_target_increment(const heading_sample_t *heading, uint32_t now) {
@@ -824,6 +932,14 @@ static float vicsek_target_increment(const heading_sample_t *heading, uint32_t n
 
 static void vicsek_after_motion(uint32_t now, float heading_rad) {
     bool wall_owned = wall_owns_heading();
+    if (wall_owned) {
+        /* A wall maneuver supersedes the pairwise pivot, even if avoidance
+         * was entered by the coordinator on this very tick. */
+        mydata->opposition_candidate_valid = false;
+        mydata->opposition_active = false;
+        mydata->opposition_reverse = false;
+        mydata->opposition_pivot = false;
+    }
 #if VICSEK_ENABLE_CLUSTER_HINTS
     if (wall_owned && !mydata->previous_wall_owned) {
         /* A local wall event supersedes any received one. It starts now, not
@@ -896,6 +1012,10 @@ static void vicsek_enter(void) {
     mydata->last_beacon_ms = now - vicsek_random_u32() % beacon_period_ms;
     mydata->nb_neighbors = 0u;
     mydata->cluster_turn_active = false;
+    mydata->opposition_candidate_valid = false;
+    mydata->opposition_active = false;
+    mydata->opposition_reverse = false;
+    mydata->opposition_pivot = false;
     mydata->previous_wall_owned = false;
     mydata->vicsek_paused = true;
     mydata->last_runtime_recovery_fault = WA_MAGNETOMETER_FAULT_NONE;
@@ -1270,9 +1390,27 @@ void user_step(void) {
     uint32_t now = now_ms();
     heading_sample_t input = heading_snapshot(now);
     purge_old_neighbors(now);
-    float dtheta = vicsek_target_increment(&input, now);
-    (void)diff_drive_kin_step_with_heading(&mydata->drive,
-        (float)forward_speed / (float)motorFull, dtheta, &input, now);
+    bool yielding = opposition_update(&input, now);
+    float dtheta;
+    if (yielding) {
+        /* Freeze normal Vicsek updates during the escape; an accumulated
+         * social clock must not cause a jump when alignment resumes. */
+        mydata->vicsek_paused = true;
+        mydata->vicsek_suggestion_valid = false;
+        mydata->last_vicsek_update_ms = now;
+        dtheta = heading_wrap_pi(mydata->opposition_target_rad -
+                                 mydata->drive.pid.target_rad);
+    } else {
+        dtheta = vicsek_target_increment(&input, now);
+    }
+    ddk_command_t command = {
+        .mode = yielding && mydata->opposition_reverse ? DDK_MOTION_REVERSE :
+            (yielding && mydata->opposition_pivot ? DDK_MOTION_PIVOT : DDK_MOTION_FORWARD),
+        .forward_ratio = yielding && mydata->opposition_reverse ?
+            OPPOSITION_REVERSE_RATIO : (float)forward_speed / (float)motorFull,
+        .dtheta_rad = dtheta
+    };
+    (void)diff_drive_kin_step_command(&mydata->drive, &command, &input, now);
     vicsek_after_motion(now, input.angle_rad);
     wall_avoidance_magnetometer_update_leds(&mydata->drive.wa, now);
     wall_log_step(now);
@@ -1345,6 +1483,11 @@ static void create_data_schema(void) {
     data_add_column_int32("vicsek_rx");
     data_add_column_int32("vicsek_tx_attempts");
     data_add_column_int32("vicsek_capacity_drops");
+    data_add_column_int8("opposition_active");
+    data_add_column_int8("opposition_reverse");
+    data_add_column_int8("opposition_pivot");
+    data_add_column_double("opposition_target_rad");
+    data_add_column_int32("opposition_event_count");
     data_add_column_int8("cluster_active");
     data_add_column_int8("cluster_local");
     data_add_column_double("cluster_target_rad");
@@ -1423,6 +1566,12 @@ static void export_data(void) {
     data_set_value_int32("vicsek_rx", (int32_t)(mydata->rx_headings > INT32_MAX ? INT32_MAX : mydata->rx_headings));
     data_set_value_int32("vicsek_tx_attempts", (int32_t)(mydata->tx_attempts > INT32_MAX ? INT32_MAX : mydata->tx_attempts));
     data_set_value_int32("vicsek_capacity_drops", (int32_t)(mydata->neighbor_capacity_drops > INT32_MAX ? INT32_MAX : mydata->neighbor_capacity_drops));
+    data_set_value_int8("opposition_active", (int8_t)mydata->opposition_active);
+    data_set_value_int8("opposition_reverse", (int8_t)mydata->opposition_reverse);
+    data_set_value_int8("opposition_pivot", (int8_t)mydata->opposition_pivot);
+    data_set_value_double("opposition_target_rad", (double)mydata->opposition_target_rad);
+    data_set_value_int32("opposition_event_count", (int32_t)(
+        mydata->opposition_event_count > INT32_MAX ? INT32_MAX : mydata->opposition_event_count));
     data_set_value_int8("cluster_active", (int8_t)cluster_window_active(now));
     data_set_value_int8("cluster_local", (int8_t)mydata->cluster_local);
     data_set_value_double("cluster_target_rad", (double)mydata->cluster_target_rad);

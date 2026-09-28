@@ -89,6 +89,11 @@ by hardware or experimental validation.
 - `vicsek_u_turns` keeps Vicsek's alignment and adds ACU-style turn events on
   wall-avoidance entry, using a separate controller packet tag. Its simulator
   target compiles; physical behavior and firmware size remain unverified.
+- Its pairwise antipodal-heading fallback now asks only the higher-ID robot to
+  reverse briefly, then pivot toward the lower-ID robot's advertised target.
+  Kinematics owns reverse actuation and preserves wall priority. This uses
+  fresh packets, not motion sensing; a three-second physical-escape bound still
+  requires empirical validation.
 
 ## What remains unknown
 

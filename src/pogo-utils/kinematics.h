@@ -20,7 +20,8 @@
  *
  * v_cmd is calibrated MOTOR POWER in [0,1], not m/s or a software PWM duty cycle.
  * L=v-u, R=v+u preserves the normalized mean and cannot reverse in FORWARD mode.
- * Full-power forward leaves no steering headroom under this policy.
+ * REVERSE applies equal negative motor ratios, without PID steering. Full-power
+ * forward leaves no steering headroom under the forward-only policy.
  * dtheta is a target increment per call, not a rate. It is ignored during
  * avoidance/commit/stops/unavailable-heading ticks, not queued for later.
  *
@@ -51,7 +52,8 @@ typedef enum {
     DDK_BEHAVIOR_HEADING_UNAVAILABLE,
     DDK_BEHAVIOR_REFERENCE_CHANGED,
     DDK_BEHAVIOR_FAULT,
-    DDK_BEHAVIOR_PIVOT
+    DDK_BEHAVIOR_PIVOT,
+    DDK_BEHAVIOR_REVERSE
 } ddk_behavior_t;
 
 typedef enum {
@@ -65,13 +67,14 @@ typedef enum {
 typedef enum {
     DDK_MOTION_STOP = 0,
     DDK_MOTION_FORWARD,
-    DDK_MOTION_PIVOT /**< Explicit shortest-path heading PID with opposite motors. */
+    DDK_MOTION_PIVOT, /**< Explicit shortest-path heading PID with opposite motors. */
+    DDK_MOTION_REVERSE /**< Equal backward motor ratios; wall actions override. */
 } ddk_motion_mode_t;
 
 typedef struct {
     ddk_motion_mode_t mode;
-    float forward_ratio;  /**< Used only in FORWARD mode. Zero means STOP. */
-    float dtheta_rad;     /**< Target increment in the CURRENT heading convention. */
+    float forward_ratio;  /**< Power magnitude in FORWARD/REVERSE; zero means STOP. */
+    float dtheta_rad;     /**< Target increment; REVERSE stores it without PID steering. */
 } ddk_command_t;
 
 typedef calibrated_motors_config_t ddk_motors_t;
@@ -94,7 +97,7 @@ typedef struct {
     heading_pid_result_t pid_result;
     ddk_behavior_t behavior;
     ddk_fault_t fault;
-    float v_cmd;            /**< Effective forward power; zero during stops/turns. */
+    float v_cmd;            /**< Effective forward power; zero during stops/turns/reverse. */
     float motor_steering;   /**< Signed correction AFTER heading_ccw_sign. */
     bool initialized;
     bool inhibited;

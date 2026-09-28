@@ -276,7 +276,7 @@ uint32_t diff_drive_kin_heading_age_limit(const ddk_t *ddk) {
 static bool command_valid(const ddk_command_t *command) {
     return command != NULL &&
         (command->mode == DDK_MOTION_STOP || command->mode == DDK_MOTION_FORWARD ||
-         command->mode == DDK_MOTION_PIVOT) &&
+         command->mode == DDK_MOTION_PIVOT || command->mode == DDK_MOTION_REVERSE) &&
         isfinite(command->forward_ratio) && command->forward_ratio >= 0.0f &&
         command->forward_ratio <= 1.0f && isfinite(command->dtheta_rad);
 }
@@ -292,7 +292,8 @@ ddk_behavior_t diff_drive_kin_step_command(
     }
     diff_drive_kin_publish_heading(ddk, heading);
     if (command->mode == DDK_MOTION_STOP ||
-        (command->mode == DDK_MOTION_FORWARD && command->forward_ratio <= ddk->config.stop_epsilon)) {
+        ((command->mode == DDK_MOTION_FORWARD || command->mode == DDK_MOTION_REVERSE) &&
+         command->forward_ratio <= ddk->config.stop_epsilon)) {
         /* Intentional inhibit is different from a transient invalid sensor.
          * Cancel the maneuver, keep faults, and reacquire a target on resumption. */
         diff_drive_kin_stop(ddk);
@@ -365,6 +366,23 @@ ddk_behavior_t diff_drive_kin_step_command(
          * overflow the target sum. No increments are accumulated during override. */
         float target = heading_wrap_pi(ddk->pid.target_rad + heading_wrap_pi(command->dtheta_rad));
         (void)heading_pid_set_target(&ddk->pid, target, input.reference_id);
+    }
+    if (command->mode == DDK_MOTION_REVERSE && !committing) {
+        /* Reverse is an open-loop clearance move, not a heading-controlled
+         * drive. Keep the new target for the following pivot/forward phase,
+         * but discard PID history while the wheels run backward. The wall
+         * planner and sensor/fault gates above retain full priority. */
+        heading_pid_reset(&ddk->pid);
+        ddk->pid_result.steering = 0.0f;
+        ddk->pid_result.status = HEADING_PID_UNAVAILABLE;
+        ddk->v_cmd = 0.0f;
+        ddk->motor_steering = 0.0f;
+        if (!calibrated_motors_apply(&ddk->motors,
+                                    -command->forward_ratio, -command->forward_ratio)) {
+            return fail(ddk, DDK_FAULT_MOTOR_CALIBRATION);
+        }
+        ddk->behavior = DDK_BEHAVIOR_REVERSE;
+        return ddk->behavior;
     }
     bool pivoting = command->mode == DDK_MOTION_PIVOT && !committing;
     ddk->v_cmd = pivoting ? 0.0f :

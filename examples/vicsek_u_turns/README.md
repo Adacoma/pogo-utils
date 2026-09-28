@@ -14,6 +14,23 @@ controller messages with `vicsek` or `acu` robots. Unlike the optional hint
 in the original Vicsek example, this event starts on *entry* to wall avoidance
 and does not wait for the local robot's settled escape heading.
 
+To break a two-robot head-on symmetry, the higher-ID robot yields after 350 ms
+and at least two fresh packets indicating nearly opposite headings. It first
+backs away at 65% calibrated power for 0.6 s, then requests a pivot toward the
+lower-ID robot's advertised target for up to 1.8 s. It resumes forward tracking
+even if it has not finished the pivot, and releases the shared target once its
+heading is close. The default reverse power exceeds this example's default
+forward power so that the other robot cannot simply close the gap at its
+nominal commanded speed. The lower-ID robot keeps its normal Vicsek behavior.
+The selected target is held across brief IR loss during back-off; if the peer
+remains absent, the maneuver ends after its bounded reverse-and-pivot window.
+Wall avoidance and collective turn events override this pairwise maneuver.
+This uses heading and IR reception, not measured position:
+it cannot guarantee that a physically blocked robot moves within three seconds.
+For simulator diagnosis, the data export includes `opposition_active`,
+`opposition_reverse`, `opposition_pivot`, `opposition_target_rad`, and
+`opposition_event_count`.
+
 Use a flash image containing calibration for every simulated robot, as with
 the original Vicsek example. From the repository root:
 
