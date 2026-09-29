@@ -25,7 +25,10 @@
 #else
 /* These POSIX headers are simulator-only; firmware never depends on them. */
 #include <errno.h>
+#include <signal.h>
+#include <stdlib.h>
 #include <sys/select.h>
+#include <termios.h>
 #include <unistd.h>
 #endif
 
@@ -40,13 +43,21 @@ typedef struct {
 DECLARE_USERDATA(USERDATA);
 REGISTER_USERDATA(USERDATA);
 
-enum { SHELL_LINE_SIZE = 160, SHELL_MAX_WORDS = 5 };
+enum { SHELL_LINE_SIZE = 160, SHELL_MAX_WORDS = 5,
+       SHELL_HISTORY_SIZE = 4 };
 
 /** Input state is process-wide in Pogosim, so exactly one selected robot owns
- * stdin at a time. On hardware there is only one robot and one UART. */
+ * stdin at a time. On hardware there is only one robot and one UART. History
+ * is a small ring of complete lines; cursor zero denotes the editable draft. */
 static struct {
     char line[SHELL_LINE_SIZE];
+    char draft[SHELL_LINE_SIZE];
+    char history[SHELL_HISTORY_SIZE][SHELL_LINE_SIZE];
     unsigned length;
+    unsigned history_count;
+    unsigned history_next;
+    unsigned history_cursor;
+    unsigned char escape_state; /**< 0: normal, 1: ESC, 2: CSI/SS3. */
     bool overflow;
     bool after_cr;
 } shell_input;
@@ -59,6 +70,49 @@ static uint16_t robot_ids[SHELL_MAX_SIM_ROBOTS];
 static unsigned robot_count;
 static uint16_t selected_robot = UINT16_MAX;
 static bool stdin_closed;
+static bool shell_tty_active;
+static bool shell_initial_prompt_needed = true;
+static struct termios shell_saved_termios;
+
+/** Restore the user's terminal when Pogosim exits normally. Pipes and files
+ * are left untouched, so scripted newline-delimited commands still work. */
+static void shell_restore_tty(void) {
+    if (shell_tty_active) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &shell_saved_termios);
+        shell_tty_active = false;
+    }
+}
+
+/** POSIX tcsetattr is signal-safe; put the terminal back before Ctrl-C's
+ * usual immediate exit (which does not run atexit handlers). */
+static void shell_tty_interrupt(int signal_number) {
+    tcsetattr(STDIN_FILENO, TCSANOW, &shell_saved_termios);
+    _exit(128 + signal_number);
+}
+
+/** Receive arrow keys immediately in an interactive simulator terminal.
+ * Keep signals enabled (Ctrl-C still exits), and avoid changing firmware. */
+static void shell_enable_tty(void) {
+    if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO) ||
+        tcgetattr(STDIN_FILENO, &shell_saved_termios) != 0) return;
+    struct termios mode = shell_saved_termios;
+    mode.c_lflag &= (tcflag_t)~(ICANON | ECHO);
+    mode.c_cc[VMIN] = 1;
+    mode.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &mode) != 0) return;
+    shell_tty_active = true;
+    if (atexit(shell_restore_tty) != 0) {
+        shell_restore_tty();
+        return;
+    }
+    (void)signal(SIGINT, shell_tty_interrupt);
+    (void)signal(SIGTERM, shell_tty_interrupt);
+}
+
+/** Direct terminal output bypasses Pogosim's per-robot printf log buffer. */
+static void shell_tty_write(const char *bytes, size_t length) {
+    if (shell_tty_active) (void)write(STDOUT_FILENO, bytes, length);
+}
 #endif
 
 /** Check a raw catalog, including the checksum of an entirely empty page.
@@ -539,6 +593,7 @@ static void shell_execute(char *line) {
 #endif
         puts("Ordinary cat is hex; log bytes are text with binary escaped.");
         puts("write supports one-page ordinary files only.");
+        puts("Up/Down browse four recent commands; Down restores the draft.");
         return;
     }
 #ifndef REAL_ROBOT
@@ -645,12 +700,107 @@ static void shell_prompt(void) {
     printf("flash[%u]> ", (unsigned)pogobot_helper_getid());
 #else
     printf("# FLASH_SHELL_PROMPT,robot=%u\n", (unsigned)selected_robot);
+    if (shell_tty_active) {
+        char prompt[32];
+        int length = snprintf(prompt, sizeof(prompt), "flash[%u]> ",
+                              (unsigned)selected_robot);
+        if (length > 0 && (size_t)length < sizeof(prompt))
+            shell_tty_write(prompt, (size_t)length);
+    }
 #endif
 }
 
+/** Replace the visible input line after a history move. ANSI cursor/erase
+ * sequences are already used by terminals that send ANSI arrow-key input. */
+static void shell_redraw(void) {
+#ifdef REAL_ROBOT
+    fputs("\r\033[2K", stdout);
+    shell_prompt();
+    fputs(shell_input.line, stdout);
+#else
+    if (!shell_tty_active) return;
+    char prompt[32];
+    int length = snprintf(prompt, sizeof(prompt), "\r\033[2Kflash[%u]> ",
+                          (unsigned)selected_robot);
+    if (length > 0 && (size_t)length < sizeof(prompt))
+        shell_tty_write(prompt, (size_t)length);
+    shell_tty_write(shell_input.line, shell_input.length);
+#endif
+}
+
+/** Save nonblank commands before shell_execute tokenizes its input in place.
+ * Consecutive duplicates do not consume the four-entry history ring. */
+static void shell_history_save(void) {
+    unsigned i = 0u;
+    while (i < shell_input.length &&
+           (shell_input.line[i] == ' ' || shell_input.line[i] == '\t')) ++i;
+    if (i == shell_input.length) return;
+    if (shell_input.history_count > 0u) {
+        unsigned newest = (shell_input.history_next + SHELL_HISTORY_SIZE - 1u)
+            % SHELL_HISTORY_SIZE;
+        if (strcmp(shell_input.history[newest], shell_input.line) == 0) return;
+    }
+    memcpy(shell_input.history[shell_input.history_next], shell_input.line,
+           shell_input.length + 1u);
+    shell_input.history_next = (shell_input.history_next + 1u) %
+        SHELL_HISTORY_SIZE;
+    if (shell_input.history_count < SHELL_HISTORY_SIZE)
+        ++shell_input.history_count;
+}
+
+/** Up selects older commands; Down selects newer ones, then the draft that
+ * was present before browsing. Both ends of the ring clamp safely. */
+static void shell_history_move(bool older) {
+    if (older) {
+        if (shell_input.history_cursor == shell_input.history_count) return;
+        if (shell_input.history_cursor == 0u) {
+            memcpy(shell_input.draft, shell_input.line, shell_input.length);
+            shell_input.draft[shell_input.length] = '\0';
+        }
+        ++shell_input.history_cursor;
+    } else {
+        if (shell_input.history_cursor == 0u) return;
+        --shell_input.history_cursor;
+    }
+    const char *selected = shell_input.history_cursor == 0u ?
+        shell_input.draft : shell_input.history[
+            (shell_input.history_next + SHELL_HISTORY_SIZE -
+             shell_input.history_cursor) % SHELL_HISTORY_SIZE];
+    shell_input.length = (unsigned)strlen(selected);
+    memcpy(shell_input.line, selected, shell_input.length + 1u);
+    shell_input.overflow = false;
+    shell_redraw();
+}
+
 /** Consume a byte at a time. Overflow discards the complete command, rather
- * than executing a truncated destructive command. CRLF is one newline. */
+ * than executing a truncated destructive command. CRLF is one newline. The
+ * ESC [ A/B and ESC O A/B sequences navigate command history. */
 static void shell_feed(char byte) {
+    if (shell_input.escape_state != 0u) {
+        if (shell_input.escape_state == 1u) {
+            shell_input.escape_state = 0u;
+            if (byte == '[' || byte == 'O') {
+                shell_input.escape_state = 2u;
+                return;
+            }
+            /* A lone Escape must not swallow Enter or the next typed key. */
+        } else if (byte == '\r' || byte == '\n') {
+            shell_input.escape_state = 0u;
+        } else {
+            /* Ignore other ANSI cursor/control sequences in their entirety. */
+            if ((unsigned char)byte >= 0x40u &&
+                (unsigned char)byte <= 0x7eu) {
+                shell_input.escape_state = 0u;
+                if (byte == 'A') shell_history_move(true);
+                else if (byte == 'B') shell_history_move(false);
+            }
+            return;
+        }
+    }
+    if (byte == '\033') {
+        shell_input.escape_state = 1u;
+        return;
+    }
     if (byte == '\n' && shell_input.after_cr) {
         shell_input.after_cr = false;
         return;
@@ -659,13 +809,17 @@ static void shell_feed(char byte) {
     if (byte == '\r' || byte == '\n') {
 #ifdef REAL_ROBOT
         putchar('\n');
+#else
+        shell_tty_write("\n", 1u);
 #endif
         if (shell_input.overflow) puts("error: command line too long");
         else {
             shell_input.line[shell_input.length] = '\0';
+            shell_history_save();
             shell_execute(shell_input.line);
         }
         shell_input.length = 0u;
+        shell_input.history_cursor = 0u;
         shell_input.overflow = false;
         shell_prompt();
         return;
@@ -675,7 +829,10 @@ static void shell_feed(char byte) {
             --shell_input.length;
 #ifdef REAL_ROBOT
             fputs("\b \b", stdout);
+#else
+            shell_tty_write("\b \b", 3u);
 #endif
+            shell_input.history_cursor = 0u;
         }
         return;
     }
@@ -690,8 +847,11 @@ static void shell_feed(char byte) {
         return;
     }
     shell_input.line[shell_input.length++] = byte;
+    shell_input.history_cursor = 0u;
 #ifdef REAL_ROBOT
     putchar(byte);
+#else
+    shell_tty_write(&byte, 1u);
 #endif
 }
 
@@ -722,6 +882,12 @@ void user_step(void) {
     /* Stdin belongs to the process, not a simulated robot. Only the selected
      * robot consumes it, so commands run against that robot's flash state. */
     if (pogobot_helper_getid() != selected_robot) return;
+    /* Wait until initialization logging is over before drawing the first
+     * interactive prompt on the terminal. */
+    if (shell_tty_active && shell_initial_prompt_needed) {
+        shell_initial_prompt_needed = false;
+        shell_prompt();
+    }
     shell_defrag_service();
     if (stdin_closed) return;
     for (unsigned i = 0u; i < 64u; ++i) {
@@ -755,6 +921,7 @@ int main(void) {
         if (uart_read_nonblock()) shell_feed((char)uart_read());
     }
 #else
+    shell_enable_tty();
     pogobot_start(user_init, user_step);
     /* Keep the wall category registered so imported flash archives preserve
      * the same robot/category identity layout as the calibration scenario. */

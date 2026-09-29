@@ -121,6 +121,10 @@ by hardware or experimental validation.
   contiguous extents after deletions. Host NOR tests cover overlapping moves
   and log preservation. A move is readback-verified but not power-fail atomic;
   physical timing and recovery behavior remain unmeasured.
+- The flash-file shell now keeps four recent nonblank commands in a fixed RAM
+  ring. UART and interactive Pogosim terminals accept Up/Down history keys;
+  simulator stdin remains unchanged for piped commands. Physical terminal
+  behavior has not yet been validated.
 
 ## What remains unknown
 

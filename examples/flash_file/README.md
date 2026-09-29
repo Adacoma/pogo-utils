@@ -5,6 +5,11 @@ On a Pogobot, type commands in the Pogobios-style UART console. In Pogosim,
 type them in the terminal that launched the simulator. `robots` shows the
 available simulated robot IDs, and `use <robot_id>` switches which robot's
 flash receives subsequent commands. Press Enter after each command.
+Up and Down browse the last four nonblank commands; Down from the newest
+command restores the line you were editing. Consecutive duplicate commands
+occupy only one history slot. History is in RAM and resets when the program
+restarts. In Pogosim, immediate key handling requires an interactive terminal;
+piped newline-delimited commands continue to work without terminal changes.
 
 ```console
 make -C examples/flash_file sim
