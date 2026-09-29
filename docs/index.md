@@ -42,7 +42,7 @@ the repository does not provide a single central runtime.
   and sector-isolated files across the full user-flash region. Its [design notes](flash_files.md)
   document stable IDs, fast and secure readers, and replacement constraints.
   The [serial shell](../examples/flash_file) lists, inspects, creates, edits,
-  renames, and removes files; the separate
+  renames, removes, and defragments files; the separate
   [format utility](../examples/flash_file_format) logically deletes all files.
 - [`flash_log`](../src/pogo-utils/flash_log.h) adds bounded, append-only text or
   binary streams in separate flash files. The [two-stream example](../examples/flash_log)

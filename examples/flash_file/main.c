@@ -33,6 +33,8 @@
  * This one-shot reader never appends after aliasing the cache for readback. */
 typedef struct {
     pogo_flash_log_t log;
+    pogo_flash_file_defrag_t defrag; /**< Incremental compaction state. */
+    bool defrag_active; /**< Blocks other commands while extents move. */
 } USERDATA;
 
 DECLARE_USERDATA(USERDATA);
@@ -48,6 +50,8 @@ static struct {
     bool overflow;
     bool after_cr;
 } shell_input;
+
+static void shell_prompt(void); /* Reprint after an asynchronous defrag result. */
 
 #ifndef REAL_ROBOT
 enum { SHELL_MAX_SIM_ROBOTS = 32 };
@@ -314,6 +318,75 @@ static void shell_df(void) {
     puts("Payload pages count reservations, not bytes written; free space may be fragmented.");
 }
 
+/** Begin a potentially long, destructive compaction only after explicit YES.
+ * Logs have per-page CRCs rather than a catalog whole-file CRC; preflight them
+ * with their reader before any file moves. Ordinary files are checked by the
+ * incremental defragmenter immediately before each move. */
+static void shell_defrag_start(void) {
+    if (!catalogs_ready()) return;
+    for (uint8_t id = 1u; id <= POGO_FLASH_FILE_MAX_FILES; ++id) {
+        pogo_flash_file_info_t info;
+        pogo_flash_file_status_t status = pogo_flash_file_find(id, &info);
+        if (status == POGO_FLASH_FILE_NOT_FOUND) continue;
+        if (status != POGO_FLASH_FILE_OK) {
+            printf("defrag: file %u: %s\n", (unsigned)id,
+                   pogo_flash_file_status_string(status));
+            return;
+        }
+        if (info.format_version == POGO_FLASH_LOG_FORMAT_VERSION) {
+            pogo_flash_log_status_t log_status =
+                pogo_flash_log_open(&mydata->log, id);
+            if (log_status != POGO_FLASH_LOG_OK) {
+                printf("defrag: log %u failed validation (status %u)\n",
+                       (unsigned)id, (unsigned)log_status);
+                return;
+            }
+        }
+    }
+    pogo_flash_file_status_t status =
+        pogo_flash_file_defrag_begin(&mydata->defrag);
+    if (status != POGO_FLASH_FILE_OK) {
+        printf("defrag: %s\n", pogo_flash_file_status_string(status));
+        return;
+    }
+    mydata->defrag_active = true;
+    pogobot_led_setColor(25u, 8u, 0u);
+    puts("defrag: started; keep power connected until completion");
+}
+
+/** Perform one bounded unit of work between UART polls or simulator ticks.
+ * A failure may leave the current file damaged if its extents overlapped. */
+static void shell_defrag_service(void) {
+    if (!mydata->defrag_active) return;
+    uint8_t moved_before = mydata->defrag.moved_files;
+    bool done = false;
+    pogo_flash_file_status_t status = pogo_flash_file_defrag_step(
+        &mydata->defrag, &done);
+    if (status != POGO_FLASH_FILE_OK) {
+        mydata->defrag_active = false;
+        pogobot_led_setColor(25u, 0u, 25u);
+        printf("defrag: FAILED (%s); current file may need backup restore\n",
+               pogo_flash_file_status_string(status));
+        shell_prompt();
+        return;
+    }
+    if (mydata->defrag.moved_files != moved_before) {
+        printf("# FLASH_DEFRAG_MOVED,id=%u,from=%u,to=%u\n",
+               (unsigned)mydata->defrag.last_moved_id,
+               (unsigned)mydata->defrag.last_from_page,
+               (unsigned)mydata->defrag.last_to_page);
+    }
+    if (done) {
+        mydata->defrag_active = false;
+        pogobot_led_setColor(0u, 25u, 0u);
+        unsigned free_kib = ((unsigned)POGO_FLASH_FILE_USER_PAGES -
+            mydata->defrag.cursor_page) * POGO_FLASH_FILE_PAGE_SIZE / 1024u;
+        printf("defrag: complete, moved %u files, contiguous_free=%uK\n",
+               (unsigned)mydata->defrag.moved_files, free_kib);
+        shell_prompt();
+    }
+}
+
 /** Print one file's stable identity and allocation; no payload is changed. */
 static void shell_stat(const pogo_flash_file_info_t *info) {
     printf("id=%u name=%s format=%u page=%u pages=%u generation=%lu crc=%08lx\n",
@@ -435,6 +508,12 @@ static void shell_write(const pogo_flash_file_info_t *info,
 /** Fixed-size, whitespace-delimited command dispatcher. Labels cannot
  * contain spaces, matching the stored exact-name lookup and small line cap. */
 static void shell_execute(char *line) {
+    /* Even read commands are blocked while a copied extent is not yet
+     * published in its catalog. Simulator robot switching is blocked too. */
+    if (mydata->defrag_active) {
+        puts("defrag in progress; wait for completion");
+        return;
+    }
     char *words[SHELL_MAX_WORDS];
     unsigned count = 0u;
     char *p = line;
@@ -454,7 +533,7 @@ static void shell_execute(char *line) {
     if (strcmp(command, "help") == 0 && count == 1u) {
         puts("help | ls | df | stat <id|name> | cat <id|name> | rm <id|name>");
         puts("touch <id> <name|-> [pages] | mv <id|name> <new_name|->");
-        puts("write <id|name> <offset> <hexbytes> | format YES");
+        puts("write <id|name> <offset> <hexbytes> | defrag YES | format YES");
 #ifndef REAL_ROBOT
         puts("robots | use <robot_id>  (simulator only)");
 #endif
@@ -491,6 +570,11 @@ static void shell_execute(char *line) {
     }
     if (strcmp(command, "df") == 0 && count == 1u) {
         shell_df();
+        return;
+    }
+    if (strcmp(command, "defrag") == 0 && count == 2u &&
+        strcmp(words[1], "YES") == 0) {
+        shell_defrag_start();
         return;
     }
     if (strcmp(command, "format") == 0 && count == 2u &&
@@ -617,6 +701,8 @@ void user_init(void) {
     max_nb_processed_msg_per_tick = 0;
     msg_rx_fn = NULL;
     msg_tx_fn = NULL;
+    memset(&mydata->defrag, 0, sizeof(mydata->defrag));
+    mydata->defrag_active = false;
 #ifndef REAL_ROBOT
     uint16_t id = pogobot_helper_getid();
     if (robot_count < SHELL_MAX_SIM_ROBOTS) {
@@ -635,7 +721,9 @@ void user_step(void) {
 #ifndef REAL_ROBOT
     /* Stdin belongs to the process, not a simulated robot. Only the selected
      * robot consumes it, so commands run against that robot's flash state. */
-    if (stdin_closed || pogobot_helper_getid() != selected_robot) return;
+    if (pogobot_helper_getid() != selected_robot) return;
+    shell_defrag_service();
+    if (stdin_closed) return;
     for (unsigned i = 0u; i < 64u; ++i) {
         fd_set input;
         FD_ZERO(&input);
@@ -663,6 +751,7 @@ int main(void) {
     user_init();
     shell_prompt();
     for (;;) {
+        shell_defrag_service();
         if (uart_read_nonblock()) shell_feed((char)uart_read());
     }
 #else

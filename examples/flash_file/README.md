@@ -29,6 +29,7 @@ Commands (names are exact, case-sensitive, and contain no spaces):
 | `write <id\|name> <offset> <hexbytes>` | Replace bytes within an existing **one-page ordinary file**. Example: `write notes 0 4869` stores `Hi`. |
 | `mv <id\|name> <new_name\|->` | Rename the optional label; the stable numeric ID never changes. |
 | `rm <id\|name>` | Remove the catalog entry; payload may remain until its sector is reused. |
+| `defrag YES` | Compact occupied data extents toward page 256, keeping IDs, names, sizes, and CRCs. |
 | `format YES` | Recreate all 16 catalog sectors, logically deleting every PFFS file. Old payload bytes are not wiped. |
 
 `touch` refuses a missing or damaged filesystem instead of silently formatting
@@ -43,6 +44,19 @@ data buffer; the library's streaming writer supports large-file updates.
 `touch` does support multi-page files.
 Command lines are limited to 159 bytes; several `write` commands can fill a
 page, but each wears its sector, so use `flash_log` for frequent appends.
+
+`defrag YES` is for recovering contiguous free space after deletion, not for
+routine maintenance. Back up the flash archive or robot data first and keep
+power connected until `defrag: complete`. The command checks catalog extents,
+validates logs before starting, and checks each ordinary file's CRC before
+moving it. It copies at most one page per service call, reports each completed
+file move, and rejects all other shell commands until done. On a real robot the
+shell keeps polling UART between pages; Pogosim advances one step per tick.
+Each move is verified, but **overlapping moves are not power-fail atomic**:
+interruption or a write failure can damage the current file before its catalog
+entry changes. Previously completed moves remain committed. A failed run is
+not safe to resume without inspecting or restoring the affected file. Defrag
+does not securely erase vacated bytes or reduce flash wear.
 
 The `ls` output includes each file's ID, name, payload format, page count,
 generation, CRC, and validation result. Ordinary files use a whole-file CRC;

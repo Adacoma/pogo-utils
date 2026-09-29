@@ -15,8 +15,9 @@
  * The secure reader checks the catalog CRC and the CRC of every ordinary file
  * page. Append-only flash logs use their own per-page CRC reader instead.
  * Replacement erases and rewrites the file's dedicated sectors. Catalog changes
- * erase and rewrite only the selected catalog sector. These operations are not
- * transactional: interrupted writes are detected but cannot be rolled back.
+ * erase and rewrite only the selected catalog sector. Mutations, including
+ * defragmentation, are not transactional: interrupted writes cannot be rolled
+ * back.
  *
  * On-flash page numbers are relative to the SDK user-flash region:
  *
@@ -24,7 +25,7 @@
  *   pages 256..5887  data extents, rounded up to complete erase sectors
  *
  * There is no heap allocation, directory tree, variable-length byte stream,
- * compaction, or implicit open-file state. A "file page" is one physical
+ * automatic compaction, or implicit open-file state. A "file page" is one physical
  * 256-byte page. That restriction is deliberate: callers can keep one page
  * buffer and the fast reader can resolve an ID with two physical reads.
  *
@@ -216,6 +217,33 @@ pogo_flash_file_status_t pogo_flash_file_write_finish(
 
 /** Discard only RAM state. It does not undo any erased/programmed flash pages. */
 void pogo_flash_file_write_abort(pogo_flash_file_writer_t *writer);
+
+/** Caller-owned state for a bounded-RAM, forward-only compaction pass.
+ * Fields are private. A move can overlap its old extent, so interruption may
+ * damage that file before its catalog entry can be updated. Back up first.
+ */
+typedef struct {
+    uint16_t cursor_page, source_page, target_page, page_count;
+    uint16_t checked_pages, next_page;
+    uint32_t expected_crc, running_crc, file_generation;
+    uint8_t file_id, phase, moved_files, last_moved_id;
+    uint16_t last_from_page, last_to_page;
+} pogo_flash_file_defrag_t;
+
+/** Validate catalog metadata and prepare a compaction pass without writing.
+ * Ordinary-file payload CRCs are checked incrementally by step(). Log payload
+ * integrity should be checked by the caller before starting.
+ */
+pogo_flash_file_status_t pogo_flash_file_defrag_begin(
+    pogo_flash_file_defrag_t *defrag);
+
+/** Perform at most one catalog scan, one source-page check, one copied page,
+ * or one catalog update per call. The caller must serialize all other PFFS
+ * access until *done becomes true. On error, the pass stops; prior moves may
+ * remain committed, and the current source may need restoration from backup.
+ */
+pogo_flash_file_status_t pogo_flash_file_defrag_step(
+    pogo_flash_file_defrag_t *defrag, bool *done);
 
 /** Replace an existing file in its dedicated sectors. The size stays fixed.
  *

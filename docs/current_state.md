@@ -117,6 +117,10 @@ by hardware or experimental validation.
 - Magnetometer missions find their named record with a bounded catalog scan
   at startup, then read one page. The scan costs up to 16 catalog reads but
   frees every ID for ordinary files or logs.
+- The flash-file shell now offers explicit, incremental `defrag YES` to compact
+  contiguous extents after deletions. Host NOR tests cover overlapping moves
+  and log preservation. A move is readback-verified but not power-fail atomic;
+  physical timing and recovery behavior remain unmeasured.
 
 ## What remains unknown
 

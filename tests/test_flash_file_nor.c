@@ -107,6 +107,67 @@ int main(void) {
     assert(pogo_flash_file_read_page_secure(2u, 1u, output, NULL) ==
            POGO_FLASH_FILE_OK);
     for (unsigned i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xffu);
+
+    /* A one-sector hole can be removed even when the next file spans three
+     * sectors: forward copying safely overlaps its old NOR extent. */
+    erase_write_section_flash();
+    assert(pogo_flash_file_format() == POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_create(1u, "hole", 1u, 1u, first) ==
+           POGO_FLASH_FILE_OK);
+    pogo_flash_file_writer_t writer;
+    assert(pogo_flash_file_write_begin_create(&writer, 2u, "large", 40u, 1u,
+           NULL) == POGO_FLASH_FILE_OK);
+    for (uint16_t page = 0u; page < 40u; ++page) {
+        memset(output, (int)(page + 17u), sizeof(output));
+        assert(pogo_flash_file_write_page(&writer, output) == POGO_FLASH_FILE_OK);
+    }
+    assert(pogo_flash_file_write_finish(&writer) == POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_create(3u, "tail", 1u, 1u, second) ==
+           POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_find(2u, &info) == POGO_FLASH_FILE_OK &&
+           info.first_page == 272u);
+    assert(pogo_flash_file_find(3u, &info) == POGO_FLASH_FILE_OK &&
+           info.first_page == 320u);
+    assert(pogo_flash_file_delete(1u) == POGO_FLASH_FILE_OK);
+    pogo_flash_file_defrag_t defrag;
+    assert(pogo_flash_file_defrag_begin(&defrag) == POGO_FLASH_FILE_OK);
+    bool done = false;
+    for (unsigned steps = 0u; steps < 200u && !done; ++steps) {
+        assert(pogo_flash_file_defrag_step(&defrag, &done) == POGO_FLASH_FILE_OK);
+    }
+    assert(done && defrag.moved_files == 2u);
+    assert(pogo_flash_file_find(2u, &info) == POGO_FLASH_FILE_OK &&
+           info.first_page == 256u && info.generation == 1u);
+    assert(pogo_flash_file_read_page_secure(2u, 39u, output, NULL) ==
+           POGO_FLASH_FILE_OK);
+    for (unsigned i = 0u; i < sizeof(output); ++i) assert(output[i] == 56u);
+    assert(pogo_flash_file_find(3u, &info) == POGO_FLASH_FILE_OK &&
+           info.first_page == 304u);
+    assert(pogo_flash_file_read_page_secure(3u, 0u, output, NULL) ==
+           POGO_FLASH_FILE_OK);
+    assert(memcmp(output, second, sizeof(output)) == 0);
+    assert(pogo_flash_file_check() == POGO_FLASH_FILE_OK);
+    unsigned erases_after_compaction = sector_erases;
+    assert(pogo_flash_file_defrag_begin(&defrag) == POGO_FLASH_FILE_OK);
+    done = false;
+    for (unsigned steps = 0u; steps < 10u && !done; ++steps) {
+        assert(pogo_flash_file_defrag_step(&defrag, &done) == POGO_FLASH_FILE_OK);
+    }
+    assert(done && defrag.moved_files == 0u &&
+           sector_erases == erases_after_compaction);
+
+    /* A damaged ordinary file is rejected during pagewise preflight, before
+     * its first destination sector is erased. */
+    assert(pogo_flash_file_delete(2u) == POGO_FLASH_FILE_OK);
+    flash[304u][0u] ^= 1u; /* Damage the remaining file's source page. */
+    assert(pogo_flash_file_defrag_begin(&defrag) == POGO_FLASH_FILE_OK);
+    unsigned erases_before_preflight = sector_erases;
+    assert(pogo_flash_file_defrag_step(&defrag, &done) == POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_defrag_step(&defrag, &done) ==
+           POGO_FLASH_FILE_BAD_CHECKSUM);
+    assert(sector_erases == erases_before_preflight);
+    assert(pogo_flash_file_find(3u, &info) == POGO_FLASH_FILE_OK &&
+           info.first_page == 304u);
     puts("NOR flash file tests passed");
     return 0;
 }

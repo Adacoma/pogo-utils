@@ -1,6 +1,6 @@
 /**
  * @file flash_file_write.c
- * @brief Optional create/replace/delete/rename support for the flash catalog.
+ * @brief Optional creation, mutation, and incremental defragmentation support.
  *
  * This file is separate so read-only mission firmware does not pull allocation
  * and verification code into its image. Each catalog page owns an independent
@@ -11,6 +11,7 @@
  *   create:  validate/format -> allocate extent -> write -> publish entry
  *   replace: validate -> erase/write extent -> publish new CRC
  *   delete:  validate -> clear slot -> rewrite one catalog sector
+ *   defrag:  validate -> copy pages left -> publish new first page
  *
  * Creation never exposes unwritten data. Replacement and deletion are not
  * transactional: a reset during sector erase or rewrite can destroy the old
@@ -774,4 +775,195 @@ pogo_flash_file_status_t pogo_flash_file_write_finish(
 
 void pogo_flash_file_write_abort(pogo_flash_file_writer_t *writer) {
     if (writer != NULL) writer->mode = 0u;
+}
+
+enum {
+    DEFRAG_SELECT = 1, DEFRAG_VALIDATE = 2,
+    DEFRAG_COPY = 3, DEFRAG_COMMIT = 4, DEFRAG_DONE = 5
+};
+
+/** Find the leftmost file not yet consumed by the compacted prefix. Scanning
+ * sixteen catalog pages avoids a file-ID-sized RAM table or eighty reads. */
+static pogo_flash_file_status_t defrag_find_next(
+    uint16_t cursor_page, pogo_flash_file_info_t *next,
+    uint32_t *catalog_generation) {
+    uint8_t catalog[POGO_FLASH_FILE_PAGE_SIZE];
+    next->id = 0u;
+    for (uint8_t index = 0u; index < POGO_FLASH_FILE_CATALOG_PAGES; ++index) {
+        read_page_flash(pogo_flash_file_internal_catalog_page(index),
+                        (char *)catalog);
+        if (!pogo_flash_file_internal_catalog_header_valid(catalog, index) ||
+            !catalog_crc_valid(catalog)) return POGO_FLASH_FILE_CORRUPT_CATALOG;
+        for (uint8_t slot = 0u; slot < POGO_FLASH_FILE_ENTRIES_PER_CATALOG;
+             ++slot) {
+            const uint8_t *entry = catalog + POGO_FLASH_FILE_CATALOG_HEADER_SIZE +
+                (size_t)slot * POGO_FLASH_FILE_ENTRY_SIZE;
+            if (entry[1] == 0u) continue;
+            pogo_flash_file_info_t info;
+            uint8_t id = (uint8_t)(index *
+                POGO_FLASH_FILE_ENTRIES_PER_CATALOG + slot + 1u);
+            if (!pogo_flash_file_internal_decode_entry(entry, id, &info)) {
+                return POGO_FLASH_FILE_CORRUPT_CATALOG;
+            }
+            if (info.first_page >= cursor_page &&
+                (next->id == 0u || info.first_page < next->first_page)) {
+                *next = info;
+                *catalog_generation = pogo_flash_file_internal_get_u32(
+                    catalog + 8);
+            }
+        }
+    }
+    return POGO_FLASH_FILE_OK;
+}
+
+pogo_flash_file_status_t pogo_flash_file_defrag_begin(
+    pogo_flash_file_defrag_t *defrag) {
+    if (defrag == NULL) return POGO_FLASH_FILE_INVALID_ARGUMENT;
+    memset(defrag, 0, sizeof(*defrag));
+    /* In particular, reject overlapping extents before any data sector can
+     * be erased. This pass never autoformats a damaged catalog. */
+    pogo_flash_file_status_t status = pogo_flash_file_check();
+    if (status != POGO_FLASH_FILE_OK) return status;
+    defrag->cursor_page = POGO_FLASH_FILE_DATA_FIRST_PAGE;
+    defrag->phase = DEFRAG_SELECT;
+    return POGO_FLASH_FILE_OK;
+}
+
+pogo_flash_file_status_t pogo_flash_file_defrag_step(
+    pogo_flash_file_defrag_t *defrag, bool *done) {
+    if (defrag == NULL || done == NULL || defrag->phase == 0u ||
+        defrag->phase > DEFRAG_DONE) return POGO_FLASH_FILE_INVALID_ARGUMENT;
+    *done = false;
+    if (defrag->phase == DEFRAG_DONE) {
+        *done = true;
+        return POGO_FLASH_FILE_OK;
+    }
+    if (defrag->phase == DEFRAG_SELECT) {
+        pogo_flash_file_info_t next;
+        uint32_t catalog_generation = 0u;
+        pogo_flash_file_status_t status = defrag_find_next(
+            defrag->cursor_page, &next, &catalog_generation);
+        if (status != POGO_FLASH_FILE_OK) {
+            defrag->phase = 0u;
+            return status;
+        }
+        if (next.id == 0u) {
+            defrag->phase = DEFRAG_DONE;
+            *done = true;
+            return POGO_FLASH_FILE_OK;
+        }
+        uint16_t occupied_pages = (uint16_t)(((unsigned)next.page_count +
+            POGO_FLASH_FILE_ERASE_SECTOR_PAGES - 1u) /
+            POGO_FLASH_FILE_ERASE_SECTOR_PAGES *
+            POGO_FLASH_FILE_ERASE_SECTOR_PAGES);
+        if (next.first_page == defrag->cursor_page) {
+            /* Already compact: skip its data and retain its catalog entry. */
+            defrag->cursor_page = (uint16_t)(defrag->cursor_page + occupied_pages);
+            return POGO_FLASH_FILE_OK;
+        }
+        if (next.first_page < defrag->cursor_page ||
+            (unsigned)defrag->cursor_page + occupied_pages >
+                POGO_FLASH_FILE_USER_PAGES) {
+            defrag->phase = 0u;
+            return POGO_FLASH_FILE_CORRUPT_CATALOG;
+        }
+        /* Do not start an overlapping copy if the later catalog publish is
+         * known to be impossible because its generation cannot advance. */
+        if (catalog_generation == UINT32_MAX) {
+            defrag->phase = 0u;
+            return POGO_FLASH_FILE_GENERATION_EXHAUSTED;
+        }
+        defrag->file_id = next.id;
+        defrag->source_page = next.first_page;
+        defrag->target_page = defrag->cursor_page;
+        defrag->page_count = next.page_count;
+        defrag->file_generation = next.generation;
+        defrag->expected_crc = next.data_crc32;
+        defrag->checked_pages = 0u;
+        defrag->next_page = 0u;
+        defrag->running_crc = UINT32_MAX;
+        /* Logs have their own page CRCs; the shell preflights them with the
+         * log reader. Ordinary files are checked page by page here. */
+        defrag->phase = next.format_version == POGO_FLASH_LOG_FORMAT_VERSION ?
+            DEFRAG_COPY : DEFRAG_VALIDATE;
+        return POGO_FLASH_FILE_OK;
+    }
+    if (defrag->phase == DEFRAG_VALIDATE) {
+        uint8_t page[POGO_FLASH_FILE_PAGE_SIZE];
+        read_page_flash((uint16_t)(defrag->source_page +
+                        defrag->checked_pages), (char *)page);
+        defrag->running_crc = crc32_update(defrag->running_crc, page,
+                                          sizeof(page));
+        if (++defrag->checked_pages == defrag->page_count) {
+            if (crc32_finish(defrag->running_crc) != defrag->expected_crc) {
+                defrag->phase = 0u;
+                return POGO_FLASH_FILE_BAD_CHECKSUM;
+            }
+            defrag->phase = DEFRAG_COPY;
+        }
+        return POGO_FLASH_FILE_OK;
+    }
+    if (defrag->phase == DEFRAG_COPY) {
+        uint8_t page[POGO_FLASH_FILE_PAGE_SIZE];
+        uint16_t source = (uint16_t)(defrag->source_page + defrag->next_page);
+        uint16_t target = (uint16_t)(defrag->target_page + defrag->next_page);
+        /* Always read before erasing the destination. Forward copy is safe
+         * when target overlaps an earlier, already-copied source sector. */
+        read_page_flash(source, (char *)page);
+        if ((defrag->next_page % POGO_FLASH_FILE_ERASE_SECTOR_PAGES == 0u &&
+             !erase_sector_verified(target)) || !write_page_verified(target, page)) {
+            defrag->phase = 0u;
+            return POGO_FLASH_FILE_VERIFY_FAILED;
+        }
+        if (++defrag->next_page == defrag->page_count) {
+            defrag->phase = DEFRAG_COMMIT;
+        }
+        return POGO_FLASH_FILE_OK;
+    }
+    /* The old entry remains in force until all copied pages have been checked.
+     * It may already refer to overwritten data if the extents overlap. */
+    uint8_t index = (uint8_t)((defrag->file_id - 1u) /
+        POGO_FLASH_FILE_ENTRIES_PER_CATALOG);
+    uint8_t catalog[POGO_FLASH_FILE_PAGE_SIZE];
+    bool used_sectors[POGO_FLASH_FILE_TOTAL_SECTORS];
+    pogo_flash_file_status_t status = load_catalogs(index, catalog, used_sectors);
+    if (status != POGO_FLASH_FILE_OK) {
+        defrag->phase = 0u;
+        return status;
+    }
+    uint8_t *entry = catalog_entry(catalog, defrag->file_id);
+    pogo_flash_file_info_t info;
+    if (!pogo_flash_file_internal_decode_entry(entry, defrag->file_id, &info) ||
+        info.first_page != defrag->source_page ||
+        info.page_count != defrag->page_count ||
+        info.generation != defrag->file_generation ||
+        info.data_crc32 != defrag->expected_crc) {
+        defrag->phase = 0u;
+        return POGO_FLASH_FILE_CORRUPT_CATALOG;
+    }
+    unsigned old_first = defrag->source_page / POGO_FLASH_FILE_ERASE_SECTOR_PAGES;
+    unsigned old_end = ((unsigned)defrag->source_page + defrag->page_count +
+        POGO_FLASH_FILE_ERASE_SECTOR_PAGES - 1u) /
+        POGO_FLASH_FILE_ERASE_SECTOR_PAGES;
+    unsigned new_first = defrag->target_page / POGO_FLASH_FILE_ERASE_SECTOR_PAGES;
+    unsigned new_end = new_first + (old_end - old_first);
+    for (unsigned sector = new_first; sector < new_end; ++sector) {
+        if (used_sectors[sector] && (sector < old_first || sector >= old_end)) {
+            defrag->phase = 0u;
+            return POGO_FLASH_FILE_CORRUPT_CATALOG;
+        }
+    }
+    put_u16(entry + 4, defrag->target_page);
+    status = write_changed_catalog(index, catalog);
+    if (status != POGO_FLASH_FILE_OK) {
+        defrag->phase = 0u;
+        return status;
+    }
+    defrag->last_moved_id = defrag->file_id;
+    defrag->last_from_page = defrag->source_page;
+    defrag->last_to_page = defrag->target_page;
+    ++defrag->moved_files;
+    defrag->cursor_page = (uint16_t)(new_end * POGO_FLASH_FILE_ERASE_SECTOR_PAGES);
+    defrag->phase = DEFRAG_SELECT;
+    return POGO_FLASH_FILE_OK;
 }

@@ -18,7 +18,8 @@ The [serial shell](../examples/flash_file/README.md) exposes `ls`, `df`,
   rounded up to a whole number of sectors. A file can contain 1–5632 pages
   (256 bytes each), with an immutable page count.
 - The first-fit allocator can report `NO_SPACE` even when `df` shows free
-  sectors if no *contiguous* run is large enough. Deletion does not compact.
+  sectors if no *contiguous* run is large enough. Deletion does not compact;
+  the shell's explicit `defrag YES` command can compact extents afterward.
 
 The physical SDK user-flash base is `0x90000`. Catalog and ordinary-file
 checksums use CRC-32/ISO-HDLC. Multibyte catalog fields are little-endian;
@@ -60,6 +61,17 @@ rewrite can lose files in that catalog; an interrupted replacement can leave
 data inconsistent with the old CRC. Each erase/program is read back. A damaged
 catalog or payload is reported, not silently repaired. Actual erase/program
 latency and stack use still need measurement on physical robots.
+
+Defragmentation scans catalog entries by physical location and copies each
+file left into the compacted prefix using a single page buffer. It can work
+even when the new extent overlaps the old one: source pages are copied in
+ascending order, and each destination sector is erased just before use.
+Ordinary files receive a pagewise CRC precheck; the shell preflights logs with
+their per-page reader. Metadata is changed only after all copied pages verify.
+One page or catalog action is serviced at a time, and the shell blocks other
+commands during the pass. Because overlap may destroy old pages before the
+catalog update, **power loss can still corrupt the current file**. Back up
+first; this is not a transactional repair or a secure erase.
 
 ## Append-only logs
 

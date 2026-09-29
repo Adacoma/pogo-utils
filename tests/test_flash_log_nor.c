@@ -183,10 +183,28 @@ int main(void) {
 
     /* No numeric ID is reserved for calibration; even ID 1 can host a log. */
     erase_write_section_flash();
+    assert(pogo_flash_file_create(4u, "hole", 1u, 1u, calibration) ==
+           POGO_FLASH_FILE_OK);
     assert(pogo_flash_log_initialize(&reopened, 1u, "id_one_log", 1u, false,
                                      &formatted) == POGO_FLASH_LOG_OK);
     assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_OK &&
-           info.format_version == POGO_FLASH_LOG_FORMAT_VERSION);
+           info.format_version == POGO_FLASH_LOG_FORMAT_VERSION &&
+           info.first_page == 272u);
+    append_all(&reopened, "moved log\n", 10u);
+    assert(pogo_flash_log_force_flush(&reopened) == POGO_FLASH_LOG_OK);
+    assert(pogo_flash_file_delete(4u) == POGO_FLASH_FILE_OK);
+    pogo_flash_file_defrag_t defrag;
+    assert(pogo_flash_file_defrag_begin(&defrag) == POGO_FLASH_FILE_OK);
+    bool done = false;
+    for (unsigned steps = 0u; steps < 20u && !done; ++steps) {
+        assert(pogo_flash_file_defrag_step(&defrag, &done) == POGO_FLASH_FILE_OK);
+    }
+    assert(done && defrag.moved_files == 1u);
+    assert(pogo_flash_log_open(&reopened, 1u) == POGO_FLASH_LOG_OK);
+    assert(reopened.first_page == 256u);
+    assert(pogo_flash_log_read_page(&reopened, 0u, page, &used) ==
+           POGO_FLASH_LOG_OK && used == 10u);
+    assert(memcmp(page + POGO_FLASH_LOG_HEADER_SIZE, "moved log\n", 10u) == 0);
     puts("NOR flash log tests passed");
     return 0;
 }
