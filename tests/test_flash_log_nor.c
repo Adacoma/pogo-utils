@@ -1,12 +1,13 @@
 /** Host regression for append-only logs on one-way-programmable NOR flash. */
 #include "src/pogo-utils/flash_log.h"
+#include "pogobot.h"
 
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-static uint8_t flash[256u][POGO_FLASH_FILE_PAGE_SIZE];
+static uint8_t flash[POGO_FLASH_FILE_USER_PAGES][POGO_FLASH_FILE_PAGE_SIZE];
 static unsigned sector_erases;
 static unsigned page_programs;
 static int torn_page = -1;
@@ -31,22 +32,22 @@ static void refresh_catalog_crc(uint8_t catalog) {
 void erase_write_section_flash(void) { memset(flash, 0xff, sizeof(flash)); }
 
 int spiBeginErase4(uint32_t address) {
-    assert(address >= UINT32_C(0x290000));
-    uint32_t offset = address - UINT32_C(0x290000);
+    assert(address >= POGOBOT_USER_FLASH_START_OFFSET);
+    uint32_t offset = address - POGOBOT_USER_FLASH_START_OFFSET;
     assert(offset < sizeof(flash) && offset % 4096u == 0u);
     memset(&flash[offset / POGO_FLASH_FILE_PAGE_SIZE], 0xff, 4096u);
     ++sector_erases;
     return 0;
 }
 
-void write_page_flash(uint8_t page, const void *data) {
+void write_page_flash(uint16_t page, const void *data) {
     const uint8_t *bytes = data;
     unsigned limit = (int)page == torn_page ? 128u : POGO_FLASH_FILE_PAGE_SIZE;
     for (unsigned i = 0u; i < limit; ++i) flash[page][i] &= bytes[i];
     ++page_programs;
 }
 
-void read_page_flash(uint8_t page, char *buffer) {
+void read_page_flash(uint16_t page, char *buffer) {
     memcpy(buffer, flash[page], POGO_FLASH_FILE_PAGE_SIZE);
 }
 
@@ -173,12 +174,19 @@ int main(void) {
     assert(pogo_flash_log_initialize(&reopened, 4u, "new", 1u, false,
                                      &formatted) == POGO_FLASH_LOG_OK);
     assert(formatted); /* Virgin flash has the same explicit recovery policy. */
-    flash[0][12u + 3u * 48u + 5u] = 0u; /* ID 4 with impossible page count. */
+    flash[0][12u + 3u * 48u + 6u] = 0u; /* ID 4 with impossible page count. */
     refresh_catalog_crc(0u);
     assert(pogo_flash_log_initialize(&reopened, 5u, "later", 1u, false,
                                      &formatted) == POGO_FLASH_LOG_OK);
     assert(formatted);
     assert(pogo_flash_file_find(4u, &info) == POGO_FLASH_FILE_NOT_FOUND);
+
+    /* No numeric ID is reserved for calibration; even ID 1 can host a log. */
+    erase_write_section_flash();
+    assert(pogo_flash_log_initialize(&reopened, 1u, "id_one_log", 1u, false,
+                                     &formatted) == POGO_FLASH_LOG_OK);
+    assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_OK &&
+           info.format_version == POGO_FLASH_LOG_FORMAT_VERSION);
     puts("NOR flash log tests passed");
     return 0;
 }

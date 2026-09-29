@@ -101,6 +101,7 @@ if(BUILD_TESTING)
         tests/test_flash_file_nor.c
         src/pogo-utils/flash_file_read.c
         src/pogo-utils/flash_file_secure.c
+        src/pogo-utils/flash_file_name.c
         src/pogo-utils/flash_file_write.c
         src/pogo-utils/flash_file_status.c)
     target_include_directories(test_flash_file_nor PRIVATE
@@ -113,6 +114,7 @@ if(BUILD_TESTING)
         tests/test_flash_log_nor.c
         src/pogo-utils/flash_file_read.c
         src/pogo-utils/flash_file_secure.c
+        src/pogo-utils/flash_file_name.c
         src/pogo-utils/flash_file_write.c
         src/pogo-utils/flash_log.c)
     target_include_directories(test_flash_log_nor PRIVATE

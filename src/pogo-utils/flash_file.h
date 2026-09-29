@@ -5,27 +5,26 @@
  * @file flash_file.h
  * @brief Small, bounded named-file catalog over Pogobot user flash.
  *
- * Catalog pages 0 and 1 contain five fixed slots each. Stable file IDs 1..10
- * map directly to those slots, so ID lookup reads exactly one catalog page.
- * Files occupy 1..8 contiguous, complete 256-byte pages in separate 4 KiB
- * erase sectors starting at page 16.
+ * PFFS v3 uses all 5888 SDK user-flash pages. Sixteen catalog pages in
+ * separate erase sectors contain five slots each. Stable file IDs 1..80 map
+ * directly to those slots, so ID lookup still reads one catalog page. Files
+ * occupy contiguous pages and own every 4 KiB sector that they intersect.
  * Human-readable names are optional metadata; IDs are the persistent identity.
  *
  * The fast reader checks structural bounds but deliberately skips CRC checks.
  * The secure reader checks the catalog CRC and the CRC of every ordinary file
  * page. Append-only flash logs use their own per-page CRC reader instead.
- * Replacement erases and rewrites the file's dedicated sector. Catalog changes
- * erase and rewrite the dedicated catalog sector. These operations are not
+ * Replacement erases and rewrites the file's dedicated sectors. Catalog changes
+ * erase and rewrite only the selected catalog sector. These operations are not
  * transactional: interrupted writes are detected but cannot be rolled back.
  *
- * On-flash organization (all page numbers are relative to the 64 KiB writable
- * user section):
+ * On-flash page numbers are relative to the SDK user-flash region:
  *
- *   pages 0..15   dedicated catalog erase sector (pages 0 and 1 hold entries)
- *   pages 16..255 dedicated data erase sectors, one per file
+ *   pages 0,16,..240  catalog pages, one per dedicated erase sector
+ *   pages 256..5887  data extents, rounded up to complete erase sectors
  *
  * There is no heap allocation, directory tree, variable-length byte stream,
- * compaction, or open-file state. A "file page" is always exactly one physical
+ * compaction, or implicit open-file state. A "file page" is one physical
  * 256-byte page. That restriction is deliberate: callers can keep one page
  * buffer and the fast reader can resolve an ID with two physical reads.
  *
@@ -36,6 +35,7 @@
  */
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -44,15 +44,13 @@ extern "C" {
 
 enum {
     POGO_FLASH_FILE_PAGE_SIZE = 256,    /**< Physical and logical page size. */
-    POGO_FLASH_FILE_CATALOG_PAGES = 2, /**< Reserved metadata pages 0 and 1. */
+    POGO_FLASH_FILE_USER_PAGES = 5888, /**< SDK user-flash page count. */
+    POGO_FLASH_FILE_CATALOG_PAGES = 16, /**< Catalogs in distinct sectors. */
     POGO_FLASH_FILE_ERASE_SECTOR_PAGES = 16, /**< 4 KiB sector in 256-byte pages. */
-    POGO_FLASH_FILE_DATA_FIRST_PAGE = 16, /**< First allocatable sector/page. */
-    POGO_FLASH_FILE_MAX_FILES = 10,    /**< Number of stable ID slots. */
-    POGO_FLASH_FILE_MAX_PAGES = 8,     /**< Maximum contiguous pages per file. */
-    POGO_FLASH_FILE_MAX_NAME = 32,     /**< Stored name bytes, excluding NUL. */
-
-    /** Reserved stable ID used by pogo-utils' magnetometer calibration. */
-    POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION = 1
+    POGO_FLASH_FILE_DATA_FIRST_PAGE = 256, /**< First data sector/page. */
+    POGO_FLASH_FILE_MAX_FILES = 80,    /**< Number of stable ID slots. */
+    POGO_FLASH_FILE_MAX_PAGES = 5632,  /**< Largest contiguous file extent. */
+    POGO_FLASH_FILE_MAX_NAME = 32      /**< Stored name bytes, excluding NUL. */
 };
 
 #define POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION \
@@ -66,8 +64,8 @@ enum {
  */
 typedef struct {
     uint8_t id;             /**< Stable ID whose numeric value selects the slot. */
-    uint8_t first_page;     /**< First physical page in the contiguous extent. */
-    uint8_t page_count;     /**< Immutable number of pages in the extent. */
+    uint16_t first_page;    /**< First physical page in the contiguous extent. */
+    uint16_t page_count;    /**< Immutable number of pages in the extent. */
     uint8_t name_length;    /**< Stored label length; zero means unnamed. */
     uint16_t format_version; /**< Payload schema; 0x8001 is reserved for logs. */
     uint32_t generation;    /**< Per-file replacement counter, starting at one. */
@@ -99,7 +97,7 @@ typedef enum {
 
 /** Find an ID using structural checks only; no CRC is calculated.
  *
- * @param file_id Stable ID in the inclusive range 1..10.
+ * @param file_id Stable ID in the inclusive range 1..80.
  * @param info Required destination for decoded metadata.
  * @return OK, NOT_FOUND, UNFORMATTED, CORRUPT_CATALOG, or INVALID_ARGUMENT.
  */
@@ -107,7 +105,7 @@ pogo_flash_file_status_t pogo_flash_file_find(
     uint8_t file_id,
     pogo_flash_file_info_t *info);
 
-/** Scan both catalog pages for an optional human-readable name.
+/** Scan the catalog pages for an optional human-readable name.
  *
  * Names are exact, case-sensitive byte strings. Empty names are not searchable
  * and numeric IDs remain authoritative even when a name is present.
@@ -124,7 +122,7 @@ pogo_flash_file_status_t pogo_flash_file_find_by_name(
  */
 pogo_flash_file_status_t pogo_flash_file_read_page_fast(
     uint8_t file_id,
-    uint8_t file_page,
+    uint16_t file_page,
     uint8_t output[POGO_FLASH_FILE_PAGE_SIZE],
     pogo_flash_file_info_t *info);
 
@@ -135,19 +133,18 @@ pogo_flash_file_status_t pogo_flash_file_read_page_fast(
  */
 pogo_flash_file_status_t pogo_flash_file_read_page_secure(
     uint8_t file_id,
-    uint8_t file_page,
+    uint16_t file_page,
     uint8_t output[POGO_FLASH_FILE_PAGE_SIZE],
     pogo_flash_file_info_t *info);
 
-/** Erase the complete 64 KiB user section and initialize both catalogs.
+/** Erase all catalog sectors and initialize the empty PFFS v3 catalog.
  *
- * This is the primitive that erases the whole user section. It is destructive
- * even when a catalog already exists; create() invokes it automatically if
- * the catalogs are absent or corrupt.
+ * This logically deletes every PFFS file, but does not wipe old payload bytes
+ * in unallocated sectors. create() invokes it if catalogs are absent/corrupt.
  */
 pogo_flash_file_status_t pogo_flash_file_format(void);
 
-/** Validate both catalogs, every occupied entry, and extent non-overlap.
+/** Validate all catalogs, every occupied entry, and extent non-overlap.
  * This is read-only. Unlike create(), it never autoformats damaged metadata.
  * File payload CRCs are not checked here.
  */
@@ -158,8 +155,8 @@ pogo_flash_file_status_t pogo_flash_file_check(void);
  * `name` may be NULL or empty for an unnamed file. Data pages are written and
  * verified before the catalog entry is published, so a data-write failure does
  * not make the new slot visible.
- * If no valid catalog exists, creation first formats the entire 64 KiB user
- * section. This deliberately destroys any existing files, including data that
+ * If no valid catalog exists, creation first clears the catalog sectors.
+ * This deliberately loses any existing PFFS files, including data that
  * might have been recovered from a corrupt catalog. Invalid arguments and
  * occupied IDs do not format an otherwise valid filesystem.
  * Format version 0x8001 is reserved for flash_log and rejected here.
@@ -167,7 +164,7 @@ pogo_flash_file_status_t pogo_flash_file_check(void);
 pogo_flash_file_status_t pogo_flash_file_create(
     uint8_t file_id,
     const char *name,
-    uint8_t page_count,
+    uint16_t page_count,
     uint16_t format_version,
     const uint8_t *data);
 
@@ -178,10 +175,49 @@ pogo_flash_file_status_t pogo_flash_file_create(
 pogo_flash_file_status_t pogo_flash_file_create_blank(
     uint8_t file_id,
     const char *name,
-    uint8_t page_count,
+    uint16_t page_count,
     uint16_t format_version);
 
-/** Replace an existing file in its dedicated sector. The size stays fixed.
+/** Caller-owned state for bounded-RAM, sequential ordinary-file writes.
+ * Fields are private to the writer and must not be modified by applications.
+ * One page is programmed per write_page() call; no file-sized buffer is used.
+ */
+typedef struct {
+    uint16_t first_page, page_count, next_page, format_version;
+    uint8_t file_id, name_length, mode;
+    uint32_t crc, file_generation, catalog_generation;
+    char name[POGO_FLASH_FILE_MAX_NAME + 1];
+} pogo_flash_file_writer_t;
+
+/** Prepare an unpublished new file. A missing/corrupt catalog is reformatted.
+ * Allocation is not visible until exactly page_count calls to write_page()
+ * are followed by write_finish(). `formatted` may be NULL.
+ */
+pogo_flash_file_status_t pogo_flash_file_write_begin_create(
+    pogo_flash_file_writer_t *writer, uint8_t file_id, const char *name,
+    uint16_t page_count, uint16_t format_version, bool *formatted);
+
+/** Prepare fixed-size replacement of an existing ordinary file. Its old data
+ * becomes invalid as soon as the first sector is erased by write_page().
+ */
+pogo_flash_file_status_t pogo_flash_file_write_begin_replace(
+    pogo_flash_file_writer_t *writer, uint8_t file_id);
+
+/** Erase a sector when entering it, then program/readback one 256-byte page.
+ * A failed page write invalidates the writer; retry requires a new begin call.
+ */
+pogo_flash_file_status_t pogo_flash_file_write_page(
+    pogo_flash_file_writer_t *writer,
+    const uint8_t data[POGO_FLASH_FILE_PAGE_SIZE]);
+
+/** Publish the accumulated CRC after all pages have been written. */
+pogo_flash_file_status_t pogo_flash_file_write_finish(
+    pogo_flash_file_writer_t *writer);
+
+/** Discard only RAM state. It does not undo any erased/programmed flash pages. */
+void pogo_flash_file_write_abort(pogo_flash_file_writer_t *writer);
+
+/** Replace an existing file in its dedicated sectors. The size stays fixed.
  *
  * Replacement is deliberately non-transactional: the data sector is erased
  * and programmed before the catalog CRC/generation is updated. A reset or
@@ -189,7 +225,7 @@ pogo_flash_file_status_t pogo_flash_file_create_blank(
  */
 pogo_flash_file_status_t pogo_flash_file_replace(
     uint8_t file_id,
-    uint8_t page_count,
+    uint16_t page_count,
     const uint8_t *data);
 
 /** Remove a catalog entry. Data pages are left untouched and may be reused.

@@ -38,12 +38,12 @@ the repository does not provide a single central runtime.
   [`flash API`](../src/pogo-utils/magnetometer_calibration_flash.h) stores and
   loads versioned, checksummed models. See the
   [`dedicated example`](../examples/magnetometer_calibration).
-- [`flash_file`](../src/pogo-utils/flash_file.h) provides the bounded two-page
-  catalog and sector-isolated full-page files. Its [design notes](flash_files.md)
+- [`flash_file`](../src/pogo-utils/flash_file.h) provides a 16-page catalog
+  and sector-isolated files across the full user-flash region. Its [design notes](flash_files.md)
   document stable IDs, fast and secure readers, and replacement constraints.
   The [serial shell](../examples/flash_file) lists, inspects, creates, edits,
   renames, and removes files; the separate
-  [format utility](../examples/flash_file_format) also erases all user files.
+  [format utility](../examples/flash_file_format) logically deletes all files.
 - [`flash_log`](../src/pogo-utils/flash_log.h) adds bounded, append-only text or
   binary streams in separate flash files. The [two-stream example](../examples/flash_log)
   logs print-style text and CSV independently, with an optional readback mode.

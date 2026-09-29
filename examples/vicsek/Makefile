@@ -119,7 +119,7 @@ DEP_FILES=$(patsubst %.c,$(BUILD_DIR)/bin/%.d,$(notdir $(SRCS)))
 ##### Compiler settings for the simulator #####
 SIM_CC = cc
 SIM_CXX = c++
-SIM_CFLAGS = -Wall -MMD -MP -O2 -std=c11 -I$(POGOSIM_INCLUDE_DIR) $(SIM_INCLUDES_EXT)
+SIM_CFLAGS = -Wall -MMD -MP -O2 -std=c11 -I$(POGOUTILS_INCLUDE_DIR) -I$(POGOSIM_INCLUDE_DIR) $(SIM_INCLUDES_EXT)
 SIM_CXXFLAGS = -Wall -MMD -MP -O2 -std=c++20 $(shell pkg-config --cflags spdlog) -pthread -I$(POGOSIM_INCLUDE_DIR) $(SIM_INCLUDES_EXT)
 SIM_LDFLAGS = $(SIM_LD_FLAGS_BOX2D)  $(SIM_LD_FLAGS_POGOSIM) -lyaml-cpp \
               $(shell pkg-config --libs spdlog) \
@@ -131,7 +131,12 @@ SIM_SRCS_CXX = $(wildcard *.cpp)
 SIM_SRCS_C = $(wildcard *.c)
 SIM_OBJECTS_CXX = $(patsubst %.cpp,$(BUILD_DIR)/sim/%.o,$(SIM_SRCS_CXX))
 SIM_OBJECTS_C = $(patsubst %.c,$(BUILD_DIR)/sim/%.o,$(SIM_SRCS_C))
-SIM_OBJECTS = $(SIM_OBJECTS_CXX) $(SIM_OBJECTS_C)
+# Mission binaries need this checkout's v3 reader and calibration decoder;
+# an older installed library may still interpret the v2 catalog layout.
+SIM_LOCAL_FLASH_OBJECTS = $(BUILD_DIR)/sim/flash_file_read_local.o \
+    $(BUILD_DIR)/sim/flash_file_name_local.o \
+    $(BUILD_DIR)/sim/magnetometer_calibration_flash_local.o
+SIM_OBJECTS = $(SIM_OBJECTS_CXX) $(SIM_OBJECTS_C) $(SIM_LOCAL_FLASH_OBJECTS)
 
 all: directories sim bin
 
@@ -147,6 +152,9 @@ $(BUILD_DIR)/sim/%.o: %.cpp | $(BUILD_DIR)/sim
 	$(SIM_CXX) $(SIM_CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/sim/%.o: %.c | $(BUILD_DIR)/sim
+	$(SIM_CC) $(SIM_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/sim/%_local.o: $(POGOUTILS_SRC_DIR)/%.c | $(BUILD_DIR)/sim
 	$(SIM_CC) $(SIM_CFLAGS) -c $< -o $@
 
 sim: directories $(SIM_TARGET)

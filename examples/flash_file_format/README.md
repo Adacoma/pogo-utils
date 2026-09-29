@@ -1,9 +1,10 @@
 # Explicit flash-file reset
 
-This firmware erases the robot's entire 64 KiB user-flash section and creates
-empty PFFS v2 catalogs. It is for deliberate recovery from an incompatible or
-damaged catalog. **Every file in that section is lost.** It does not erase the
-separate motor-calibration security registers.
+This firmware erases all 16 PFFS catalog sectors and creates
+empty PFFS v3 catalogs. It is for deliberate recovery from an incompatible or
+damaged catalog. **Every PFFS file becomes inaccessible.** Data-sector bytes
+remain until reuse; this is not a secure wipe. It does not erase the separate
+motor-calibration security registers.
 
 Normal new-file creation now formats absent or corrupt PFFS automatically, so
 this separate utility is optional and primarily useful when you want to reset
@@ -17,9 +18,8 @@ successful result is `# MAG_CAL_STORED` and a green LED. Finally, run the
 read-only `flash_file` inventory and check that ID 1 is present and valid.
 
 The reset is not part of normal calibration. Leaving this firmware installed
-and launching it again erases the user section again.
+and launching it again clears the catalogs again.
 
-Physical firmware builds compile the local PFFS v2 sources. Simulator examples
-link the installed `libpogo-utils`, so rebuild/install that library before
-testing v2 in Pogosim; the reset example refuses to report v2 success if the
-linked library writes an older catalog format.
+Both physical and simulator example builds compile this checkout's PFFS v3
+sources. The reset example verifies the resulting catalog version before
+reporting success.

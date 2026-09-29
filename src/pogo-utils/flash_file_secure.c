@@ -41,7 +41,7 @@ static bool catalog_crc_valid(const uint8_t page[POGO_FLASH_FILE_PAGE_SIZE]) {
 
 pogo_flash_file_status_t pogo_flash_file_read_page_secure(
     uint8_t file_id,
-    uint8_t file_page,
+    uint16_t file_page,
     uint8_t output[POGO_FLASH_FILE_PAGE_SIZE],
     pogo_flash_file_info_t *info) {
     if (output == NULL) return POGO_FLASH_FILE_INVALID_ARGUMENT;
@@ -62,16 +62,16 @@ pogo_flash_file_status_t pogo_flash_file_read_page_secure(
     /* CRC coverage includes padding and unused bytes within every allocated
      * page. Writers therefore require callers to define all 256 bytes/page. */
     uint32_t crc = UINT32_MAX;
-    for (uint8_t i = 0u; i < decoded.page_count; ++i) {
-        read_page_flash((uint8_t)(decoded.first_page + i), (char *)output);
+    for (uint16_t i = 0u; i < decoded.page_count; ++i) {
+        read_page_flash((uint16_t)(decoded.first_page + i), (char *)output);
         crc = crc32_update(crc, output, POGO_FLASH_FILE_PAGE_SIZE);
     }
     crc ^= UINT32_MAX;
     if (crc != decoded.data_crc32) return POGO_FLASH_FILE_BAD_CHECKSUM;
     /* The loop leaves the final file page in output. Avoid a redundant read
      * when that is the page the caller requested. */
-    if (file_page != (uint8_t)(decoded.page_count - 1u)) {
-        read_page_flash((uint8_t)(decoded.first_page + file_page), (char *)output);
+    if (file_page != (uint16_t)(decoded.page_count - 1u)) {
+        read_page_flash((uint16_t)(decoded.first_page + file_page), (char *)output);
     }
     if (info != NULL) *info = decoded;
     return POGO_FLASH_FILE_OK;

@@ -9,11 +9,11 @@
  * application heading convention. It is portable, but callers must ensure the
  * sensor mounting and motor convention are compatible with the source robot.
  *
- * Storage is exclusively through flash_file ID 1. The catalog entry declares a
- * one-page payload and repeats this record's format version. The payload has an
- * independent magic, length, CRC, and semantic validation, so mission firmware
- * can use the flash filesystem's small fast reader without giving up validation
- * of the actual calibration model.
+ * Storage is through the PFFS name "magnetometer_calibration", at any free ID.
+ * The catalog entry declares a one-page payload and repeats this record's
+ * format version. The payload has independent magic, length, CRC, and semantic
+ * validation. Missions scan at most sixteen catalog pages once at startup,
+ * then read the selected data page without a whole-file CRC pass.
  *
  * Store/load are synchronous and use caller-owned detector/metadata objects.
  * They allocate no heap memory and retain no pointers after returning. Loading
@@ -65,7 +65,7 @@ typedef struct {
 typedef enum {
     MAGNETOMETER_CALIBRATION_FLASH_OK = 0, /**< Record stored/loaded successfully. */
     MAGNETOMETER_CALIBRATION_FLASH_INVALID_ARGUMENT, /**< Bad pointer/chirality. */
-    MAGNETOMETER_CALIBRATION_FLASH_EMPTY, /**< No ID-1 file/catalog yet. */
+    MAGNETOMETER_CALIBRATION_FLASH_EMPTY, /**< No named file/catalog yet. */
     MAGNETOMETER_CALIBRATION_FLASH_BAD_MAGIC, /**< Payload is not a PMAG record. */
     MAGNETOMETER_CALIBRATION_FLASH_UNSUPPORTED_VERSION, /**< Schema mismatch. */
     MAGNETOMETER_CALIBRATION_FLASH_BAD_LENGTH, /**< Header/field layout malformed. */
@@ -78,7 +78,8 @@ typedef enum {
 
 /** Create or replace the named magnetometer-calibration flash file.
  * A previously unformatted user section is formatted once; later stores keep
- * other catalog files and cannot change this file's one-page allocation.
+ * other catalog files and cannot change this file's one-page allocation. A
+ * new record takes the first free ID; an existing record retains its ID.
  * Inputs are fully validated and serialized before flash is modified. On
  * success `metadata->calibration_id` is updated; otherwise caller data is not
  * changed. This writer belongs in calibration firmware, not mission firmware.

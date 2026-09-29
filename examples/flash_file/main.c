@@ -2,9 +2,9 @@
  * @file main.c
  * @brief Serial shell for the bounded PFFS user-flash filesystem.
  *
- * Stable file IDs 1..10 select the two fixed catalog pages. The example checks
- * both catalog CRCs even when every slot is empty, lists occupied slots, then
- * checks ordinary files with their whole-file CRC or logs page by page. No
+ * Stable file IDs 1..80 select the fixed catalog pages. The example checks
+ * every catalog CRC even when its slots are empty, lists occupied slots, then
+ * checks ordinary files with their whole-file CRC or logs page by page.
  * The shell receives newline-terminated commands from Pogobot UART or,
  * in Pogosim, from the simulator process's standard input. No heap is used.
  *
@@ -60,9 +60,9 @@ static bool stdin_closed;
 /** Check a raw catalog, including the checksum of an entirely empty page.
  *
  * File lookup intentionally skips CRC work and returns NOT_FOUND for an empty
- * slot. This inventory mirrors the documented PFFS v2 header and CRC layout
- * locally so it works with the already installed simulator library and adds no
- * code to the mission firmware reader. `scratch` is reusable USERDATA storage.
+ * slot. This inventory mirrors the documented PFFS v3 header and CRC layout
+ * locally without adding diagnostic code to the mission firmware reader.
+ * `scratch` is reusable USERDATA storage.
  */
 static pogo_flash_file_status_t check_catalog(
     uint8_t catalog_index,
@@ -71,12 +71,13 @@ static pogo_flash_file_status_t check_catalog(
     const unsigned crc_offset = POGO_FLASH_FILE_PAGE_SIZE - sizeof(uint32_t);
     bool all_zero = true;
     bool all_erased = true;
-    read_page_flash(catalog_index, (char *)scratch);
+    read_page_flash((uint16_t)catalog_index *
+                    POGO_FLASH_FILE_ERASE_SECTOR_PAGES, (char *)scratch);
     for (unsigned i = 0u; i < POGO_FLASH_FILE_PAGE_SIZE; ++i) {
         all_zero = all_zero && scratch[i] == 0u;
         all_erased = all_erased && scratch[i] == 0xffu;
     }
-    if (memcmp(scratch, magic, sizeof(magic)) != 0 || scratch[4] != 2u ||
+    if (memcmp(scratch, magic, sizeof(magic)) != 0 || scratch[4] != 3u ||
         scratch[5] != catalog_index ||
         scratch[6] != POGO_FLASH_FILE_MAX_FILES / POGO_FLASH_FILE_CATALOG_PAGES ||
         scratch[7] != 0u) {
@@ -102,7 +103,7 @@ static pogo_flash_file_status_t check_catalog(
         /* An empty slot can coexist with a bad page checksum. Emit only the
          * small fixed header/first-slot diagnostic needed to distinguish an
          * interrupted update from an invalidated catalog; do not dump payloads
-         * or modify flash. Offsets follow the documented PFFS v2 layout. */
+         * or modify flash. Offsets follow the documented PFFS v3 layout. */
         uint32_t generation = (uint32_t)scratch[8] |
             ((uint32_t)scratch[9] << 8) |
             ((uint32_t)scratch[10] << 16) |
@@ -111,7 +112,7 @@ static pogo_flash_file_status_t check_catalog(
                "generation=%lu,first_id=%u,first_flags=%u\n",
                (unsigned)catalog_index, (unsigned long)stored,
                (unsigned long)crc, (unsigned long)generation,
-               (unsigned)scratch[12], (unsigned)scratch[19]);
+               (unsigned)scratch[12], (unsigned)scratch[13]);
         return POGO_FLASH_FILE_CORRUPT_CATALOG;
     }
     return POGO_FLASH_FILE_OK;
@@ -219,7 +220,7 @@ static void shell_list(void) {
     printf("# FLASH_FILE_LIST_END,robot=%u,found=%u,empty=%u,unreadable=%u,"
            "errors=%u\n", (unsigned)pogobot_helper_getid(), found, empty,
            unreadable, errors);
-    /* Green means both catalogs and every discovered file passed CRC checks.
+    /* Green means all catalogs and every discovered file passed CRC checks.
      * Violet marks a bad catalog or damaged data; no flash is changed. */
     pogobot_led_setColor(errors == 0u ? 0u : 25u,
                          errors == 0u ? 25u : 0u,
@@ -253,7 +254,7 @@ static pogo_flash_file_status_t resolve_file(
     return pogo_flash_file_find_by_name(word, info);
 }
 
-/** Validate both catalogs and their extents before create_blank: the library's
+/** Validate all catalogs and their extents before create_blank: the library's
  * create API otherwise autoformats absent/corrupt metadata without asking. */
 static bool catalogs_ready(void) {
     pogo_flash_file_status_t status = pogo_flash_file_check();
@@ -263,14 +264,14 @@ static bool catalogs_ready(void) {
     return false;
 }
 
-/** Report allocatable capacity in whole erase sectors, as PFFS consumes one
- * sector per occupied ID regardless of its 1..8-page payload allocation.
- * The ten ID slots, not the fifteen physical data sectors, cap usable space. */
+/** Report sector allocation separately from reserved payload pages. A file
+ * owns every sector intersecting its contiguous, fixed-size extent. */
 static void shell_df(void) {
     if (!catalogs_ready()) return;
 
     unsigned files_used = 0u;
     unsigned payload_pages = 0u;
+    unsigned sectors_used = 0u;
     for (uint8_t id = 1u; id <= POGO_FLASH_FILE_MAX_FILES; ++id) {
         pogo_flash_file_info_t info;
         pogo_flash_file_status_t status = pogo_flash_file_find(id, &info);
@@ -282,11 +283,14 @@ static void shell_df(void) {
         }
         ++files_used;
         payload_pages += info.page_count;
+        sectors_used += ((unsigned)info.page_count +
+            POGO_FLASH_FILE_ERASE_SECTOR_PAGES - 1u) /
+            POGO_FLASH_FILE_ERASE_SECTOR_PAGES;
     }
 
-    /* Flash page addresses are uint8_t: pages 0..255 cover the 64 KiB user
-     * section. Keep the arithmetic derived from the public layout limits. */
-    const unsigned physical_pages = (unsigned)UINT8_MAX + 1u;
+    /* SDK v3 exposes all 5888 pages. Catalogs each own a whole sector; data
+     * extents may span multiple sectors, so file count is not space usage. */
+    const unsigned physical_pages = POGO_FLASH_FILE_USER_PAGES;
     const unsigned sector_kib = POGO_FLASH_FILE_ERASE_SECTOR_PAGES *
         POGO_FLASH_FILE_PAGE_SIZE / 1024u;
     const unsigned physical_kib = physical_pages * POGO_FLASH_FILE_PAGE_SIZE / 1024u;
@@ -294,21 +298,20 @@ static void shell_df(void) {
         POGO_FLASH_FILE_PAGE_SIZE / 1024u;
     const unsigned data_sectors = (physical_pages - POGO_FLASH_FILE_DATA_FIRST_PAGE) /
         POGO_FLASH_FILE_ERASE_SECTOR_PAGES;
-    const unsigned addressable_sectors = data_sectors < POGO_FLASH_FILE_MAX_FILES ?
-        data_sectors : POGO_FLASH_FILE_MAX_FILES;
-    const unsigned size_kib = addressable_sectors * sector_kib;
-    const unsigned used_kib = files_used * sector_kib;
+    const unsigned size_kib = data_sectors * sector_kib;
+    const unsigned used_kib = sectors_used * sector_kib;
     const unsigned avail_kib = size_kib - used_kib;
+    const unsigned use_percent = data_sectors == 0u ? 0u :
+        sectors_used * 100u / data_sectors;
 
-    puts("Filesystem  Size  Used  Avail  Use%  Files  Payload allocated");
-    printf("pffs        %uK    %uK    %uK    %u%%    %u/%u   %uB\n",
-           size_kib, used_kib, avail_kib,
-           addressable_sectors == 0u ? 0u : files_used * 100u / addressable_sectors,
+    puts("Filesystem  Sector cap  Used  Avail  Use%  Files  Payload pages");
+    printf("pffs        %2uK         %2uK   %2uK    %3u%%  %2u/%2u  %uB\n",
+           size_kib, used_kib, avail_kib, use_percent,
            files_used, (unsigned)POGO_FLASH_FILE_MAX_FILES,
            payload_pages * (unsigned)POGO_FLASH_FILE_PAGE_SIZE);
-    printf("Physical: %uK user flash; %uK catalog; %uK data beyond the ID limit.\n",
-           physical_kib, catalog_kib,
-           (data_sectors - addressable_sectors) * sector_kib);
+    printf("Physical: %uK user flash; %uK catalog; %uK data extents.\n",
+           physical_kib, catalog_kib, size_kib);
+    puts("Payload pages count reservations, not bytes written; free space may be fragmented.");
 }
 
 /** Print one file's stable identity and allocation; no payload is changed. */
@@ -362,7 +365,7 @@ static void shell_cat(const pogo_flash_file_info_t *info) {
         printf("error: %s\n", pogo_flash_file_status_string(status));
         return;
     }
-    for (uint8_t page = 0u; page < info->page_count; ++page) {
+    for (uint16_t page = 0u; page < info->page_count; ++page) {
         if (page != 0u) {
             status = pogo_flash_file_read_page_fast(info->id, page,
                                                     mydata->log.page, NULL);
@@ -492,9 +495,10 @@ static void shell_execute(char *line) {
     }
     if (strcmp(command, "format") == 0 && count == 2u &&
         strcmp(words[1], "YES") == 0) {
-        /* This erases the entire user-flash section, including calibration. */
+        /* Formatting drops all PFFS entries, including calibration, but does
+         * not physically wipe data sectors until they are reused. */
         pogo_flash_file_status_t status = pogo_flash_file_format();
-        printf("format: %s (all prior user files erased)\n",
+        printf("format: %s (all PFFS files removed; old data not securely wiped)\n",
                pogo_flash_file_status_string(status));
         return;
     }
@@ -504,13 +508,13 @@ static void shell_execute(char *line) {
             id > POGO_FLASH_FILE_MAX_FILES ||
             (count == 4u && !parse_u32(words[3], &pages)) ||
             pages == 0u || pages > POGO_FLASH_FILE_MAX_PAGES) {
-            puts("error: touch needs ID 1..10 and pages 1..8");
+            puts("error: touch needs ID 1..80 and pages 1..5632");
             return;
         }
         if (!catalogs_ready()) return;
         const char *name = strcmp(words[2], "-") == 0 ? "" : words[2];
         pogo_flash_file_status_t status = pogo_flash_file_create_blank(
-            (uint8_t)id, name, (uint8_t)pages, 1u);
+            (uint8_t)id, name, (uint16_t)pages, 1u);
         printf("touch: %s\n", pogo_flash_file_status_string(status));
         return;
     }

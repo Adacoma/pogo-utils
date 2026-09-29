@@ -5,14 +5,12 @@ byte streams. It calls `pogo_flash_log_service()` regularly and writes at most
 one full flash page per robot step. A full file or write failure prints one
 short warning for that stream; the robot program continues.
 
-The ordinary example Makefile links the installed `pogo-utils` library. To
-build against a fresh library in this checkout without installing it, run from
-the repository root:
+The simulator target compiles this checkout's flash-file and calibration-flash
+sources alongside the installed library's other modules. Build from the
+repository root:
 
 ```sh
-cmake -S . -B build
-cmake --build build --target pogo-utils
-make -C examples/flash_log sim SIM_LD_FLAGS_POGOSIM='-Wl,--whole-archive -lpogosim -Wl,--no-whole-archive ../../build/libpogo-utils.a'
+make -C examples/flash_log sim
 ```
 
 By default an existing log is resumed, so later launches retain committed
@@ -24,7 +22,7 @@ library's length-returning page reader rather than `%s` output.
 
 To explicitly empty both files on boot, set `FLASH_LOG_CLEAR_ON_BOOT` to `1`.
 This erases their individual data sectors. Creating a missing file on absent or
-corrupt catalog autoformats the entire 64 KiB user section, destroying unrelated
+corrupt catalog reformats PFFS metadata, losing access to unrelated
 files including magnetometer calibration; the example prints
 `FLASH_LOG_FORMATTED` when that happened.
 

@@ -12,7 +12,8 @@
 #include <stdio.h>
 #include <string.h>
 
-static uint8_t fake_flash[256u][MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE];
+static uint8_t fake_flash[POGO_FLASH_FILE_USER_PAGES]
+    [MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE];
 static bool corrupt_next_write;
 
 /* Calibration-only flash diagnostics use platform logging; the host test
@@ -24,7 +25,7 @@ void erase_write_section_flash(void) {
     memset(fake_flash, 0xff, sizeof(fake_flash));
 }
 
-void write_page_flash(uint8_t page, const void *data) {
+void write_page_flash(uint16_t page, const void *data) {
     /* Pogosim replaces page contents directly. The separate NOR test exercises
      * the physical writer branch where sector erase precedes page program. */
     memcpy(fake_flash[page], data, MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE);
@@ -34,7 +35,7 @@ void write_page_flash(uint8_t page, const void *data) {
     }
 }
 
-void read_page_flash(uint8_t page, char *buffer) {
+void read_page_flash(uint16_t page, char *buffer) {
     memcpy(buffer, fake_flash[page], MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE);
 }
 
@@ -91,15 +92,15 @@ int main(void) {
     assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
            MAGNETOMETER_CALIBRATION_FLASH_OK);
     assert(memcmp(fake_flash[0], "PFFS", 4u) == 0);
-    fake_flash[1][MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE - 1u] ^= 1u;
+    fake_flash[16][MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE - 1u] ^= 1u;
     assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
            MAGNETOMETER_CALIBRATION_FLASH_OK);
-    assert(fake_flash[1][4] == 2u);
+    assert(fake_flash[16][4] == 3u);
     memset(fake_flash, 0xa5, sizeof(fake_flash));
     memcpy(fake_flash[0], "PFFS", 4u);
     assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
            MAGNETOMETER_CALIBRATION_FLASH_OK);
-    assert(memcmp(fake_flash[0], "PFFS", 4u) == 0 && fake_flash[0][4] == 2u);
+    assert(memcmp(fake_flash[0], "PFFS", 4u) == 0 && fake_flash[0][4] == 3u);
 
     /* Some fresh allocations are instead uniformly zero-filled. */
     memset(fake_flash, 0, sizeof(fake_flash));
@@ -130,10 +131,10 @@ int main(void) {
     assert(metadata.calibration_id != 0u);
     uint32_t canonical_record_id = metadata.calibration_id;
     pogo_flash_file_info_t calibration_info;
-    assert(pogo_flash_file_find(
-        POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION, &calibration_info) ==
+    assert(pogo_flash_file_find_by_name(
+        POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION, &calibration_info) ==
         POGO_FLASH_FILE_OK);
-    uint8_t calibration_page = calibration_info.first_page;
+    uint16_t calibration_page = calibration_info.first_page;
 
     /* Storing from CCW with the equivalent adapted sign produces the same
      * canonical record and does not rewrite the caller's sign convention. */
@@ -273,6 +274,32 @@ int main(void) {
     assert(magnetometer_calibration_flash_load(&loaded, &loaded_metadata) ==
            MAGNETOMETER_CALIBRATION_FLASH_OK);
     assert(loaded_metadata.attempt_count == valid_metadata().attempt_count + 1u);
+
+    /* ID 1 is ordinary capacity: a preexisting file there makes calibration
+     * take ID 2, and both later lookup and replacement follow its name. */
+    erase_write_section_flash();
+    assert(pogo_flash_file_create(1u, "occupied", 1u, 1u, unrelated) ==
+           POGO_FLASH_FILE_OK);
+    metadata = valid_metadata();
+    assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
+           MAGNETOMETER_CALIBRATION_FLASH_OK);
+    assert(pogo_flash_file_find_by_name(
+           POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
+           &calibration_info) == POGO_FLASH_FILE_OK);
+    assert(calibration_info.id == 2u);
+    calibration_page = calibration_info.first_page;
+    assert(magnetometer_calibration_flash_load(&loaded, &loaded_metadata) ==
+           MAGNETOMETER_CALIBRATION_FLASH_OK);
+    metadata.attempt_count++;
+    assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
+           MAGNETOMETER_CALIBRATION_FLASH_OK);
+    assert(pogo_flash_file_find_by_name(
+           POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
+           &calibration_info) == POGO_FLASH_FILE_OK &&
+           calibration_info.id == 2u && calibration_info.generation == 2u);
+    assert(pogo_flash_file_read_page_secure(1u, 0u, saved_page, NULL) ==
+           POGO_FLASH_FILE_OK);
+    assert(memcmp(saved_page, unrelated, sizeof(saved_page)) == 0);
 
     /* A valid record outside the catalog is no longer a supported layout. */
     memcpy(saved_page, fake_flash[calibration_page], sizeof(saved_page));

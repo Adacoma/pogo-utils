@@ -41,11 +41,18 @@ static void put_u32(uint8_t *p, uint32_t value) {
     p[3] = (uint8_t)(value >> 24);
 }
 
-/** Verify both catalogs before a log writes to an extent selected by them. */
+/** Verify all catalogs before a log writes to an extent selected by them. */
 static pogo_flash_log_status_t check_catalogs(uint8_t scratch[256]) {
-    uint16_t occupied_sectors = 0u; /* Fifteen allocatable 4 KiB sectors. */
+    /* The 368-byte map checks all v3 extents without pulling the writer's
+     * catalog-validation object into read-only log firmware. */
+    bool occupied_sectors[POGO_FLASH_FILE_USER_PAGES /
+        POGO_FLASH_FILE_ERASE_SECTOR_PAGES] = {false};
+    for (unsigned i = 0u; i < POGO_FLASH_FILE_CATALOG_PAGES; ++i) {
+        occupied_sectors[i] = true;
+    }
     for (uint8_t i = 0u; i < POGO_FLASH_FILE_CATALOG_PAGES; ++i) {
-        read_page_flash(i, (char *)scratch);
+        read_page_flash(pogo_flash_file_internal_catalog_page(i),
+                        (char *)scratch);
         if (!pogo_flash_file_internal_catalog_header_valid(scratch, i)) {
             return i == 0u && pogo_flash_file_internal_page_is_blank(scratch) ?
                 POGO_FLASH_LOG_NOT_FOUND : POGO_FLASH_LOG_CORRUPT;
@@ -63,16 +70,22 @@ static pogo_flash_log_status_t check_catalogs(uint8_t scratch[256]) {
             const uint8_t *entry = scratch +
                 POGO_FLASH_FILE_CATALOG_HEADER_SIZE +
                 (size_t)slot * POGO_FLASH_FILE_ENTRY_SIZE;
-            if (entry[7] == 0u) continue;
+            if (entry[1] == 0u) continue;
             uint8_t id = (uint8_t)(i * POGO_FLASH_FILE_ENTRIES_PER_CATALOG +
                                    slot + 1u);
-            if (!pogo_flash_file_internal_decode_entry(entry, id, NULL)) {
+            pogo_flash_file_info_t info;
+            if (!pogo_flash_file_internal_decode_entry(entry, id, &info)) {
                 return POGO_FLASH_LOG_CORRUPT;
             }
-            unsigned sector = entry[4] / POGO_FLASH_FILE_ERASE_SECTOR_PAGES - 1u;
-            uint16_t bit = (uint16_t)(1u << sector);
-            if ((occupied_sectors & bit) != 0u) return POGO_FLASH_LOG_CORRUPT;
-            occupied_sectors |= bit;
+            unsigned first = info.first_page /
+                POGO_FLASH_FILE_ERASE_SECTOR_PAGES;
+            unsigned end = ((unsigned)info.first_page + info.page_count +
+                POGO_FLASH_FILE_ERASE_SECTOR_PAGES - 1u) /
+                POGO_FLASH_FILE_ERASE_SECTOR_PAGES;
+            for (unsigned sector = first; sector < end; ++sector) {
+                if (occupied_sectors[sector]) return POGO_FLASH_LOG_CORRUPT;
+                occupied_sectors[sector] = true;
+            }
         }
     }
     return POGO_FLASH_LOG_OK;
@@ -135,7 +148,7 @@ static bool requested_name_matches(const char *name,
 
 pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
                                             uint8_t file_id) {
-    if (log == NULL || file_id <= POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION ||
+    if (log == NULL || file_id == 0u ||
         file_id > POGO_FLASH_FILE_MAX_FILES) return POGO_FLASH_LOG_INVALID_ARGUMENT;
     memset(log, 0, sizeof(*log));
     pogo_flash_log_status_t status = check_catalogs(log->page);
@@ -146,6 +159,9 @@ pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
     if (info.format_version != POGO_FLASH_LOG_FORMAT_VERSION) {
         return POGO_FLASH_LOG_WRONG_FORMAT;
     }
+    if (info.page_count > POGO_FLASH_LOG_MAX_PAGES) {
+        return POGO_FLASH_LOG_WRONG_FORMAT;
+    }
     log->file_id = file_id;
     log->first_page = info.first_page;
     log->page_count = info.page_count;
@@ -154,7 +170,7 @@ pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
      * before writing to that sector again. */
     bool seen_erased = false;
     for (uint8_t i = 0u; i < info.page_count; ++i) {
-        read_page_flash((uint8_t)(info.first_page + i), (char *)log->page);
+        read_page_flash((uint16_t)(info.first_page + i), (char *)log->page);
         if (erased_page(log->page)) {
             seen_erased = true;
         } else if (seen_erased || !valid_page(log->page, i, NULL)) {
@@ -177,9 +193,9 @@ pogo_flash_log_status_t pogo_flash_log_initialize(
     pogo_flash_log_t *log, uint8_t file_id, const char *name,
     uint8_t page_count, bool clear_existing, bool *formatted) {
     if (formatted != NULL) *formatted = false;
-    if (log == NULL || file_id <= POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION ||
+    if (log == NULL || file_id == 0u ||
         file_id > POGO_FLASH_FILE_MAX_FILES || page_count == 0u ||
-        page_count > POGO_FLASH_FILE_MAX_PAGES) {
+        page_count > POGO_FLASH_LOG_MAX_PAGES) {
         return POGO_FLASH_LOG_INVALID_ARGUMENT;
     }
     /* The caller-provided cache is scratch during initialization too; avoid
@@ -253,7 +269,7 @@ static pogo_flash_log_status_t commit_page(pogo_flash_log_t *log) {
                      log->used) ^ UINT32_MAX;
     put_u32(log->page + 8u, crc);
     uint8_t actual[POGO_FLASH_FILE_PAGE_SIZE];
-    uint8_t physical = (uint8_t)(log->first_page + log->next_page);
+    uint16_t physical = (uint16_t)(log->first_page + log->next_page);
     write_page_flash(physical, log->page);
     read_page_flash(physical, (char *)actual);
     if (memcmp(actual, log->page, sizeof(actual)) != 0) {
@@ -284,7 +300,7 @@ pogo_flash_log_status_t pogo_flash_log_read_page(
     if (log == NULL || log->ready == 0u || output == NULL || used == NULL ||
         page_index >= log->page_count) return POGO_FLASH_LOG_INVALID_ARGUMENT;
     *used = 0u;
-    read_page_flash((uint8_t)(log->first_page + page_index), (char *)output);
+    read_page_flash((uint16_t)(log->first_page + page_index), (char *)output);
     if (erased_page(output)) return POGO_FLASH_LOG_END;
     return valid_page(output, page_index, used) ? POGO_FLASH_LOG_OK :
         POGO_FLASH_LOG_CORRUPT;

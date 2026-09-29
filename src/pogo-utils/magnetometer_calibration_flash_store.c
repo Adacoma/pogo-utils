@@ -6,10 +6,10 @@
  * calibration program. Ordinary missions need magnetometer_calibration_flash.c
  * and flash_file_read.c, but not this file or the generic allocator.
  *
- * Policy is intentionally narrow: reserved ID 1 must be absent or already be a
- * one-page record of the current PMAG format. Its allocation is never resized,
- * renamed, or moved. Creating ID 1 also initializes an absent/corrupt PFFS
- * catalog, which erases the full user section as requested by write policy.
+ * The human-readable name identifies the record. An existing one-page PMAG
+ * file keeps its current ID; a new record takes the first free ID. Creation
+ * also initializes an absent/corrupt PFFS catalog, clearing metadata but not
+ * old payload bytes.
  */
 #include "magnetometer_calibration_flash_internal.h"
 #include "flash_file.h"
@@ -28,12 +28,27 @@ static void report_flash_error(const char *stage,
 }
 
 /** Make the destructive recovery decision visible in calibration's serial log.
- * The generic create API also handles corruption in the other catalog page,
- * which a direct-ID fast lookup may not inspect. */
+ * The generic create API also handles corruption in other catalog pages,
+ * including a bad CRC that the name lookup intentionally does not calculate. */
 static void report_reformat(pogo_flash_file_status_t reason) {
     printf("# MAG_CAL_FLASH_REFORMAT,robot=%u,reason=%s,"
-           "erases_all_user_files=1\n", (unsigned)pogobot_helper_getid(),
+           "clears_all_pffs_files=1\n", (unsigned)pogobot_helper_getid(),
            pogo_flash_file_status_string(reason));
+}
+
+/** Find a free stable ID only when the named calibration file is absent.
+ * This bounded scan is a calibration-time cost, not a mission startup cost. */
+static pogo_flash_file_status_t find_free_id(uint8_t *free_id) {
+    pogo_flash_file_info_t candidate;
+    for (uint8_t id = 1u; id <= POGO_FLASH_FILE_MAX_FILES; ++id) {
+        pogo_flash_file_status_t status = pogo_flash_file_find(id, &candidate);
+        if (status == POGO_FLASH_FILE_NOT_FOUND) {
+            *free_id = id;
+            return POGO_FLASH_FILE_OK;
+        }
+        if (status != POGO_FLASH_FILE_OK) return status;
+    }
+    return POGO_FLASH_FILE_NO_SPACE; /* All 80 catalog slots are occupied. */
 }
 
 magnetometer_calibration_flash_status_t
@@ -49,24 +64,34 @@ magnetometer_calibration_flash_store(
             hd, metadata, page, &crc);
     if (prepared != MAGNETOMETER_CALIBRATION_FLASH_OK) return prepared;
 
-    pogo_flash_file_info_t info; /* Existing ID-1 allocation, when present. */
+    pogo_flash_file_info_t info; /* Existing named allocation, when present. */
     const char *stage = "find"; /* Report the operation that first failed. */
-    pogo_flash_file_status_t file_status = pogo_flash_file_find(
-        POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION, &info);
+    pogo_flash_file_status_t file_status = pogo_flash_file_find_by_name(
+        POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION, &info);
+    uint8_t file_id = 1u; /* First slot after an absent/corrupt catalog. */
+    bool create_new = file_status == POGO_FLASH_FILE_NOT_FOUND ||
+        file_status == POGO_FLASH_FILE_UNFORMATTED ||
+        file_status == POGO_FLASH_FILE_CORRUPT_CATALOG;
     if (file_status == POGO_FLASH_FILE_UNFORMATTED ||
         file_status == POGO_FLASH_FILE_CORRUPT_CATALOG) {
-        /* create() owns the format-and-retry policy. It will erase the entire
-         * user section, even if other records could have been recovered. */
+        /* create() owns the format-and-retry policy. It clears every PFFS
+         * catalog, even if other records could have been recovered. */
         report_reformat(file_status);
     }
-    if (file_status == POGO_FLASH_FILE_NOT_FOUND ||
-        file_status == POGO_FLASH_FILE_UNFORMATTED ||
-        file_status == POGO_FLASH_FILE_CORRUPT_CATALOG) {
-        /* Creation initializes PFFS if needed, then publishes the fixed name,
-         * payload version, CRC, and generation through catalog slot ID 1. */
+    if (file_status == POGO_FLASH_FILE_NOT_FOUND) {
+        stage = "find-free-id";
+        file_status = find_free_id(&file_id);
+        if (file_status != POGO_FLASH_FILE_OK) {
+            report_flash_error(stage, file_status);
+            return MAGNETOMETER_CALIBRATION_FLASH_STORAGE_ERROR;
+        }
+    }
+    if (create_new) {
+        /* Creation publishes the name at a free ID. The writer autoformats
+         * absent or corrupt metadata before allocating the payload sector. */
         stage = "create";
         file_status = pogo_flash_file_create(
-            POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION,
+            file_id,
             POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
             1u, MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION, page);
     } else if (file_status == POGO_FLASH_FILE_OK) {
@@ -82,15 +107,15 @@ magnetometer_calibration_flash_store(
         }
         stage = "replace";
         file_status = pogo_flash_file_replace(
-            POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION, 1u, page);
+            info.id, 1u, page);
         if (file_status == POGO_FLASH_FILE_UNFORMATTED ||
             file_status == POGO_FLASH_FILE_CORRUPT_CATALOG) {
-            /* find() reads only catalog 0. A damaged catalog 1 is discovered
-             * by the stronger replacement path; retry as destructive create. */
+            /* Name lookup skips catalog CRCs. Replacement may discover CRC or
+             * allocation damage and choose destructive recovery. */
             report_reformat(file_status);
             stage = "create";
             file_status = pogo_flash_file_create(
-                POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION,
+                info.id,
                 POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
                 1u, MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION, page);
         }

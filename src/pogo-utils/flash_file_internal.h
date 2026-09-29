@@ -11,8 +11,8 @@
  * Each 256-byte catalog page is encoded explicitly in little-endian order:
  *
  *   0..3     ASCII magic "PFFS"
- *   4        catalog format version (2 for sector-isolated layout)
- *   5        catalog index (0 or 1)
+ *   4        catalog format version (3 for extended user flash)
+ *   5        catalog index (0..15)
  *   6        number of fixed entries (5)
  *   7        reserved, must be zero
  *   8..11    catalog generation counter
@@ -22,12 +22,10 @@
  * Entry layout relative to its 48-byte slot:
  *
  *   0        stable file ID
- *   1        reserved, must be zero
+ *   1        bit 0: in use; bits 1..6: name length; bit 7: reserved
  *   2..3     caller-owned payload format version
- *   4        first physical data page
- *   5        contiguous page count
- *   6        optional name length
- *   7        flags (exactly 1 means in use; 0 means empty)
+ *   4..5     first data page (uint16_t)
+ *   6..7     contiguous page count (uint16_t)
  *   8..11    file replacement generation
  *   12..15   CRC-32 over every byte in the data extent
  *   16..47   optional name bytes, not NUL-terminated on flash
@@ -39,13 +37,18 @@
 #include <stdint.h>
 
 enum {
-    POGO_FLASH_FILE_CATALOG_VERSION = 2,     /**< Serialized schema version. */
+    POGO_FLASH_FILE_CATALOG_VERSION = 3,     /**< Serialized schema version. */
     POGO_FLASH_FILE_CATALOG_HEADER_SIZE = 12, /**< Bytes before entry zero. */
     POGO_FLASH_FILE_ENTRY_SIZE = 48,         /**< Serialized bytes per slot. */
     POGO_FLASH_FILE_ENTRIES_PER_CATALOG = 5, /**< Fixed slots in one page. */
     POGO_FLASH_FILE_CATALOG_CRC_OFFSET = 252, /**< Stored CRC byte offset. */
-    POGO_FLASH_FILE_ENTRY_IN_USE = 1         /**< Only accepted active flags. */
+    POGO_FLASH_FILE_ENTRY_IN_USE = 1         /**< Low bit marks active slots. */
 };
+
+/** Each catalog page is the first page of its own 4 KiB erase sector. */
+static inline uint16_t pogo_flash_file_internal_catalog_page(uint8_t index) {
+    return (uint16_t)index * POGO_FLASH_FILE_ERASE_SECTOR_PAGES;
+}
 
 /** Load and structurally decode the fixed slot selected by file_id.
  * catalog_page is required and receives the raw page. CRC is intentionally not

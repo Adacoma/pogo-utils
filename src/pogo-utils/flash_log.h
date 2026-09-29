@@ -29,6 +29,7 @@ extern "C" {
 
 enum {
     POGO_FLASH_LOG_FORMAT_VERSION = 0x8001, /**< Reserved PFFS payload type. */
+    POGO_FLASH_LOG_MAX_PAGES = 8, /**< Log page header keeps the small bound. */
     POGO_FLASH_LOG_PAGE_VERSION = 1,
     POGO_FLASH_LOG_HEADER_SIZE = 12,
     POGO_FLASH_LOG_PAYLOAD_SIZE =
@@ -55,7 +56,7 @@ typedef enum {
 typedef struct {
     uint8_t page[POGO_FLASH_FILE_PAGE_SIZE];
     uint8_t file_id;
-    uint8_t first_page;
+    uint16_t first_page;
     uint8_t page_count;
     uint8_t next_page;
     uint8_t used;
@@ -70,7 +71,7 @@ pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
 
 /** Create if missing, or optionally clear an existing log, then open it.
  * If the PFFS catalog is absent/corrupt, creation automatically formats the
- * entire 64 KiB user section, destroying unrelated files. `formatted` reports
+ * all PFFS catalogs, losing access to unrelated files. `formatted` reports
  * that event so applications can warn; NULL suppresses the report. Existing
  * IDs with a different size, name, or payload type are never overwritten. */
 pogo_flash_log_status_t pogo_flash_log_initialize(

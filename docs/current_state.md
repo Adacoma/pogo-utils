@@ -24,11 +24,11 @@ by hardware or experimental validation.
   library/example builds, focused host tests, and headless and GUI-paced
   calibration simulator runs have been performed. Physical-robot evidence so
   far comes from user-reported serial output for robot 23342.
-- Pogosim's flash-state lifecycle and installed user-flash API, including its
-  whole-64-KiB erase and 256-byte page operations; the physical SPI driver
-  additionally exposes 4 KiB sector erase.
-- The bounded flash-file v2 layout: two catalog pages in one erase sector,
-  ten stable ID slots, and one dedicated data sector per 1-to-8-page file.
+- Pogosim's flash-state lifecycle and the updated local SDK API: 5,888
+  256-byte user pages at physical offset `0x90000`, 16-bit page indices,
+  whole-region erase, and physical 4 KiB SPI sector erase.
+- The PFFS v3 layout: 16 catalog pages in separate erase sectors, 80 stable
+  IDs, and contiguous multi-sector extents across the 1,408 KiB data region.
 - The append-only log extension: reserved PFFS payload format, page-level CRC,
   one-page RAM caches, and synchronous page-write/readback behavior.
 - The flash-file example's serial command path, simulator stdin routing, and
@@ -82,8 +82,9 @@ by hardware or experimental validation.
   example stores a versioned, checksummed model and canonical steering sign in
   flash; magnetometer missions only load the model, adapt sign chirality, and
   warm their live sample window.
-- Magnetometer calibration now uses reserved flash-file ID 1 and preserves
-  unrelated catalog files after initial formatting. Raw-page loading and the
+- Magnetometer calibration now uses a named flash file at the first free ID,
+  retaining that ID on replacement and preserving unrelated files after
+  initial formatting. No numeric ID is reserved. Raw-page loading and the
   old destructive erase/store API have been removed; old flash images require
   recalibration into the catalog format.
 - The new static ACU example uses five immutable motility parameters with the
@@ -106,8 +107,16 @@ by hardware or experimental validation.
 - `examples/flash_file` is now an interactive shell for hardware UART and
   Pogosim stdin. It lists and inspects files, creates blank bounded extents,
   edits one-page ordinary files, renames labels, deletes entries, and formats
-  only with an explicit `YES` token. Its read-only `df` reports whole-sector
-  capacity subject to the ten-ID limit. In Pogosim, `use` selects a robot ID.
+  only with an explicit `YES` token. Its read-only `df` reports the full
+  1,408 KiB data-sector capacity and 80 file IDs. In Pogosim, `use` selects a robot ID.
+- PFFS v3 uses full-region 16-bit page addressing without v1/v2 compatibility.
+  Direct ID reads remain two physical reads; large ordinary files can be
+  streamed one page at a time using a caller-owned writer. Format clears
+  metadata only, then data sectors are erased on reuse. Existing PFFS images
+  require a new calibration; physical timing and firmware footprint are open.
+- Magnetometer missions find their named record with a bounded catalog scan
+  at startup, then read one page. The scan costs up to 16 catalog reads but
+  frees every ID for ordinary files or logs.
 
 ## What remains unknown
 
@@ -148,14 +157,16 @@ by hardware or experimental validation.
   physical robots. Firmware compilation is currently blocked before source
   compilation because this checkout's `pogobot-sdk` link lacks the referenced
   `tools/variables.mak`.
-- Flash-file host tests cover formatting, direct-ID and name lookup, both
-  catalog pages, fast and secure reads, multi-page CRCs, fixed-size replacement,
+- Flash-file host tests cover formatting, direct-ID and name lookup, catalog
+  pages, fast and secure reads, multi-page CRCs, fixed-size replacement,
   deletion/reuse, damaged catalogs/data, verification failure, and preservation
-  of an unrelated file during magnetometer replacement. A separate v2 host
+  of an unrelated file during magnetometer replacement. A separate NOR host
   test models NOR programming as bitwise AND and checks sector erasure and
   preservation across create/replace/delete. Create now autoformats absent or
   corrupt catalogs, deliberately erasing all user files; read-only paths never
-  do so. Pogosim v0.10.10 can expose uninitialized allocator contents as flash.
+  do so. A v3 host test streams the maximum 5,632-page file at ID 80 through
+  page 5,887, verifies fixed-size replacement and metadata-only format.
+  Pogosim v0.10.10 can expose uninitialized allocator contents as flash.
 - A host NOR-flash test now covers two append logs, independent clearing,
   full-page and partial writes, persistence/reopen, full-file status, damaged
   page detection, and destructive recovery of a corrupt catalog. The library
@@ -178,8 +189,8 @@ by hardware or experimental validation.
   4 KiB sectors; calibration logs exact PFFS failures and gives fitting/storage
   separate 1 Hz ticks. On robot 23342, explicit v2 format completed; subsequent
   calibration reached green and inventory found ID 1 at page 16 with valid CRC,
-  one occupied and nine empty slots. Autoformat on another physical robot is
-  not yet validated.
+  one occupied and nine empty slots. These are historical v2 observations;
+  v3 autoformat and timing on physical robots remain unvalidated.
 
 ## Current scientific decisions
 
@@ -205,7 +216,8 @@ The following choices are encoded in the current implementation:
   depth 0. Local wall encounters start 1.5-second, hop-bounded U-turn events.
 - Flash-file IDs, page counts, and sectors are bounded. Fast reads skip CRCs;
   secure reads validate the selected catalog and complete file. Replacement
-  erases and rewrites the same sector non-transactionally; it cannot resize a file.
+  erases and rewrites the same multi-sector extent non-transactionally; it
+  cannot resize a file.
 - Logs use the same bounded extents but commit one page at a time. They do not
   maintain the catalog's whole-file CRC; their reader checks per-page CRCs.
   Uncommitted RAM bytes are lost on reset, and a torn page requires explicit

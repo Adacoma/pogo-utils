@@ -15,6 +15,12 @@
 /** Four-byte discriminator at the beginning of each catalog page. */
 static const uint8_t catalog_magic[4] = {'P', 'F', 'F', 'S'};
 
+/* Fail at build time if a linked SDK exposes a different flash geometry.
+ * The page API's uint16_t indices are required to reach the final data page. */
+_Static_assert(POGO_FLASH_FILE_PAGE_SIZE == POGOBOT_USER_FLASH_PAGE_SIZE &&
+    POGO_FLASH_FILE_USER_PAGES == POGOBOT_USER_FLASH_PAGE_COUNT,
+    "PFFS v3 requires the extended SDK user-flash geometry");
+
 /* Compile-time checks tie the arithmetic below to the serialized layout. A
  * layout change must update the constants and cannot silently leave unused or
  * overlapping bytes in a catalog page. */
@@ -27,10 +33,11 @@ _Static_assert(POGO_FLASH_FILE_MAX_FILES ==
     "stable IDs must map exactly onto catalog slots");
 _Static_assert(POGO_FLASH_FILE_ERASE_SECTOR_PAGES *
     POGO_FLASH_FILE_PAGE_SIZE == 4096 &&
-    POGO_FLASH_FILE_MAX_PAGES <= POGO_FLASH_FILE_ERASE_SECTOR_PAGES &&
-    POGO_FLASH_FILE_DATA_FIRST_PAGE == POGO_FLASH_FILE_ERASE_SECTOR_PAGES &&
-    POGO_FLASH_FILE_MAX_FILES < 256 / POGO_FLASH_FILE_ERASE_SECTOR_PAGES,
-    "each file needs one dedicated 4 KiB erase sector");
+    POGO_FLASH_FILE_DATA_FIRST_PAGE ==
+        POGO_FLASH_FILE_CATALOG_PAGES * POGO_FLASH_FILE_ERASE_SECTOR_PAGES &&
+    POGO_FLASH_FILE_MAX_PAGES ==
+        POGO_FLASH_FILE_USER_PAGES - POGO_FLASH_FILE_DATA_FIRST_PAGE,
+    "catalogs and data extents must exactly cover user flash");
 
 uint16_t pogo_flash_file_internal_get_u16(const uint8_t *p) {
     /* Byte assembly is valid for unaligned buffers and every host endianness. */
@@ -47,7 +54,7 @@ bool pogo_flash_file_internal_catalog_header_valid(
     const uint8_t page[POGO_FLASH_FILE_PAGE_SIZE],
     uint8_t expected_catalog_index) {
     /* Header byte 7 is reserved. Requiring zero makes future incompatible
-     * layouts fail explicitly instead of being misread as version 2. */
+     * layouts fail explicitly instead of being misread as version 3. */
     return memcmp(page, catalog_magic, sizeof(catalog_magic)) == 0 &&
         page[4] == POGO_FLASH_FILE_CATALOG_VERSION &&
         page[5] == expected_catalog_index &&
@@ -72,21 +79,20 @@ bool pogo_flash_file_internal_decode_entry(
     const uint8_t *entry,
     uint8_t expected_id,
     pogo_flash_file_info_t *info) {
-    /* Copy frequently used one-byte fields before validation. Reading bytes
+    /* Decode fixed-width fields before validation. Reading bytes
      * directly avoids alignment and packed-structure assumptions. */
-    uint8_t page_count = entry[5];
-    uint8_t first_page = entry[4];
-    uint8_t name_length = entry[6];
-    uint8_t flags = entry[7];
-    /* Use unsigned arithmetic wider than uint8_t so first+count cannot wrap
-     * before comparison with the 256-page physical address space. */
+    uint16_t page_count = pogo_flash_file_internal_get_u16(entry + 6);
+    uint16_t first_page = pogo_flash_file_internal_get_u16(entry + 4);
+    uint8_t flags = entry[1];
+    uint8_t name_length = (uint8_t)((flags >> 1) & 0x3fu);
+    /* Widen the sum so a damaged 16-bit extent cannot wrap. */
     unsigned end_page = (unsigned)first_page + (unsigned)page_count;
-    if (flags != POGO_FLASH_FILE_ENTRY_IN_USE || entry[0] != expected_id ||
-        entry[1] != 0u || page_count == 0u ||
+    if ((flags & POGO_FLASH_FILE_ENTRY_IN_USE) == 0u ||
+        (flags & 0x80u) != 0u || entry[0] != expected_id || page_count == 0u ||
         page_count > POGO_FLASH_FILE_MAX_PAGES ||
-        first_page < POGO_FLASH_FILE_DATA_FIRST_PAGE || end_page > 256u ||
+        first_page < POGO_FLASH_FILE_DATA_FIRST_PAGE ||
+        end_page > POGO_FLASH_FILE_USER_PAGES ||
         first_page % POGO_FLASH_FILE_ERASE_SECTOR_PAGES != 0u ||
-        end_page > (unsigned)first_page + POGO_FLASH_FILE_ERASE_SECTOR_PAGES ||
         name_length > POGO_FLASH_FILE_MAX_NAME) {
         return false;
     }
@@ -115,12 +121,13 @@ pogo_flash_file_status_t pogo_flash_file_internal_load_slot(
         return POGO_FLASH_FILE_INVALID_ARGUMENT;
     }
     uint8_t *page = catalog_page; /* Short alias keeps offset code readable. */
-    /* ID 1 maps to slot 0, ID 6 to slot 5. Division selects one of the two
+    /* ID 1 maps to slot 0, ID 6 to slot 5. Division selects one of sixteen
      * catalog pages; modulo selects the fixed entry within that page. */
     uint8_t slot = (uint8_t)(file_id - 1u);
     uint8_t catalog_index = (uint8_t)(slot / POGO_FLASH_FILE_ENTRIES_PER_CATALOG);
     uint8_t entry_index = (uint8_t)(slot % POGO_FLASH_FILE_ENTRIES_PER_CATALOG);
-    read_page_flash(catalog_index, (char *)page);
+    read_page_flash(pogo_flash_file_internal_catalog_page(catalog_index),
+                    (char *)page);
     if (!pogo_flash_file_internal_catalog_header_valid(page, catalog_index)) {
         /* Blank means the filesystem has never been formatted. Any other
          * invalid header is data/corruption and must not be auto-erased here. */
@@ -130,7 +137,7 @@ pogo_flash_file_status_t pogo_flash_file_internal_load_slot(
     }
     const uint8_t *entry = page + POGO_FLASH_FILE_CATALOG_HEADER_SIZE +
         (size_t)entry_index * POGO_FLASH_FILE_ENTRY_SIZE;
-    if (entry[7] == 0u) {
+    if (entry[1] == 0u) {
         /* Zero is the canonical empty-slot representation created by format
          * and delete. Other flag values are validated as corruption below. */
         return POGO_FLASH_FILE_NOT_FOUND;
@@ -153,7 +160,7 @@ pogo_flash_file_status_t pogo_flash_file_find(
 
 pogo_flash_file_status_t pogo_flash_file_read_page_fast(
     uint8_t file_id,
-    uint8_t file_page,
+    uint16_t file_page,
     uint8_t output[POGO_FLASH_FILE_PAGE_SIZE],
     pogo_flash_file_info_t *info) {
     if (output == NULL) return POGO_FLASH_FILE_INVALID_ARGUMENT;
@@ -164,10 +171,10 @@ pogo_flash_file_status_t pogo_flash_file_read_page_fast(
     pogo_flash_file_status_t status = pogo_flash_file_internal_load_slot(
         file_id, &decoded, output);
     if (status != POGO_FLASH_FILE_OK) return status;
-    /* file_page is relative to the file. Only after this bound check is it safe
-     * to add it to first_page and narrow the sum to the platform uint8_t API. */
+    /* file_page is relative to the file. The checked sum stays within the
+     * platform's uint16_t page-address range. */
     if (file_page >= decoded.page_count) return POGO_FLASH_FILE_INVALID_ARGUMENT;
-    read_page_flash((uint8_t)(decoded.first_page + file_page), (char *)output);
+    read_page_flash((uint16_t)(decoded.first_page + file_page), (char *)output);
     if (info != NULL) *info = decoded;
     return POGO_FLASH_FILE_OK;
 }

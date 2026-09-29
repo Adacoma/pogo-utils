@@ -2,7 +2,7 @@
  * @file main.c
  * @brief Dedicated magnetometer calibration and flash-storage firmware.
  *
- * The first store formats an unformatted 64 KiB user section; later runs
+ * The first store initializes an unformatted PFFS v3 catalog; later runs
  * replace only the fixed-size named calibration file. Mission firmware loads
  * that record instead of linking collection and fitting code.
  *
@@ -185,7 +185,7 @@ void user_step(void) {
         return;
     }
     if (mydata->phase == CALIBRATION_STORE_PENDING) {
-        /* The 64 KiB erase and verified page writes can take hundreds of
+        /* Catalog recovery and verified page writes can take hundreds of
          * milliseconds on hardware. Keep that work out of the fitting tick. */
         store_calibration();
         return;

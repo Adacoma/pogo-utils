@@ -401,17 +401,19 @@ magnetometer_calibration_flash_status_t magnetometer_calibration_flash_load(
     magnetometer_heading_model_t model;
     magnetometer_calibration_metadata_t decoded;
     pogo_flash_file_info_t file_info;
-    /* Fast outer access is sufficient because PMAG has its own CRC and full
-     * semantic validation. This keeps mission firmware and boot latency small. */
-    pogo_flash_file_status_t file_status = pogo_flash_file_read_page_fast(
-        POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION, 0u, page, &file_info);
+    /* Name lookup makes the record independent of numeric ID. It scans at
+     * most sixteen catalog pages only once at startup; the payload has its
+     * own CRC and semantic validation, so no whole-file scan is needed. */
+    pogo_flash_file_status_t file_status = pogo_flash_file_find_by_name(
+        POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION, &file_info);
     if (file_status == POGO_FLASH_FILE_OK) {
-        /* The catalog protects allocation interpretation. Payload decoding then
-         * independently verifies its magic, length, version, and checksum. */
+        /* The catalog provides a structurally checked physical extent. Read
+         * it directly to avoid rereading that catalog via the ID fast path. */
         if (file_info.page_count != 1u ||
             file_info.format_version != MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION) {
             return MAGNETOMETER_CALIBRATION_FLASH_UNSUPPORTED_VERSION;
         }
+        read_page_flash(file_info.first_page, (char *)page);
     } else if (file_status == POGO_FLASH_FILE_NOT_FOUND) {
         return MAGNETOMETER_CALIBRATION_FLASH_EMPTY;
     } else if (file_status == POGO_FLASH_FILE_UNFORMATTED) {

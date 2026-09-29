@@ -14,14 +14,16 @@ Collection runs at 20 Hz. Once collection enters the fitting phase, the example
 switches to 1 Hz and performs fitting and flash storage on separate ticks; those
 operations can take hundreds of milliseconds on a physical robot.
 
-If PFFS is absent or corrupt, calibration automatically formats the entire
-64 KiB user section before creating its PFFS v2 file. This also erases any
-other user files, including potentially recoverable files under a damaged
-catalog. The serial log announces corruption detected before creation with
-`# MAG_CAL_FLASH_REFORMAT`. Fast lookup can miss an empty slot's bad CRC or
-damage in the other catalog page; create may then format without that log line.
+If PFFS is absent, corrupt, or an older format, calibration automatically
+recreates the PFFS v3 catalogs before creating its file. This loses access to
+all other PFFS files, including potentially recoverable ones under a damaged
+catalog; old data-sector bytes remain until reused. The serial log announces
+corruption detected before creation with
+`# MAG_CAL_FLASH_REFORMAT`. Name lookup skips catalog CRCs and may return
+before inspecting later catalogs; create may detect damage and format without
+that log line. The file takes the first free ID, or retains its existing ID.
 Later calibrations with valid catalogs erase and rewrite only the calibration
-file's dedicated 4 KiB sector and the shared 4 KiB catalog sector, retaining
+file's dedicated 4 KiB sector and its catalog's 4 KiB sector, retaining
 other data sectors. `examples/flash_file_format` remains an optional explicit
 reset utility, not a prerequisite for a new robot.
 
