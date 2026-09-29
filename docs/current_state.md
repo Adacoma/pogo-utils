@@ -106,7 +106,8 @@ by hardware or experimental validation.
 - `examples/flash_file` is now an interactive shell for hardware UART and
   Pogosim stdin. It lists and inspects files, creates blank bounded extents,
   edits one-page ordinary files, renames labels, deletes entries, and formats
-  only with an explicit `YES` token. In Pogosim, `use` selects a robot ID.
+  only with an explicit `YES` token. Its read-only `df` reports whole-sector
+  capacity subject to the ten-ID limit. In Pogosim, `use` selects a robot ID.
 
 ## What remains unknown
 

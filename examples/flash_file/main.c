@@ -263,6 +263,54 @@ static bool catalogs_ready(void) {
     return false;
 }
 
+/** Report allocatable capacity in whole erase sectors, as PFFS consumes one
+ * sector per occupied ID regardless of its 1..8-page payload allocation.
+ * The ten ID slots, not the fifteen physical data sectors, cap usable space. */
+static void shell_df(void) {
+    if (!catalogs_ready()) return;
+
+    unsigned files_used = 0u;
+    unsigned payload_pages = 0u;
+    for (uint8_t id = 1u; id <= POGO_FLASH_FILE_MAX_FILES; ++id) {
+        pogo_flash_file_info_t info;
+        pogo_flash_file_status_t status = pogo_flash_file_find(id, &info);
+        if (status == POGO_FLASH_FILE_NOT_FOUND) continue;
+        if (status != POGO_FLASH_FILE_OK) {
+            printf("error: ID %u: %s\n", (unsigned)id,
+                   pogo_flash_file_status_string(status));
+            return;
+        }
+        ++files_used;
+        payload_pages += info.page_count;
+    }
+
+    /* Flash page addresses are uint8_t: pages 0..255 cover the 64 KiB user
+     * section. Keep the arithmetic derived from the public layout limits. */
+    const unsigned physical_pages = (unsigned)UINT8_MAX + 1u;
+    const unsigned sector_kib = POGO_FLASH_FILE_ERASE_SECTOR_PAGES *
+        POGO_FLASH_FILE_PAGE_SIZE / 1024u;
+    const unsigned physical_kib = physical_pages * POGO_FLASH_FILE_PAGE_SIZE / 1024u;
+    const unsigned catalog_kib = POGO_FLASH_FILE_DATA_FIRST_PAGE *
+        POGO_FLASH_FILE_PAGE_SIZE / 1024u;
+    const unsigned data_sectors = (physical_pages - POGO_FLASH_FILE_DATA_FIRST_PAGE) /
+        POGO_FLASH_FILE_ERASE_SECTOR_PAGES;
+    const unsigned addressable_sectors = data_sectors < POGO_FLASH_FILE_MAX_FILES ?
+        data_sectors : POGO_FLASH_FILE_MAX_FILES;
+    const unsigned size_kib = addressable_sectors * sector_kib;
+    const unsigned used_kib = files_used * sector_kib;
+    const unsigned avail_kib = size_kib - used_kib;
+
+    puts("Filesystem  Size  Used  Avail  Use%  Files  Payload allocated");
+    printf("pffs        %uK    %uK    %uK    %u%%    %u/%u   %uB\n",
+           size_kib, used_kib, avail_kib,
+           addressable_sectors == 0u ? 0u : files_used * 100u / addressable_sectors,
+           files_used, (unsigned)POGO_FLASH_FILE_MAX_FILES,
+           payload_pages * (unsigned)POGO_FLASH_FILE_PAGE_SIZE);
+    printf("Physical: %uK user flash; %uK catalog; %uK data beyond the ID limit.\n",
+           physical_kib, catalog_kib,
+           (data_sectors - addressable_sectors) * sector_kib);
+}
+
 /** Print one file's stable identity and allocation; no payload is changed. */
 static void shell_stat(const pogo_flash_file_info_t *info) {
     printf("id=%u name=%s format=%u page=%u pages=%u generation=%lu crc=%08lx\n",
@@ -401,7 +449,7 @@ static void shell_execute(char *line) {
     if (count == 0u) return;
     const char *command = words[0];
     if (strcmp(command, "help") == 0 && count == 1u) {
-        puts("help | ls | stat <id|name> | cat <id|name> | rm <id|name>");
+        puts("help | ls | df | stat <id|name> | cat <id|name> | rm <id|name>");
         puts("touch <id> <name|-> [pages] | mv <id|name> <new_name|->");
         puts("write <id|name> <offset> <hexbytes> | format YES");
 #ifndef REAL_ROBOT
@@ -436,6 +484,10 @@ static void shell_execute(char *line) {
 #endif
     if (strcmp(command, "ls") == 0 && count == 1u) {
         shell_list();
+        return;
+    }
+    if (strcmp(command, "df") == 0 && count == 1u) {
+        shell_df();
         return;
     }
     if (strcmp(command, "format") == 0 && count == 2u &&

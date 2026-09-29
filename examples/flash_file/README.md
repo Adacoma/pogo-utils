@@ -22,6 +22,7 @@ Commands (names are exact, case-sensitive, and contain no spaces):
 | --- | --- |
 | `help` | Show the command summary. |
 | `ls` | List IDs 1–10 and validate catalog/file CRCs. |
+| `df` | Show allocatable sector capacity, file-ID usage, and allocated payload pages. |
 | `stat <id\|name>` | Show one file's metadata. |
 | `cat <id\|name>` | Hex-dump all allocated bytes of an ordinary file, including erased padding; print a log's committed bytes with non-text bytes escaped. |
 | `touch <id> <name\|-> [pages]` | Create a blank ordinary file (1–8 pages, default 1); `-` means unnamed. |
@@ -45,3 +46,12 @@ The `ls` output includes each file's ID, name, payload format, page count,
 generation, CRC, and validation result. Ordinary files use a whole-file CRC;
 append-only logs validate each committed page. A malformed catalog is reported
 as `FLASH_CATALOG_ERROR` rather than treating its slots as empty.
+
+`df` first validates the catalogs. Its `Size`, `Used`, and `Avail` columns count
+whole 4 KiB data sectors: each occupied file ID consumes one, even if its
+payload has only one 256-byte page. Thus the ten file IDs make 40 KiB of the
+64 KiB user-flash section addressable as files. The separate line accounts for
+the 4 KiB catalog sector and the other 20 KiB of data sectors beyond the ID
+limit. `Payload allocated` counts reserved pages, **not** bytes actually written
+or committed in a log. Deleted files are considered free by the catalog even
+though their old payload bytes remain until that sector is reused.
