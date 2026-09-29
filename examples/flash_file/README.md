@@ -1,38 +1,47 @@
-# Flash-file inventory
+# Flash-file shell
 
-This example lists all ten stable flash-file IDs without changing user flash.
-It expects PFFS v2 catalogs; a v1 catalog is reported as incompatible/corrupt.
-For each occupied ID it prints the optional name, payload format version, first
-physical page, page count and byte size, replacement generation, recorded data
-CRC-32, and the result of a secure read. The secure read validates the selected
-catalog page and every page of that file. Empty slots are counted in the final
-summary; malformed slots and checksum failures are reported as errors. Both
-catalog page CRCs are checked before listing any slots, so an empty catalog
-with a bad checksum is reported as `FLASH_CATALOG_ERROR` and its five slots are
-counted as `unreadable`, not `empty`. `FLASH_CATALOG_CRC` prints the stored and
-calculated checksums plus the catalog generation and first slot's ID/flags when
-a page header is recognizable but its checksum differs.
-
-Run it after the four-robot magnetometer calibration example has exported
-`magnetometer.pgflash`:
+This example is an interactive serial shell for the bounded PFFS v2 filesystem.
+On a Pogobot, type commands in the Pogobios-style UART console. In Pogosim,
+type them in the terminal that launched the simulator. `robots` shows the
+available simulated robot IDs, and `use <robot_id>` switches which robot's
+flash receives subsequent commands. Press Enter after each command.
 
 ```console
 make -C examples/flash_file sim
 ./examples/flash_file/flash_file -c conf/flash_file.yaml
 ```
 
-The configuration imports the archive and uses the same robot IDs and wall
-category as `conf/magnetometer_calibration.yaml`. Run from the repository root
-so the relative archive path resolves. A successful inventory includes file ID
-1 named `magnetometer_calibration`; other IDs may be present if the robots have
-stored additional files. The example does not export an archive, so the input
-file is left untouched.
+Run from the repository root. The configuration imports **and exports**
+`magnetometer.pgflash`, with the same robot and wall categories as the
+calibration example. Quit using ESC in the GUI so Pogosim saves the modified
+archive. Back up this archive before testing destructive commands.
 
-On a physical robot, calibration succeeds only when its LED turns green and it
-prints `# MAG_CAL_STORED`. A violet LED means it stopped in a fatal state; the
-`# MAG_CAL_FATAL` line from that run identifies the failure. An empty inventory
-after a violet calibration is therefore not evidence of a stored model.
+Commands (names are exact, case-sensitive, and contain no spaces):
 
-`validation=ok` means the outer filesystem CRCs match. It does not interpret a
-file's application-specific payload. The magnetometer loader separately checks
-the inner PMAG record and its model values.
+| Command | Action |
+| --- | --- |
+| `help` | Show the command summary. |
+| `ls` | List IDs 1–10 and validate catalog/file CRCs. |
+| `stat <id\|name>` | Show one file's metadata. |
+| `cat <id\|name>` | Hex-dump all allocated bytes of an ordinary file, including erased padding; print a log's committed bytes with non-text bytes escaped. |
+| `touch <id> <name\|-> [pages]` | Create a blank ordinary file (1–8 pages, default 1); `-` means unnamed. |
+| `write <id\|name> <offset> <hexbytes>` | Replace bytes within an existing **one-page ordinary file**. Example: `write notes 0 4869` stores `Hi`. |
+| `mv <id\|name> <new_name\|->` | Rename the optional label; the stable numeric ID never changes. |
+| `rm <id\|name>` | Remove the catalog entry; payload may remain until its sector is reused. |
+| `format YES` | Erase the entire 64 KiB user-flash section and recreate the catalogs. |
+
+`touch` refuses a missing or damaged filesystem instead of silently formatting
+it. Use `format YES` explicitly if erasure is intended. This command destroys
+*all* user files, including magnetometer calibration. Likewise, renaming or
+removing file ID 1 can make calibration unavailable to mission programs.
+`write` verifies the current whole-file CRC before replacing the page and
+rewrites its dedicated erase sector; it is not atomic across power loss.
+Multi-page editing is deliberately omitted so the shell needs only a 256-byte
+data buffer, not a 2 KiB workspace. `touch` does support multi-page files.
+Command lines are limited to 159 bytes; several `write` commands can fill a
+page, but each wears its sector, so use `flash_log` for frequent appends.
+
+The `ls` output includes each file's ID, name, payload format, page count,
+generation, CRC, and validation result. Ordinary files use a whole-file CRC;
+append-only logs validate each committed page. A malformed catalog is reported
+as `FLASH_CATALOG_ERROR` rather than treating its slots as empty.

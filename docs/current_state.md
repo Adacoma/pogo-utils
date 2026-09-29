@@ -31,6 +31,8 @@ by hardware or experimental validation.
   ten stable ID slots, and one dedicated data sector per 1-to-8-page file.
 - The append-only log extension: reserved PFFS payload format, page-level CRC,
   one-page RAM caches, and synchronous page-write/readback behavior.
+- The flash-file example's serial command path, simulator stdin routing, and
+  new blank-create, catalog-check, and rename writer operations.
 - The linked `libs/ACU-selfadapt` ACU law, fixed-genotype configuration, and
   separation between motility parameters and HIT/FT optimization machinery.
 
@@ -101,6 +103,10 @@ by hardware or experimental validation.
   consumes a partial page. A full or damaged log returns an error without
   stopping the application. A dedicated example uses IDs 2 and 3 for text and
   CSV and can be rebuilt in read-only dump mode.
+- `examples/flash_file` is now an interactive shell for hardware UART and
+  Pogosim stdin. It lists and inspects files, creates blank bounded extents,
+  edits one-page ordinary files, renames labels, deletes entries, and formats
+  only with an explicit `YES` token. In Pogosim, `use` selects a robot ID.
 
 ## What remains unknown
 
@@ -156,11 +162,11 @@ by hardware or experimental validation.
 - Flash-file and magnetometer-calibration production sources now document their
   serialized byte layouts, ownership and RAM assumptions, state transitions,
   numerical conventions, mutation ordering, and failure semantics in place.
-- A read-only `examples/flash_file` inventory now scans stable IDs 1..10,
-  reports each file's catalog metadata, and validates both catalog CRCs even
-  when slots are empty, plus every occupied file's data CRC. Its
-  short Pogosim configuration imports the four-robot magnetometer archive.
-  On robot 23342, the earlier inventory reported ten empty slots after the
+- The shell's `ls` retains the former inventory's catalog and data CRC checks.
+  Its Pogosim configuration imports and exports the four-robot magnetometer
+  archive. Host tests cover blank creation and rename, and its simulator target
+  compiles; interactive and hardware behavior have not yet been exercised.
+  On robot 23342, the earlier read-only inventory reported ten empty slots after the
   calibration program stopped with a violet fatal LED. Its serial log reported
   `MAG_CAL_FATAL` with `flash-file catalog error` and a 354 ms step against a
   50 ms budget. A later read-only inventory found page 0's CRC stored as

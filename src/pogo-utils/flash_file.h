@@ -147,6 +147,12 @@ pogo_flash_file_status_t pogo_flash_file_read_page_secure(
  */
 pogo_flash_file_status_t pogo_flash_file_format(void);
 
+/** Validate both catalogs, every occupied entry, and extent non-overlap.
+ * This is read-only. Unlike create(), it never autoformats damaged metadata.
+ * File payload CRCs are not checked here.
+ */
+pogo_flash_file_status_t pogo_flash_file_check(void);
+
 /** Create a file in the slot selected by file_id.
  * data must contain exactly page_count consecutive 256-byte pages.
  * `name` may be NULL or empty for an unnamed file. Data pages are written and
@@ -165,6 +171,16 @@ pogo_flash_file_status_t pogo_flash_file_create(
     uint16_t format_version,
     const uint8_t *data);
 
+/** Create an ordinary file whose allocated pages initially contain 0xff.
+ * This avoids a page_count*256-byte caller buffer. As with create(), an
+ * absent or corrupt catalog is automatically formatted before creation.
+ */
+pogo_flash_file_status_t pogo_flash_file_create_blank(
+    uint8_t file_id,
+    const char *name,
+    uint8_t page_count,
+    uint16_t format_version);
+
 /** Replace an existing file in its dedicated sector. The size stays fixed.
  *
  * Replacement is deliberately non-transactional: the data sector is erased
@@ -182,6 +198,13 @@ pogo_flash_file_status_t pogo_flash_file_replace(
  * may allocate the released extent and overwrite them.
  */
 pogo_flash_file_status_t pogo_flash_file_delete(uint8_t file_id);
+
+/** Change only a file's optional human-readable name; its ID and data stay.
+ * The new nonempty name must be unique. This rewrites the catalog sector and
+ * is not transactional across a power failure.
+ */
+pogo_flash_file_status_t pogo_flash_file_rename(
+    uint8_t file_id, const char *new_name);
 
 /** Return a static diagnostic string. No allocation or formatting is done. */
 const char *pogo_flash_file_status_string(pogo_flash_file_status_t status);

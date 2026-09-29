@@ -1,6 +1,6 @@
 /**
  * @file flash_file_write.c
- * @brief Optional create/replace/delete support for the bounded flash catalog.
+ * @brief Optional create/replace/delete/rename support for the flash catalog.
  *
  * This file is separate so read-only mission firmware does not pull allocation
  * and verification code into its image. Each file occupies a dedicated erase
@@ -209,6 +209,12 @@ static pogo_flash_file_status_t load_catalogs(
     return POGO_FLASH_FILE_OK;
 }
 
+pogo_flash_file_status_t pogo_flash_file_check(void) {
+    uint8_t catalogs[POGO_FLASH_FILE_CATALOG_PAGES][POGO_FLASH_FILE_PAGE_SIZE];
+    bool used_pages[256];
+    return load_catalogs(catalogs, used_pages);
+}
+
 static bool catalog_name_exists(
     uint8_t catalogs[POGO_FLASH_FILE_CATALOG_PAGES][POGO_FLASH_FILE_PAGE_SIZE],
     const char *name,
@@ -250,17 +256,28 @@ static pogo_flash_file_status_t write_data_pages(
     uint8_t first_page,
     uint8_t page_count,
     const uint8_t *data,
+    bool blank_file,
     uint32_t *data_crc) {
     if (!erase_sector_verified(first_page)) return POGO_FLASH_FILE_VERIFY_FAILED;
     /* A log begins with erased pages and programs each one exactly once later.
      * Its catalog CRC field is deliberately unused, so no large all-FF input
      * buffer or pointless initial page programs are necessary. */
-    if (data == NULL) {
+    if (data == NULL && !blank_file) {
         *data_crc = 0u;
         return POGO_FLASH_FILE_OK;
     }
     uint8_t actual[POGO_FLASH_FILE_PAGE_SIZE]; /* Reused for every readback. */
     uint32_t crc = UINT32_MAX;                 /* ISO-HDLC initial state. */
+    if (blank_file) {
+        /* The verified erase above established every byte as 0xff. Compute
+         * the ordinary-file CRC without programming or buffering eight pages. */
+        memset(actual, 0xff, sizeof(actual));
+        for (uint8_t page = 0u; page < page_count; ++page) {
+            crc = crc32_update(crc, actual, sizeof(actual));
+        }
+        *data_crc = crc32_finish(crc);
+        return POGO_FLASH_FILE_OK;
+    }
     for (uint8_t page = 0u; page < page_count; ++page) {
         const uint8_t *expected = data + (size_t)page * POGO_FLASH_FILE_PAGE_SIZE;
         uint8_t physical = (uint8_t)(first_page + page);
@@ -324,6 +341,7 @@ static pogo_flash_file_status_t create_file(
     uint16_t format_version,
     const uint8_t *data,
     bool log_format,
+    bool blank_file,
     bool *formatted) {
     if (formatted != NULL) *formatted = false;
     /* Measure before reading catalogs so invalid caller input has no I/O side
@@ -331,8 +349,9 @@ static pogo_flash_file_status_t create_file(
     size_t name_length = bounded_name_length(name);
     if (file_id == 0u || file_id > POGO_FLASH_FILE_MAX_FILES ||
         (log_format && file_id == POGO_FLASH_FILE_ID_MAGNETOMETER_CALIBRATION) ||
-        (!log_format && (data == NULL ||
+        (!log_format && ((!blank_file && data == NULL) ||
             format_version == POGO_FLASH_LOG_FORMAT_VERSION)) ||
+        (blank_file && (log_format || data != NULL)) ||
         name_length > POGO_FLASH_FILE_MAX_NAME) {
         return POGO_FLASH_FILE_INVALID_ARGUMENT;
     }
@@ -371,7 +390,7 @@ static pogo_flash_file_status_t create_file(
     uint32_t data_crc;
     /* Write data before filling/publishing the entry. If this fails, the pages
      * contain garbage/orphan data but no catalog file points at them. */
-    status = write_data_pages(first_page, page_count, data, &data_crc);
+    status = write_data_pages(first_page, page_count, data, blank_file, &data_crc);
     if (status != POGO_FLASH_FILE_OK) return status;
 
     /* Construct the complete serialized entry in RAM. Reserved bytes and unused
@@ -393,13 +412,21 @@ pogo_flash_file_status_t pogo_flash_file_create(
     uint8_t file_id, const char *name, uint8_t page_count,
     uint16_t format_version, const uint8_t *data) {
     return create_file(file_id, name, page_count, format_version, data,
-                       false, NULL);
+                       false, false, NULL);
+}
+
+pogo_flash_file_status_t pogo_flash_file_create_blank(
+    uint8_t file_id, const char *name, uint8_t page_count,
+    uint16_t format_version) {
+    return create_file(file_id, name, page_count, format_version, NULL,
+                       false, true, NULL);
 }
 
 pogo_flash_file_status_t pogo_flash_file_internal_create_log(
     uint8_t file_id, const char *name, uint8_t page_count, bool *formatted) {
     return create_file(file_id, name, page_count,
-                       POGO_FLASH_LOG_FORMAT_VERSION, NULL, true, formatted);
+                       POGO_FLASH_LOG_FORMAT_VERSION, NULL, true, false,
+                       formatted);
 }
 
 pogo_flash_file_status_t pogo_flash_file_internal_clear_log(uint8_t file_id) {
@@ -456,7 +483,8 @@ pogo_flash_file_status_t pogo_flash_file_replace(
     uint32_t data_crc;
     /* Non-transactional point: erasing this dedicated sector removes the old
      * payload before a new payload or catalog checksum can be committed. */
-    status = write_data_pages(info.first_page, info.page_count, data, &data_crc);
+    status = write_data_pages(info.first_page, info.page_count, data, false,
+                              &data_crc);
     if (status != POGO_FLASH_FILE_OK) return status;
     /* File generation tracks successful replacements. write_changed_catalog()
      * separately increments the generation for the containing catalog page. */
@@ -480,5 +508,35 @@ pogo_flash_file_status_t pogo_flash_file_delete(uint8_t file_id) {
     /* Clearing the entry releases the extent logically. Payload bytes remain
      * physically present until a later creation reuses and overwrites them. */
     memset(entry, 0, POGO_FLASH_FILE_ENTRY_SIZE);
+    return write_changed_catalog(catalog_index, catalogs);
+}
+
+pogo_flash_file_status_t pogo_flash_file_rename(
+    uint8_t file_id, const char *new_name) {
+    size_t name_length = bounded_name_length(new_name);
+    if (file_id == 0u || file_id > POGO_FLASH_FILE_MAX_FILES ||
+        name_length > POGO_FLASH_FILE_MAX_NAME) {
+        return POGO_FLASH_FILE_INVALID_ARGUMENT;
+    }
+    uint8_t catalogs[POGO_FLASH_FILE_CATALOG_PAGES][POGO_FLASH_FILE_PAGE_SIZE];
+    bool used_pages[256];
+    pogo_flash_file_status_t status = load_catalogs(catalogs, used_pages);
+    if (status != POGO_FLASH_FILE_OK) return status;
+    uint8_t *entry = catalog_entry(catalogs, file_id);
+    if (entry[7] == 0u) return POGO_FLASH_FILE_NOT_FOUND;
+    if (entry[6] == name_length &&
+        (name_length == 0u || memcmp(entry + 16, new_name, name_length) == 0)) {
+        return POGO_FLASH_FILE_OK; /* A no-op need not wear the catalog sector. */
+    }
+    if (catalog_name_exists(catalogs, new_name, name_length)) {
+        return POGO_FLASH_FILE_NAME_EXISTS;
+    }
+    /* The fixed ID, extent, payload checksum, and file generation remain
+     * unchanged. Only the catalog generation records the metadata mutation. */
+    memset(entry + 16, 0, POGO_FLASH_FILE_MAX_NAME);
+    entry[6] = (uint8_t)name_length;
+    if (name_length > 0u) memcpy(entry + 16, new_name, name_length);
+    uint8_t catalog_index = (uint8_t)((file_id - 1u) /
+        POGO_FLASH_FILE_ENTRIES_PER_CATALOG);
     return write_changed_catalog(catalog_index, catalogs);
 }

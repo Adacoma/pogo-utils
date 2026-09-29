@@ -1,6 +1,6 @@
 ---
 
-# Read-only inventory of the archive exported by magnetometer_calibration.yaml.
+# Interactive shell for the archive exported by magnetometer_calibration.yaml.
 # Pogosim requires the same category and robot ID set in both scenarios.
 boundary_condition: solid
 arena_file: arenas/square.csv
@@ -8,7 +8,8 @@ arena_surface: 1.0e6
 enable_data_logging: false
 enable_console_logging: true
 console_filename: "frames/flash_file_console.txt"
-simulation_time: 1.0
+# Keep the simulator alive while commands are typed; exit with ESC in the GUI.
+simulation_time: 86400.0
 time_step: 0.01
 seed: 0
 GUI: true
@@ -44,3 +45,4 @@ parameters:
 
 flash_state:
     input_file: "magnetometer.pgflash"
+    output_file: "magnetometer.pgflash"

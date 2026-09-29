@@ -94,6 +94,17 @@ int main(void) {
     assert(flash[32u][5u] == 0xffu);
     assert(pogo_flash_file_read_page_secure(1u, 0u, output, NULL) ==
            POGO_FLASH_FILE_OK);
+    /* Blank creation relies on erase (not programming all-one bytes), and a
+     * rename must erase/rebuild the catalog without changing file data. */
+    assert(pogo_flash_file_create_blank(2u, "blank", 2u, 1u) ==
+           POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_rename(2u, "blank_renamed") ==
+           POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_find_by_name("blank_renamed", &info) ==
+           POGO_FLASH_FILE_OK && info.page_count == 2u);
+    assert(pogo_flash_file_read_page_secure(2u, 1u, output, NULL) ==
+           POGO_FLASH_FILE_OK);
+    for (unsigned i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xffu);
     puts("NOR flash file tests passed");
     return 0;
 }

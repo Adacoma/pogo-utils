@@ -41,8 +41,9 @@ the repository does not provide a single central runtime.
 - [`flash_file`](../src/pogo-utils/flash_file.h) provides the bounded two-page
   catalog and sector-isolated full-page files. Its [design notes](flash_files.md)
   document stable IDs, fast and secure readers, and replacement constraints.
-  The [inventory](../examples/flash_file) reads files; the explicit
-  [format utility](../examples/flash_file_format) erases all user files.
+  The [serial shell](../examples/flash_file) lists, inspects, creates, edits,
+  renames, and removes files; the separate
+  [format utility](../examples/flash_file_format) also erases all user files.
 - [`flash_log`](../src/pogo-utils/flash_log.h) adds bounded, append-only text or
   binary streams in separate flash files. The [two-stream example](../examples/flash_log)
   logs print-style text and CSV independently, with an optional readback mode.

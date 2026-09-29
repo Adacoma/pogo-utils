@@ -55,6 +55,7 @@ int main(void) {
     /* Pogosim leaves fresh robot flash zero-filled until its erase API is
      * called; physical erased flash reads as 0xff. Accept both virgin forms. */
     memset(fake_flash, 0, sizeof(fake_flash));
+    assert(pogo_flash_file_check() == POGO_FLASH_FILE_UNFORMATTED);
     assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_UNFORMATTED);
     assert(pogo_flash_file_find_by_name("x", &info) ==
            POGO_FLASH_FILE_UNFORMATTED);
@@ -76,6 +77,7 @@ int main(void) {
            POGO_FLASH_FILE_UNFORMATTED);
     write_count = 0u;
     assert(pogo_flash_file_format() == POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_check() == POGO_FLASH_FILE_OK);
     assert(write_count == 2u);
     assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_NOT_FOUND);
 
@@ -110,10 +112,31 @@ int main(void) {
     assert(pogo_flash_file_create(4u, "second_catalog", 1u, 1u, one_page) ==
            POGO_FLASH_FILE_NAME_EXISTS);
 
+    /* Renaming changes only the human label: the ID, extent, payload, and
+     * file generation remain stable, while duplicate labels are rejected. */
+    assert(pogo_flash_file_rename(6u, "renamed") == POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_find_by_name("second_catalog", &info) ==
+           POGO_FLASH_FILE_NOT_FOUND);
+    assert(pogo_flash_file_find_by_name("renamed", &info) ==
+           POGO_FLASH_FILE_OK && info.id == 6u && info.generation == 1u);
+    assert(pogo_flash_file_rename(6u,
+           POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION) ==
+           POGO_FLASH_FILE_NAME_EXISTS);
+    assert(pogo_flash_file_rename(6u, "renamed") == POGO_FLASH_FILE_OK);
+
+    /* Blank creation needs no 2 KiB caller buffer, even for eight pages. */
+    assert(pogo_flash_file_create_blank(7u, "blank", 8u, 1u) ==
+           POGO_FLASH_FILE_OK);
+    for (uint8_t page = 0u; page < 8u; ++page) {
+        assert(pogo_flash_file_read_page_secure(7u, page, output, NULL) ==
+               POGO_FLASH_FILE_OK);
+        for (size_t i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xffu);
+    }
+
     assert(pogo_flash_file_create(2u, "three_pages", 3u, 9u, three_pages) ==
            POGO_FLASH_FILE_OK);
     assert(pogo_flash_file_find(2u, &info) == POGO_FLASH_FILE_OK);
-    assert(info.first_page == 48u && info.page_count == 3u);
+    assert(info.first_page == 64u && info.page_count == 3u);
     read_count = 0u;
     assert(pogo_flash_file_read_page_secure(2u, 1u, output, NULL) ==
            POGO_FLASH_FILE_OK);
@@ -145,6 +168,7 @@ int main(void) {
     uint8_t saved_catalog[POGO_FLASH_FILE_PAGE_SIZE];
     memcpy(saved_catalog, fake_flash[0], sizeof(saved_catalog));
     fake_flash[0][POGO_FLASH_FILE_PAGE_SIZE - 1u] ^= 1u;
+    assert(pogo_flash_file_check() == POGO_FLASH_FILE_CORRUPT_CATALOG);
     assert(pogo_flash_file_read_page_fast(1u, 0u, output, NULL) ==
            POGO_FLASH_FILE_OK);
     assert(pogo_flash_file_read_page_secure(1u, 0u, output, NULL) ==

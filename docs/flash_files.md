@@ -5,10 +5,9 @@ section. Catalog format v2 is intentionally bounded rather than a general filesy
 keeps ID-based one-page reads fast and keeps writer/allocation code out of
 read-only mission binaries.
 
-For a read-only inventory of all ten stable IDs, see
-`examples/flash_file/README.md`. Its example program prints catalog metadata
-and checks both catalog page CRCs, including empty catalogs, before performing
-a secure data CRC check for each occupied file.
+For an interactive serial shell, see `examples/flash_file/README.md`. Its `ls`
+command inventories all ten stable IDs, checks both catalog-page CRCs
+(including empty catalogs), and validates each occupied file's data.
 
 ## Layout
 
@@ -52,8 +51,15 @@ ID-only callers do not need to link them.
 
 ## Write policy
 
-The writer formats, creates, replaces, and deletes files. It is isolated in
+The writer formats, creates, replaces, renames, and deletes files. It is isolated in
 `flash_file_write.c`; applications that only read files need not link it.
+
+`pogo_flash_file_create_blank` creates an all-`0xff` ordinary file without a
+multi-page caller buffer. `pogo_flash_file_rename` changes only its optional
+label; ID, allocation, and payload stay fixed. `pogo_flash_file_check` validates
+both catalogs and all extents without formatting or checking payload bytes.
+The shell calls it before `touch` so damaged metadata cannot trigger implicit
+destructive recovery; `format YES` is the shell's explicit reset command.
 
 Creation selects the first free data sector. Replacement keeps the same sector
 and page count; deletion clears the catalog entry and the sector may later be
