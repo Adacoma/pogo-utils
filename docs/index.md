@@ -43,6 +43,9 @@ the repository does not provide a single central runtime.
   document stable IDs, fast and secure readers, and replacement constraints.
   The [inventory](../examples/flash_file) reads files; the explicit
   [format utility](../examples/flash_file_format) erases all user files.
+- [`flash_log`](../src/pogo-utils/flash_log.h) adds bounded, append-only text or
+  binary streams in separate flash files. The [two-stream example](../examples/flash_log)
+  logs print-style text and CSV independently, with an optional readback mode.
 - [`heading_PID`](../src/pogo-utils/heading_PID.h) performs heading control
   without owning sensor, clock, or motor I/O.
 - [`wall_avoidance_magnetometer`](../src/pogo-utils/wall_avoidance_magnetometer.h)

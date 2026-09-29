@@ -7,6 +7,7 @@
  * against an attacker who can rewrite both payload and checksum.
  */
 #include "flash_file_internal.h"
+#include "flash_log.h"
 
 #include "pogobase.h"
 
@@ -52,6 +53,11 @@ pogo_flash_file_status_t pogo_flash_file_read_page_secure(
     if (status != POGO_FLASH_FILE_OK) return status;
     if (file_page >= decoded.page_count) return POGO_FLASH_FILE_INVALID_ARGUMENT;
     if (!catalog_crc_valid(output)) return POGO_FLASH_FILE_CORRUPT_CATALOG;
+    /* Append-only logs intentionally leave the catalog's whole-file CRC
+     * unchanged. Their reader verifies each committed page independently. */
+    if (decoded.format_version == POGO_FLASH_LOG_FORMAT_VERSION) {
+        return POGO_FLASH_FILE_UNSUPPORTED_FORMAT;
+    }
 
     /* CRC coverage includes padding and unused bytes within every allocated
      * page. Writers therefore require callers to define all 256 bytes/page. */

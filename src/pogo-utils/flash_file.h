@@ -12,7 +12,8 @@
  * Human-readable names are optional metadata; IDs are the persistent identity.
  *
  * The fast reader checks structural bounds but deliberately skips CRC checks.
- * The secure reader checks the catalog CRC and the CRC of every file page.
+ * The secure reader checks the catalog CRC and the CRC of every ordinary file
+ * page. Append-only flash logs use their own per-page CRC reader instead.
  * Replacement erases and rewrites the file's dedicated sector. Catalog changes
  * erase and rewrite the dedicated catalog sector. These operations are not
  * transactional: interrupted writes are detected but cannot be rolled back.
@@ -68,7 +69,7 @@ typedef struct {
     uint8_t first_page;     /**< First physical page in the contiguous extent. */
     uint8_t page_count;     /**< Immutable number of pages in the extent. */
     uint8_t name_length;    /**< Stored label length; zero means unnamed. */
-    uint16_t format_version; /**< Payload schema version owned by the caller. */
+    uint16_t format_version; /**< Payload schema; 0x8001 is reserved for logs. */
     uint32_t generation;    /**< Per-file replacement counter, starting at one. */
     uint32_t data_crc32;    /**< CRC over all allocated pages, in page order. */
     char name[POGO_FLASH_FILE_MAX_NAME + 1]; /**< Optional NUL-terminated label. */
@@ -92,7 +93,8 @@ typedef enum {
     POGO_FLASH_FILE_NO_SPACE,           /**< No sufficiently long free extent exists. */
     POGO_FLASH_FILE_BAD_CHECKSUM,       /**< Secure read found damaged file data. */
     POGO_FLASH_FILE_VERIFY_FAILED,      /**< Immediate write/readback differed. */
-    POGO_FLASH_FILE_GENERATION_EXHAUSTED /**< A monotonic counter reached UINT32_MAX. */
+    POGO_FLASH_FILE_GENERATION_EXHAUSTED, /**< A monotonic counter reached UINT32_MAX. */
+    POGO_FLASH_FILE_UNSUPPORTED_FORMAT /**< Use a format-specific reader (e.g. a log). */
 } pogo_flash_file_status_t;
 
 /** Find an ID using structural checks only; no CRC is calculated.
@@ -129,6 +131,7 @@ pogo_flash_file_status_t pogo_flash_file_read_page_fast(
 /** Read one page after validating the catalog and the complete file CRC.
  * Validation reads every page in the file and may reread the requested page.
  * The complete-file scan means latency grows linearly with `page_count`.
+ * Append-only logs return UNSUPPORTED_FORMAT: use flash_log.h instead.
  */
 pogo_flash_file_status_t pogo_flash_file_read_page_secure(
     uint8_t file_id,
@@ -153,6 +156,7 @@ pogo_flash_file_status_t pogo_flash_file_format(void);
  * section. This deliberately destroys any existing files, including data that
  * might have been recovered from a corrupt catalog. Invalid arguments and
  * occupied IDs do not format an otherwise valid filesystem.
+ * Format version 0x8001 is reserved for flash_log and rejected here.
  */
 pogo_flash_file_status_t pogo_flash_file_create(
     uint8_t file_id,

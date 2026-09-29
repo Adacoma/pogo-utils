@@ -1,6 +1,6 @@
 # Current project state
 
-Last updated: 2026-09-28.
+Last updated: 2026-09-29.
 
 This file is a concise engineering and scientific handoff. Statements under
 "Understood" describe the current implementation, not guarantees established
@@ -29,6 +29,8 @@ by hardware or experimental validation.
   additionally exposes 4 KiB sector erase.
 - The bounded flash-file v2 layout: two catalog pages in one erase sector,
   ten stable ID slots, and one dedicated data sector per 1-to-8-page file.
+- The append-only log extension: reserved PFFS payload format, page-level CRC,
+  one-page RAM caches, and synchronous page-write/readback behavior.
 - The linked `libs/ACU-selfadapt` ACU law, fixed-genotype configuration, and
   separation between motility parameters and HIT/FT optimization machinery.
 
@@ -94,6 +96,11 @@ by hardware or experimental validation.
   Kinematics owns reverse actuation and preserves wall priority. This uses
   fresh packets, not motion sensing; a three-second physical-escape bound still
   requires empirical validation.
+- `flash_log` now buffers independent byte streams in separate PFFS files.
+  Regular service writes only full pages without erasure; explicit force-flush
+  consumes a partial page. A full or damaged log returns an error without
+  stopping the application. A dedicated example uses IDs 2 and 3 for text and
+  CSV and can be rebuilt in read-only dump mode.
 
 ## What remains unknown
 
@@ -142,6 +149,10 @@ by hardware or experimental validation.
   preservation across create/replace/delete. Create now autoformats absent or
   corrupt catalogs, deliberately erasing all user files; read-only paths never
   do so. Pogosim v0.10.10 can expose uninitialized allocator contents as flash.
+- A host NOR-flash test now covers two append logs, independent clearing,
+  full-page and partial writes, persistence/reopen, full-file status, damaged
+  page detection, and destructive recovery of a corrupt catalog. The library
+  and simulator example compile; physical flash-write timing remains unmeasured.
 - Flash-file and magnetometer-calibration production sources now document their
   serialized byte layouts, ownership and RAM assumptions, state transitions,
   numerical conventions, mutation ordering, and failure semantics in place.
@@ -188,6 +199,10 @@ The following choices are encoded in the current implementation:
 - Flash-file IDs, page counts, and sectors are bounded. Fast reads skip CRCs;
   secure reads validate the selected catalog and complete file. Replacement
   erases and rewrites the same sector non-transactionally; it cannot resize a file.
+- Logs use the same bounded extents but commit one page at a time. They do not
+  maintain the catalog's whole-file CRC; their reader checks per-page CRCs.
+  Uncommitted RAM bytes are lost on reset, and a torn page requires explicit
+  clear before logging can resume.
 
 These are implementation decisions, not yet documented experimental findings.
 
@@ -231,3 +246,6 @@ These are implementation decisions, not yet documented experimental findings.
 10. Run the paired ACU calibration/mission scenarios, compare its trajectory
     statistics with the fixed reference controller, and then validate binary
     size, RAM, timing, wall recovery, and collective turns on hardware.
+11. Measure one synchronous log page program/readback on physical robots,
+    including the worst case against the 50 ms step budget; check long-run
+    flash wear and persistence with separate print and CSV files.

@@ -4,24 +4,25 @@
  *
  * Stable file IDs 1..10 select the two fixed catalog pages. The example checks
  * both catalog CRCs even when every slot is empty, lists occupied slots, then
- * checks each complete data CRC with the secure reader. No writer or
- * calibration routine is called.
+ * checks ordinary files with their whole-file CRC or logs page by page. No
+ * writer or calibration routine is called.
  *
  * A valid entry can still report a validation failure: the fast lookup checks
  * structure, while the secure read detects damaged catalog or payload bytes.
  */
 #include "pogobase.h"
 #include "pogo-utils/flash_file.h"
+#include "pogo-utils/flash_log.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-/** One reusable data-page buffer per robot. Keeping it in USERDATA avoids a
- * 256-byte local array on a small embedded task stack. */
+/** Reuse the log handle's page cache as ordinary-file inventory scratch too.
+ * This one-shot reader never appends after aliasing the cache for readback. */
 typedef struct {
-    uint8_t page[POGO_FLASH_FILE_PAGE_SIZE];
+    pogo_flash_log_t log;
 } USERDATA;
 
 DECLARE_USERDATA(USERDATA);
@@ -89,8 +90,8 @@ static pogo_flash_file_status_t check_catalog(
 
 /** Inspect one stable slot and update the summary counters.
  *
- * `find` supplies metadata even when the subsequent CRC scan fails. The secure
- * reader uses the same USERDATA page as scratch and does not retain its address.
+ * `find` supplies metadata even when the subsequent CRC scan fails. Ordinary
+ * secure reads and log reads reuse the same USERDATA page as scratch.
  */
 static void list_file(uint8_t id, unsigned *found, unsigned *empty,
                       unsigned *errors) {
@@ -108,10 +109,39 @@ static void list_file(uint8_t id, unsigned *found, unsigned *empty,
     }
 
     ++*found;
+    if (info.format_version == POGO_FLASH_LOG_FORMAT_VERSION) {
+        /* A log's catalog CRC covers metadata, not its changing data extent.
+         * Its dedicated reader checks each committed page instead. */
+        pogo_flash_log_status_t result = pogo_flash_log_open(&mydata->log, id);
+        unsigned bytes = 0u;
+        unsigned pages = 0u;
+        if (result == POGO_FLASH_LOG_OK) {
+            for (uint8_t i = 0u; i < info.page_count; ++i) {
+                uint8_t used = 0u;
+                result = pogo_flash_log_read_page(&mydata->log, i,
+                                                  mydata->log.page,
+                                                  &used);
+                if (result == POGO_FLASH_LOG_END) {
+                    result = POGO_FLASH_LOG_OK;
+                    break;
+                }
+                if (result != POGO_FLASH_LOG_OK) break;
+                bytes += used;
+                ++pages;
+            }
+        }
+        if (result != POGO_FLASH_LOG_OK) ++*errors;
+        printf("# FLASH_LOG_FILE,id=%u,name=%s,first_page=%u,pages=%u,"
+               "committed_pages=%u,committed_bytes=%u,validation=%s\n",
+               (unsigned)id, info.name_length ? info.name : "(unnamed)",
+               (unsigned)info.first_page, (unsigned)info.page_count,
+               pages, bytes, result == POGO_FLASH_LOG_OK ? "ok" : "damaged");
+        return;
+    }
     /* A secure read verifies the selected catalog page and every data page.
      * file_page 0 is sufficient because the check covers the whole file. */
     pogo_flash_file_status_t validation = pogo_flash_file_read_page_secure(
-        id, 0u, mydata->page, NULL);
+        id, 0u, mydata->log.page, NULL);
     if (validation != POGO_FLASH_FILE_OK) ++*errors;
 
     const char *name = info.name_length > 0u ? info.name : "(unnamed)";
@@ -145,7 +175,7 @@ void user_init(void) {
          * each catalog first and never report its IDs as healthy empties when
          * its header or checksum is invalid. */
         pogo_flash_file_status_t status = check_catalog(
-            catalog, mydata->page);
+            catalog, mydata->log.page);
         if (status != POGO_FLASH_FILE_OK) {
             ++errors;
             unreadable += POGO_FLASH_FILE_MAX_FILES /
