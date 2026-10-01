@@ -6,7 +6,7 @@ not a hardware-certification report. [Documentation map](index.md);
 
 ## Inspected
 
-- Library architecture, all 42 installed public headers, all 34 examples,
+- Library architecture, all 44 installed public headers, all 35 examples,
   build/install rules, relevant source implementations and scenario configs.
 - Current PFFS v3, append logs, magnetometer collection/runtime/storage split,
   motion ownership and recovery, ANN layouts, optimizer contracts, SSR and numerics.
@@ -28,6 +28,10 @@ not a hardware-certification report. [Documentation map](index.md);
   Writes/defrag are not transactional; creation can autoformat damaged catalogs.
 - Logs use one-page caches and per-page CRC. New defaults are 64 KiB per log;
   existing sizes remain fixed. Uncommitted RAM bytes disappear on reset.
+- Printing uses a standalone integer/fixed-point core and flash-first adapter:
+  RAM-only producer, caller-sized staging, one pending spill/mirror record,
+  user-called one-page service/checkpoint, optional byte-budgeted transport.
+  printf_fixp keeps its terminal API but no longer delegates to libc printf.
 - Quantized inference does not make setup/training/calibration/optimization/SSR
   floating-point-free. Standalone optimizers and the allocating facade differ
   in memory and evaluation contracts.
@@ -40,15 +44,20 @@ not a hardware-certification report. [Documentation map](index.md);
 
 ## Currently working analyses
 
-- Documentation milestone implemented: expanded README, ten new system guides
-  plus canonical PFFS guide, six tutorials, example READMEs and exhaustive coverage.
-- Validation: 60 Markdown files/local anchors checked; seven tutorial C blocks
-  compiled; small ANN/optimizer/fixed-point host fixtures passed. Fresh Debug
-  library build and all four CTest persistence tests passed.
-- All 34 simulator targets rebuilt with installed dependencies; numerical
+- Latest printing validation: fresh Debug library build and all six host tests
+  passed; two new tests also passed ASan/UBSan with warnings-as-errors. Coverage
+  includes exhaustive 16-bit Q values at precisions 0..6, 32-bit bounds/random
+  integer oracle checks, RAM-only print bursts, queue/terminal backpressure,
+  file-full checks, one-page service limits, readback and torn-write failure.
+- New print_log simulator target built (not run), and terminal-on/endless and
+  default modes passed strict syntax checks. Formatter/adapter object symbols
+  have no printf/double-math dependency. Target timing/size remain unmeasured.
+- Earlier documentation validation checked 60 Markdown files/local anchors,
+  seven tutorial C blocks and small ANN/optimizer/fixed-point host fixtures.
+  All 34 earlier simulator targets rebuilt with installed dependencies; numerical
   targets needed explicit local-source path. Existing heading/fixed-point
-  benchmark warnings remain. **No simulation/hardware program, training, flash
-  format or installation was run during this milestone.** Firmware was not built.
+  benchmark warnings remain. **No simulation/hardware program, training, physical
+  flash format or installation was run in the printing milestone.** Firmware was not built.
 - Configuration/build traps documented, not changed: ACU calibration exports
   acu.pgflash while mission imports magnetometer.pgflash; numerical Makefiles
   can silently skip wrong-path builds; optim example enables only five entries
@@ -68,6 +77,9 @@ not a hardware-certification report. [Documentation map](index.md);
   App chirality/offset/filtering are not persisted; compatibility remains a duty.
 - PFFS favors bounded firmware/RAM and fast ID reads over resizing/transactions.
   Logs separately trade cached speed and page density against checkpoint loss.
+- Printing deliberately supports a small syntax without float/double fallback;
+  Q conversion quantizes finite inputs, and coarse decimal rounding can carry
+  into an endpoint. Logging does not change controller arithmetic or scheduling.
 - ACU's fixed genotype uses physical angular/noise units; collective-turn events
   and pairwise yielding remain application policies, not optimizer claims.
 - Mathematical explanations describe implementations; no new accuracy, stability,

@@ -29,6 +29,7 @@
 *.dylib
 
 # Executables
+examples/print_log/print_log
 *.exe
 *.out
 *.app

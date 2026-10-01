@@ -69,6 +69,11 @@ separators, headers, binary lengths/versions, and explicit byte order yourself.
 Records can span pages; readers reconstruct the stream rather than expecting
 one record per physical page.
 
+For printf-style fixed-point text/CSV with whole-message rejection and optional
+terminal mirroring, use the [lightweight printing adapter](printing.md) and
+[print_log example](../../examples/print_log/README.md). It builds on this same
+page format, adding one caller-sized pending-message buffer per stream.
+
 Decimal helpers `format_u32`, `format_i32`, and `format_scaled_i32` write
 bounded character sequences and return lengths; **they do not NUL-terminate**.
 They can avoid linking general float printf formatting. Use `snprintf` only

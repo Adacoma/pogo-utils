@@ -88,6 +88,25 @@ install(FILES
 
 include(CTest)
 if(BUILD_TESTING)
+    # The formatting core is standalone: no SDK, flash, LUTs, or libc printf
+    # dependency from production objects. Tests supply a capturing transport.
+    add_executable(test_print_format tests/test_print_format.c
+        src/pogo-utils/print_format.c src/pogo-utils/fixp_print.c)
+    target_include_directories(test_print_format PRIVATE ${CMAKE_SOURCE_DIR})
+    add_test(NAME print_format COMMAND test_print_format)
+
+    # Check both formatting-time I/O absence and one-page service limits on
+    # the physical NOR branch, without executing firmware or a simulation.
+    add_executable(test_print_log_nor tests/test_print_log_nor.c
+        src/pogo-utils/print_format.c src/pogo-utils/print_log.c
+        src/pogo-utils/flash_file_read.c src/pogo-utils/flash_file_secure.c
+        src/pogo-utils/flash_file_name.c src/pogo-utils/flash_file_write.c
+        src/pogo-utils/flash_log.c)
+    target_include_directories(test_print_log_nor PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/stubs ${CMAKE_SOURCE_DIR})
+    target_compile_definitions(test_print_log_nor PRIVATE REAL_ROBOT)
+    add_test(NAME print_log_nor COMMAND test_print_log_nor)
+
     add_executable(test_flash_file
         tests/test_flash_file.c)
     target_link_libraries(test_flash_file

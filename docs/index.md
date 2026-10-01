@@ -20,6 +20,7 @@ Start with the [project README](../README.md), [getting started](getting_started
 [Heading PID](systems/heading_pid.md) ·
 [Motion and avoidance](systems/motion_and_avoidance.md) ·
 [PFFS](flash_files.md) · [Flash logs](systems/flash_logs.md) ·
+[Lightweight printing](systems/printing.md) ·
 [Neural networks](systems/neural_networks.md) ·
 [Optimization](systems/optimization.md) ·
 [Social learning/HIT](systems/social_learning.md) ·

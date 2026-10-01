@@ -91,6 +91,11 @@ service, add a bounded queue, decimate, or count drops. Do not silently discard
 the suffix or repeatedly reappend the prefix. For longer records, feed chunks
 using the accepted-length contract.
 
+For printf-style generation instead of manually constructing rows, the
+[lightweight printing guide](../systems/printing.md) and
+[print_log example](../../examples/print_log/README.md) provide a ready-made
+bounded adapter, `%Q...` decimal formatting, and optional terminal mirroring.
+
 ## 3. Understand persistence checkpoints
 
 Ordinary service commits only full pages. Partial cached bytes are fast but

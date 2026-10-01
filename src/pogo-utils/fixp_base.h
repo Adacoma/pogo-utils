@@ -134,6 +134,10 @@ typedef int16_t q6_10_t;
 /////////////////////////////////////////////////////////////////
 
 void init_fixp(void);
+/** Lightweight terminal printing: integer/string conversions and %Q formats.
+ * See print_format.h for supported syntax. Float/double and other unsupported
+ * conversions stop output at the prefix; this is no longer a libc fallback.
+ * Does not require init_fixp(). For error reporting use pogo_snprintf(). */
 void printf_fixp(const char *format, ...);
 
 

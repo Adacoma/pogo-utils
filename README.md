@@ -65,6 +65,7 @@ See the [controller tutorial](docs/tutorials/controllers.md).
 | Flocking and collective turns | Application-level controllers | [Motion](docs/systems/motion_and_avoidance.md#collective-controllers) | [vicsek](examples/vicsek/README.md), [acu](examples/acu/README.md), [vicsek_u_turns](examples/vicsek_u_turns/README.md) |
 | PFFS named flash files | [flash_file.h](src/pogo-utils/flash_file.h) | [PFFS guide](docs/flash_files.md), [tutorial](docs/tutorials/pffs.md) | [shell](examples/flash_file/README.md), [format](examples/flash_file_format/README.md) |
 | Buffered print/CSV/binary logs | [flash_log.h](src/pogo-utils/flash_log.h) | [Logs](docs/systems/flash_logs.md), [tutorial](docs/tutorials/flash_logs.md) | [flash_log](examples/flash_log/README.md) |
+| Lightweight fixed-point printing to flash | [print_format.h](src/pogo-utils/print_format.h), [print_log.h](src/pogo-utils/print_log.h) | [Printing](docs/systems/printing.md) | [print_log](examples/print_log/README.md) |
 | Fixed/dynamic MLP, PRANC, ESN, TRM | [MLP_int8.h](src/pogo-utils/MLP_int8.h), [MLP_int8_dyn_act.h](src/pogo-utils/MLP_int8_dyn_act.h) | [Neural networks](docs/systems/neural_networks.md), [ANN tutorial](docs/tutorials/ann.md) | [all neural examples](docs/examples.md#neural-networks) |
 | Local optimizers and facade | [optim.h](src/pogo-utils/optim.h), [sep_cmaes.h](src/pogo-utils/sep_cmaes.h) | [Optimization](docs/systems/optimization.md), [tutorial](docs/tutorials/optimization.md) | [optim](examples/optim/README.md), [algorithm examples](docs/examples.md#optimization-and-memory) |
 | Social learning and HIT | [social_learning.h](src/pogo-utils/social_learning.h), [hit.h](src/pogo-utils/hit.h) | [Social learning](docs/systems/social_learning.md) | [social_learning](examples/social_learning/README.md), [hit](examples/hit/README.md) |
@@ -95,7 +96,7 @@ finding list, not a claim that every issue remains unfixed.
 
 ## Tests and contributions
 
-[Getting started](docs/getting_started.md#host-tests) describes the four host
+[Getting started](docs/getting_started.md#host-tests) describes the six host
 tests and their limits. [Troubleshooting](docs/troubleshooting.md) covers
 build/version mismatches, calibration, motion, and flash failures.
 [Extending the library](docs/extending.md) explains adding modules, heading

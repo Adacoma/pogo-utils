@@ -29,6 +29,10 @@ guard silently skipping the build when its inferred checkout path is wrong.
 
 BENCH_RUNS=1000; local operation-specific tolerances differ. init_fixp prepares table-dependent paths.
 
+`printf_fixp` now uses the [lightweight integer/fixed-point formatter](../../docs/systems/printing.md).
+The benchmark's float comparison diagnostics use explicit libc printf instead;
+this benchmark is not a float/double-free firmware-size demonstration.
+
 Read numeric assertions/reference differences as well as timing CSV. plot.py contains hard-coded data, not automatic run parsing.
 
 ## Constraints and validation

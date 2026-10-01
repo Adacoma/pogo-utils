@@ -1,6 +1,6 @@
 # Examples and public API coverage
 
-This catalog covers all **34** example Makefiles and **42** installed public
+This catalog covers all **35** example Makefiles and **44** installed public
 headers in the current checkout. Each example README explains entry point,
 commands, settings, expected diagnostics, and limitations.
 Read [getting started](getting_started.md) before building; configurations are
@@ -43,6 +43,7 @@ not benchmark datasets.
 | [flash_file](../examples/flash_file/README.md) | [main.c](../examples/flash_file/main.c) | [flash_file.yaml](../conf/flash_file.yaml) | Interactive catalog/file management on UART or simulator stdin. |
 | [flash_file_format](../examples/flash_file_format/README.md) | [main.c](../examples/flash_file_format/main.c) | [flash_file.yaml](../conf/flash_file.yaml) | Deliberately recreate empty v3 catalogs without immediately creating a payload file. |
 | [flash_log](../examples/flash_log/README.md) | [main.c](../examples/flash_log/main.c) | [magnetometer.yaml](../conf/magnetometer.yaml) | Separate print/CSV streams with bounded RAM caches and regular page service. |
+| [print_log](../examples/print_log/README.md) | [main.c](../examples/print_log/main.c) | [flash_file.yaml](../conf/flash_file.yaml) | Lightweight integer/fixed-point printf-style flash records with optional terminal mirroring. |
 
 ## Neural networks
 
@@ -103,6 +104,8 @@ no independent runtime subsystem.
 | [wall_avoidance_magnetometer.h](../src/pogo-utils/wall_avoidance_magnetometer.h) | [Guide](systems/motion_and_avoidance.md) | [go_straight](../examples/go_straight/README.md) | Sensor-neutral heading-aware planner |
 | [flash_file.h](../src/pogo-utils/flash_file.h) | [Guide](flash_files.md) | [flash_file](../examples/flash_file/README.md) | PFFS catalog/read/write/defrag |
 | [flash_log.h](../src/pogo-utils/flash_log.h) | [Guide](systems/flash_logs.md) | [flash_log](../examples/flash_log/README.md) | Buffered append streams |
+| [print_format.h](../src/pogo-utils/print_format.h) | [Guide](systems/printing.md) | [print_log](../examples/print_log/README.md) | Bounded integer/fixed-point formatting |
+| [print_log.h](../src/pogo-utils/print_log.h) | [Guide](systems/printing.md) | [print_log](../examples/print_log/README.md) | Flash-first messages and optional terminal mirroring |
 | [MLP_Q1_15.h](../src/pogo-utils/MLP_Q1_15.h) | [Guide](systems/neural_networks.md) | [MLP_Q1_15](../examples/MLP_Q1_15/README.md) | Fixed int16 MLP |
 | [MLP_int8.h](../src/pogo-utils/MLP_int8.h) | [Guide](systems/neural_networks.md) | [MLP_int8](../examples/MLP_int8/README.md) | Fixed int8 MLP |
 | [MLP_int8_dyn.h](../src/pogo-utils/MLP_int8_dyn.h) | [Guide](systems/neural_networks.md) | [MLP_int8_dyn](../examples/MLP_int8_dyn/README.md) | Flat-parameter dynamic MLP |

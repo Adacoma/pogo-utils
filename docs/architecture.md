@@ -16,7 +16,7 @@ transport, and lifecycle with the application/platform.
 | [docs](./) | System guides, tutorials, coverage, engineering handoff and historical audit. |
 | `libs/`, dependency links | External repositories/toolchains, not library-owned code. |
 
-The installed public interface contains 42 headers; see the exhaustive
+The installed public interface contains 44 headers; see the exhaustive
 [coverage map](examples.md#public-header-coverage). Do not include
 `*_internal.h` from applications.
 

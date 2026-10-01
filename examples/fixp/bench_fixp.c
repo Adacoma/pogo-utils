@@ -1670,7 +1670,9 @@ void test_fixp_functions(void) {
         printf_fixp0("Q1.15: %Q1.15\n", b);
         printf_fixp0("Q16.16: %Q16.16\n", c);
         printf_fixp0("Q6.10: %Q6.10\n", d);
-        printf_fixp0("float values: %f %f %f %f\n", q8_24_to_float(a), q1_15_to_float(b), q16_16_to_float(c), q6_10_to_float(d));
+        /* Explicit libc diagnostics: the lightweight fixed formatter does
+         * not accept float arguments or retain double-based formatting. */
+        printf0("float values: %f %f %f %f\n", q8_24_to_float(a), q1_15_to_float(b), q16_16_to_float(c), q6_10_to_float(d));
     }
     {
         q8_24_t a = q8_24_from_float(-42.5f);
@@ -1681,7 +1683,8 @@ void test_fixp_functions(void) {
         printf_fixp0("Q1.15: %Q1.15\n", b);
         printf_fixp0("Q16.16: %Q16.16\n", c);
         printf_fixp0("Q6.10: %Q6.10\n", d);
-        printf_fixp0("float values: %f %f %f %f\n", q8_24_to_float(a), q1_15_to_float(b), q16_16_to_float(c), q6_10_to_float(d));
+        /* Keep float comparison output outside the fixed-point formatter. */
+        printf0("float values: %f %f %f %f\n", q8_24_to_float(a), q1_15_to_float(b), q16_16_to_float(c), q6_10_to_float(d));
     }
 
     {

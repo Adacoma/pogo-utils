@@ -125,8 +125,9 @@ cmake --build build-debug --parallel
 ctest --test-dir build-debug --output-on-failure
 ```
 
-The four targets exercise PFFS, strict NOR PFFS behavior, NOR append logs, and
-magnetometer flash persistence. They use host mocks, not real flash or robot
+The six targets exercise PFFS, strict NOR PFFS behavior, NOR append logs,
+magnetometer flash persistence, bounded integer/fixed-point formatting, and
+flash-first printing/backpressure. They use host mocks, not real flash or robot
 motion. Some tests perform setup calls inside assertions: Release
 `-DNDEBUG` removes those calls, so it is not a valid test configuration.
 These tests do not establish hardware latency, wear endurance, controller

@@ -54,9 +54,13 @@ referenced helpers, printf formatting, and table usage. Measure the final
 firmware/map, not header length. A 64-bit intermediate can cost multiple
 instructions on a 32-bit processor without wide arithmetic hardware.
 
-`printf_fixp` is platform-oriented formatting, not a general serialization
-schema. For compact CSV consider the integer/scaled helpers in
-[flash logs](flash_logs.md).
+`printf_fixp` now uses an independent lightweight formatter with integer/string
+and `%Q...` conversions, no libc printf fallback, and no table initialization.
+Float/general printf formats are no longer supported by that wrapper. The
+[printing guide](printing.md) covers selectable precision, safe rounding,
+bounded buffer output and flash-first text/CSV with optional terminal mirroring.
+For manually constructed CSV, the integer/scaled helpers in
+[flash logs](flash_logs.md) remain available.
 
 ## Error budgeting and testing
 
