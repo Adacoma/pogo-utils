@@ -13,15 +13,18 @@ repository root:
 make -C examples/flash_log sim
 ```
 
-By default an existing log is resumed, so later launches retain committed
-pages. To read them without modifying flash, set `FLASH_LOG_DUMP_ONLY` to `1`
+Each newly created log reserves 256 flash pages (64 KiB, with 62,464 usable
+payload bytes after per-page headers). An existing log is resumed at its
+original fixed size, so later launches retain committed pages. To read them
+without modifying flash, set `FLASH_LOG_DUMP_ONLY` to `1`
 in `main.c`, rebuild and flash/run that binary. Its output is chunked into at
 most 32 text bytes per step. This diagnostic mode is intended for the example's
 text and CSV data; applications storing arbitrary binary values should use the
 library's length-returning page reader rather than `%s` output.
 
 To explicitly empty both files on boot, set `FLASH_LOG_CLEAR_ON_BOOT` to `1`.
-This erases their individual data sectors. Creating a missing file on absent or
+This erases all data sectors owned by each log (16 sectors for a 64 KiB log).
+Creating a missing file on absent or
 corrupt catalog reformats PFFS metadata, losing access to unrelated
 files including magnetometer calibration; the example prints
 `FLASH_LOG_FORMATTED` when that happened.

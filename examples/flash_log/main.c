@@ -43,7 +43,7 @@ typedef struct {
     uint8_t warned[LOG_COUNT];
 #if FLASH_LOG_DUMP_ONLY
     uint8_t dump_file;
-    uint8_t dump_page;
+    uint16_t dump_page; /* Must represent all 256 pages and the final END. */
     uint8_t dump_offset;
     uint8_t dump_used;
 #else
@@ -140,10 +140,26 @@ void user_init(void) {
         pogo_flash_log_status_t status = pogo_flash_log_open(
             &mydata->log[i], log_ids[i]);
 #else
-        pogo_flash_log_status_t status = pogo_flash_log_initialize(
-            &mydata->log[i], log_ids[i], log_names[i],
-            POGO_FLASH_FILE_MAX_PAGES, FLASH_LOG_CLEAR_ON_BOOT != 0,
-            &formatted);
+        /* New logs reserve 256 physical pages (64 KiB). Reopen first so an
+         * older, smaller fixed-size log keeps its data and original size. */
+        pogo_flash_log_status_t status = pogo_flash_log_open(
+            &mydata->log[i], log_ids[i]);
+        if (status == POGO_FLASH_LOG_OK) {
+            /* Preserve initialize()'s name check: an unrelated log at this
+             * numeric ID must not silently become this example's stream. */
+            pogo_flash_file_info_t info;
+            if (pogo_flash_file_find(log_ids[i], &info) != POGO_FLASH_FILE_OK ||
+                strcmp(info.name, log_names[i]) != 0) {
+                status = POGO_FLASH_LOG_WRONG_FORMAT;
+            } else if (FLASH_LOG_CLEAR_ON_BOOT != 0) {
+                status = pogo_flash_log_clear(&mydata->log[i]);
+            }
+        } else {
+            status = pogo_flash_log_initialize(
+                &mydata->log[i], log_ids[i], log_names[i],
+                POGO_FLASH_LOG_DEFAULT_PAGES, FLASH_LOG_CLEAR_ON_BOOT != 0,
+                &formatted);
+        }
 #endif
         if (formatted) {
             printf("# FLASH_LOG_FORMATTED,id=%u,all_user_files_erased=1\n",

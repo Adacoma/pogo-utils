@@ -29,7 +29,8 @@ extern "C" {
 
 enum {
     POGO_FLASH_LOG_FORMAT_VERSION = 0x8001, /**< Reserved PFFS payload type. */
-    POGO_FLASH_LOG_MAX_PAGES = 8, /**< Log page header keeps the small bound. */
+    POGO_FLASH_LOG_DEFAULT_PAGES = 256, /**< 64 KiB for newly created logs. */
+    POGO_FLASH_LOG_MAX_PAGES = 256, /**< 64 KiB; 8-bit header indexes 0..255. */
     POGO_FLASH_LOG_PAGE_VERSION = 1,
     POGO_FLASH_LOG_HEADER_SIZE = 12,
     POGO_FLASH_LOG_PAYLOAD_SIZE =
@@ -57,28 +58,30 @@ typedef struct {
     uint8_t page[POGO_FLASH_FILE_PAGE_SIZE];
     uint8_t file_id;
     uint16_t first_page;
-    uint8_t page_count;
-    uint8_t next_page;
+    uint16_t page_count;
+    uint16_t next_page;
     uint8_t used;
     uint8_t ready;
     uint8_t failed;
 } pogo_flash_log_t;
 
-/** Open an existing clean log, scanning at most eight pages. Never writes.
+/** Open an existing clean log, scanning at most 256 pages. Never writes.
  * Reopening an active handle discards its uncommitted RAM cache bytes. */
 pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
                                            uint8_t file_id);
 
 /** Create if missing, or optionally clear an existing log, then open it.
+ * Pass POGO_FLASH_LOG_DEFAULT_PAGES for a new 64 KiB allocation; this API
+ * keeps page_count explicit so smaller fixed-size logs remain possible.
  * If the PFFS catalog is absent/corrupt, creation automatically formats the
  * all PFFS catalogs, losing access to unrelated files. `formatted` reports
  * that event so applications can warn; NULL suppresses the report. Existing
  * IDs with a different size, name, or payload type are never overwritten. */
 pogo_flash_log_status_t pogo_flash_log_initialize(
     pogo_flash_log_t *log, uint8_t file_id, const char *name,
-    uint8_t page_count, bool clear_existing, bool *formatted);
+    uint16_t page_count, bool clear_existing, bool *formatted);
 
-/** Erase only this existing log's dedicated sector and reset its cache. */
+/** Erase every sector owned by this log and reset its cache. */
 pogo_flash_log_status_t pogo_flash_log_clear(pogo_flash_log_t *log);
 
 /** Copy up to the available cache space and report exactly how many bytes were
@@ -99,7 +102,7 @@ pogo_flash_log_status_t pogo_flash_log_force_flush(pogo_flash_log_t *log);
  * if this handle will append later. Read-only callers may reuse log->page to
  * save RAM, but must reopen the handle before switching back to writes. */
 pogo_flash_log_status_t pogo_flash_log_read_page(
-    const pogo_flash_log_t *log, uint8_t page_index,
+    const pogo_flash_log_t *log, uint16_t page_index,
     uint8_t output[POGO_FLASH_FILE_PAGE_SIZE], uint8_t *used);
 
 /** Allocation-free decimal helpers for constructing CSV in a small local

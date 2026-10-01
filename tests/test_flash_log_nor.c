@@ -11,6 +11,7 @@ static uint8_t flash[POGO_FLASH_FILE_USER_PAGES][POGO_FLASH_FILE_PAGE_SIZE];
 static unsigned sector_erases;
 static unsigned page_programs;
 static int torn_page = -1;
+static int failed_erase_sector = -1;
 
 /** Keep a deliberately malformed entry's outer CRC valid, so structural
  * validation (rather than checksum failure) must detect it. */
@@ -35,6 +36,7 @@ int spiBeginErase4(uint32_t address) {
     assert(address >= POGOBOT_USER_FLASH_START_OFFSET);
     uint32_t offset = address - POGOBOT_USER_FLASH_START_OFFSET;
     assert(offset < sizeof(flash) && offset % 4096u == 0u);
+    if ((int)(offset / 4096u) == failed_erase_sector) return -1;
     memset(&flash[offset / POGO_FLASH_FILE_PAGE_SIZE], 0xff, 4096u);
     ++sector_erases;
     return 0;
@@ -205,6 +207,47 @@ int main(void) {
     assert(pogo_flash_log_read_page(&reopened, 0u, page, &used) ==
            POGO_FLASH_LOG_OK && used == 10u);
     assert(memcmp(page + POGO_FLASH_LOG_HEADER_SIZE, "moved log\n", 10u) == 0);
+
+    /* A 64 KiB log spans 16 erase sectors and uses page header indices
+     * 0..255. Reopening a full log must represent next_page == 256 without
+     * wrapping, and clear must erase every sector rather than only the first. */
+    erase_write_section_flash();
+    assert(pogo_flash_log_initialize(&reopened, 2u, "large",
+           POGO_FLASH_LOG_MAX_PAGES, false, &formatted) == POGO_FLASH_LOG_OK);
+    for (uint16_t i = 0u; i < POGO_FLASH_LOG_MAX_PAGES; ++i) {
+        memset(full, (uint8_t)i, sizeof(full));
+        append_all(&reopened, full, sizeof(full));
+        assert(pogo_flash_log_service(&reopened) == POGO_FLASH_LOG_OK);
+    }
+    assert(reopened.next_page == POGO_FLASH_LOG_MAX_PAGES);
+    assert(pogo_flash_log_open(&reopened, 2u) == POGO_FLASH_LOG_OK);
+    assert(reopened.next_page == POGO_FLASH_LOG_MAX_PAGES);
+    assert(pogo_flash_log_read_page(&reopened, 255u, page, &used) ==
+           POGO_FLASH_LOG_OK && used == sizeof(full));
+    assert(page[5] == 255u && page[POGO_FLASH_LOG_HEADER_SIZE] == 255u);
+    assert(pogo_flash_log_read_page(&reopened, 256u, page, &used) ==
+           POGO_FLASH_LOG_INVALID_ARGUMENT);
+    accepted = 99u;
+    assert(pogo_flash_log_append(&reopened, "x", 1u, &accepted) ==
+           POGO_FLASH_LOG_FULL && accepted == 0u);
+    /* A failed second-sector erase must stop further writes through this
+     * handle; a later explicit clear can still recover it. */
+    failed_erase_sector = (int)(reopened.first_page /
+        POGO_FLASH_FILE_ERASE_SECTOR_PAGES) + 1;
+    assert(pogo_flash_log_clear(&reopened) == POGO_FLASH_LOG_VERIFY_FAILED);
+    assert(reopened.failed != 0u);
+    accepted = 99u;
+    assert(pogo_flash_log_append(&reopened, "x", 1u, &accepted) ==
+           POGO_FLASH_LOG_VERIFY_FAILED && accepted == 0u);
+    failed_erase_sector = -1;
+    erases_before = sector_erases;
+    assert(pogo_flash_log_clear(&reopened) == POGO_FLASH_LOG_OK);
+    assert(sector_erases == erases_before + 16u);
+    assert(pogo_flash_log_read_page(&reopened, 255u, page, &used) ==
+           POGO_FLASH_LOG_END);
+    assert(pogo_flash_log_initialize(&reopened, 3u, "too_large",
+           POGO_FLASH_LOG_MAX_PAGES + 1u, false, NULL) ==
+           POGO_FLASH_LOG_INVALID_ARGUMENT);
     puts("NOR flash log tests passed");
     return 0;
 }

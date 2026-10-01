@@ -103,7 +103,9 @@ by hardware or experimental validation.
   Regular service writes only full pages without erasure; explicit force-flush
   consumes a partial page. A full or damaged log returns an error without
   stopping the application. A dedicated example uses IDs 2 and 3 for text and
-  CSV and can be rebuilt in read-only dump mode.
+  CSV and can be rebuilt in read-only dump mode. Newly created example logs
+  reserve 64 KiB each; older fixed-size logs reopen without resizing. A
+  64 KiB create/clear synchronously erases and verifies 16 data sectors.
 - `examples/flash_file` is now an interactive shell for hardware UART and
   Pogosim stdin. It lists and inspects files, creates blank bounded extents,
   edits one-page ordinary files, renames labels, deletes entries, and formats
@@ -178,7 +180,9 @@ by hardware or experimental validation.
 - A host NOR-flash test now covers two append logs, independent clearing,
   full-page and partial writes, persistence/reopen, full-file status, damaged
   page detection, and destructive recovery of a corrupt catalog. The library
-  and simulator example compile; physical flash-write timing remains unmeasured.
+  and simulator example compile. The 64 KiB extension additionally covers page
+  255, full-log reopen, all-sector clear, and failed-clear recovery; physical
+  flash-write and erase timing remain unmeasured.
 - Flash-file and magnetometer-calibration production sources now document their
   serialized byte layouts, ownership and RAM assumptions, state transitions,
   numerical conventions, mutation ordering, and failure semantics in place.

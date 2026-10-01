@@ -91,7 +91,7 @@ uint32_t pogo_flash_file_internal_get_u32(const uint8_t *p);
 /* Infrequent log setup/clear operations live with the existing writer so the
  * hot append path does not carry catalog allocation or sector-erase logic. */
 pogo_flash_file_status_t pogo_flash_file_internal_create_log(
-    uint8_t file_id, const char *name, uint8_t page_count, bool *formatted);
+    uint8_t file_id, const char *name, uint16_t page_count, bool *formatted);
 pogo_flash_file_status_t pogo_flash_file_internal_clear_log(uint8_t file_id);
 
 #endif /* POGO_UTILS_FLASH_FILE_INTERNAL_H */

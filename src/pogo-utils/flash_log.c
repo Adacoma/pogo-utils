@@ -21,6 +21,8 @@ static const uint8_t log_magic[4] = {'P', 'L', 'O', 'G'};
 _Static_assert(POGO_FLASH_LOG_PAYLOAD_SIZE > 0u &&
     POGO_FLASH_LOG_PAYLOAD_SIZE <= UINT8_MAX,
     "the one-byte page length must encode every possible payload");
+_Static_assert(POGO_FLASH_LOG_MAX_PAGES == UINT8_MAX + 1u,
+    "the one-byte page index must cover every log page");
 
 /** Bitwise CRC-32 avoids a 1 KiB table in the firmware image. */
 static uint32_t crc_update(uint32_t crc, const uint8_t *bytes, size_t length) {
@@ -100,11 +102,12 @@ static bool erased_page(const uint8_t page[256]) {
     return true;
 }
 
-static bool valid_page(const uint8_t page[256], uint8_t page_index,
+static bool valid_page(const uint8_t page[256], uint16_t page_index,
                        uint8_t *used) {
     uint8_t length = page[6];
     if (memcmp(page, log_magic, sizeof(log_magic)) != 0 ||
-        page[4] != POGO_FLASH_LOG_PAGE_VERSION || page[5] != page_index ||
+        page[4] != POGO_FLASH_LOG_PAGE_VERSION ||
+        page[5] != (uint8_t)page_index ||
         length == 0u || length > POGO_FLASH_LOG_PAYLOAD_SIZE ||
         page[7] != 0u) return false;
     uint32_t crc = crc_update(UINT32_MAX, page, 8u);
@@ -169,7 +172,7 @@ pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
      * only by erased pages. A torn page fails closed; explicit clear is needed
      * before writing to that sector again. */
     bool seen_erased = false;
-    for (uint8_t i = 0u; i < info.page_count; ++i) {
+    for (uint16_t i = 0u; i < info.page_count; ++i) {
         read_page_flash((uint16_t)(info.first_page + i), (char *)log->page);
         if (erased_page(log->page)) {
             seen_erased = true;
@@ -181,7 +184,7 @@ pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
             log->failed = 1u;
             return POGO_FLASH_LOG_CORRUPT;
         } else {
-            log->next_page = (uint8_t)(i + 1u);
+            log->next_page = (uint16_t)(i + 1u);
         }
     }
     memset(log->page, 0xff, sizeof(log->page));
@@ -191,7 +194,7 @@ pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
 
 pogo_flash_log_status_t pogo_flash_log_initialize(
     pogo_flash_log_t *log, uint8_t file_id, const char *name,
-    uint8_t page_count, bool clear_existing, bool *formatted) {
+    uint16_t page_count, bool clear_existing, bool *formatted) {
     if (formatted != NULL) *formatted = false;
     if (log == NULL || file_id == 0u ||
         file_id > POGO_FLASH_FILE_MAX_FILES || page_count == 0u ||
@@ -233,7 +236,12 @@ pogo_flash_log_status_t pogo_flash_log_clear(pogo_flash_log_t *log) {
     if (log == NULL || log->ready == 0u) return POGO_FLASH_LOG_INVALID_ARGUMENT;
     uint8_t id = log->file_id;
     pogo_flash_file_status_t result = pogo_flash_file_internal_clear_log(id);
-    if (result != POGO_FLASH_FILE_OK) return file_error(result);
+    if (result != POGO_FLASH_FILE_OK) {
+        /* An interrupted multi-sector clear leaves an unknown mix of old and
+         * erased pages; this handle must not append until reopened/repaired. */
+        log->failed = 1u;
+        return file_error(result);
+    }
     return pogo_flash_log_open(log, id);
 }
 
@@ -261,7 +269,9 @@ static pogo_flash_log_status_t commit_page(pogo_flash_log_t *log) {
     if (log->next_page >= log->page_count) return POGO_FLASH_LOG_FULL;
     memcpy(log->page, log_magic, sizeof(log_magic));
     log->page[4] = POGO_FLASH_LOG_PAGE_VERSION;
-    log->page[5] = log->next_page;
+    /* next_page may become 256 only after the final page is committed; the
+     * capacity check above keeps every serialized index within one byte. */
+    log->page[5] = (uint8_t)log->next_page;
     log->page[6] = log->used;
     log->page[7] = 0u;
     uint32_t crc = crc_update(UINT32_MAX, log->page, 8u);
@@ -295,7 +305,7 @@ pogo_flash_log_status_t pogo_flash_log_force_flush(pogo_flash_log_t *log) {
 }
 
 pogo_flash_log_status_t pogo_flash_log_read_page(
-    const pogo_flash_log_t *log, uint8_t page_index,
+    const pogo_flash_log_t *log, uint16_t page_index,
     uint8_t output[POGO_FLASH_FILE_PAGE_SIZE], uint8_t *used) {
     if (log == NULL || log->ready == 0u || output == NULL || used == NULL ||
         page_index >= log->page_count) return POGO_FLASH_LOG_INVALID_ARGUMENT;

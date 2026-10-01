@@ -204,7 +204,8 @@ static void list_file(uint8_t id, unsigned *found, unsigned *empty,
         unsigned bytes = 0u;
         unsigned pages = 0u;
         if (result == POGO_FLASH_LOG_OK) {
-            for (uint8_t i = 0u; i < info.page_count; ++i) {
+            /* A maximum-size log has 256 pages; an 8-bit loop would wrap. */
+            for (uint16_t i = 0u; i < info.page_count; ++i) {
                 uint8_t used = 0u;
                 result = pogo_flash_log_read_page(&mydata->log, i,
                                                   mydata->log.page,
@@ -469,7 +470,7 @@ static void shell_cat(const pogo_flash_file_info_t *info) {
             printf("error: log open status %u\n", (unsigned)status);
             return;
         }
-        for (uint8_t page = 0u; page < info->page_count; ++page) {
+        for (uint16_t page = 0u; page < info->page_count; ++page) {
             uint8_t used = 0u;
             status = pogo_flash_log_read_page(&mydata->log, page,
                                               mydata->log.page, &used);

@@ -76,10 +76,14 @@ first; this is not a transactional repair or a secure erase.
 ## Append-only logs
 
 `flash_log` uses reserved payload format `0x8001` and any free ID. Its
-existing compact page header has a one-byte page index, so logs remain limited
-to eight pages (at most 1,952 payload bytes) even though ordinary files can
-be much larger. Logs use a separate CRC on each committed page; their catalog
-whole-file CRC field is unused. One 256-byte RAM cache supports append,
+compact page header has a one-byte page index, limiting logs to 256 pages
+(64 KiB allocated, at most 62,464 payload bytes). Callers choose a fixed size;
+the two-stream example uses 256 pages for each newly created log. Logs use a
+separate CRC on each committed page; their catalog whole-file CRC field is
+unused. One 256-byte RAM cache supports append,
 periodic full-page `service`, optional partial `force_flush`, and readback.
-Clearing erases that log's sector; uncommitted cache bytes are lost on reset.
+Clearing erases every sector owned by that log; uncommitted cache bytes are lost
+on reset. Creating or clearing a 64 KiB log erases and verifies 16 data sectors
+synchronously (creation also updates a catalog sector), so physical timing
+must be checked before doing so in a deadline-limited control step.
 See the [two-stream example](../examples/flash_log/README.md).

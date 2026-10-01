@@ -281,7 +281,7 @@ static pogo_flash_file_status_t write_data_pages(
     uint32_t crc = UINT32_MAX;                 /* ISO-HDLC initial state. */
     if (blank_file) {
         /* The verified erase above established every byte as 0xff. Compute
-         * the ordinary-file CRC without programming or buffering eight pages. */
+         * the ordinary-file CRC without programming or buffering the file. */
         memset(actual, 0xff, sizeof(actual));
         for (uint16_t page = 0u; page < page_count; ++page) {
             crc = crc32_update(crc, actual, sizeof(actual));
@@ -437,7 +437,7 @@ pogo_flash_file_status_t pogo_flash_file_create_blank(
 }
 
 pogo_flash_file_status_t pogo_flash_file_internal_create_log(
-    uint8_t file_id, const char *name, uint8_t page_count, bool *formatted) {
+    uint8_t file_id, const char *name, uint16_t page_count, bool *formatted) {
     return create_file(file_id, name, page_count,
                        POGO_FLASH_LOG_FORMAT_VERSION, NULL, true, false,
                        formatted);
@@ -462,10 +462,18 @@ pogo_flash_file_status_t pogo_flash_file_internal_clear_log(uint8_t file_id) {
     if (info.format_version != POGO_FLASH_LOG_FORMAT_VERSION) {
         return POGO_FLASH_FILE_UNSUPPORTED_FORMAT;
     }
-    /* Logs are limited to eight pages, so one dedicated sector is sufficient.
-     * Its catalog extent/generation stay fixed; append needs no rewrite. */
-    return erase_sector_verified(info.first_page) ? POGO_FLASH_FILE_OK :
-        POGO_FLASH_FILE_VERIFY_FAILED;
+    if (info.page_count > POGO_FLASH_LOG_MAX_PAGES) {
+        return POGO_FLASH_FILE_INVALID_SIZE;
+    }
+    /* A 64 KiB log can span 16 sectors. Erase all owned sectors before open()
+     * scans the extent, leaving its catalog extent/generation unchanged. */
+    for (uint16_t offset = 0u; offset < info.page_count;
+         offset += POGO_FLASH_FILE_ERASE_SECTOR_PAGES) {
+        if (!erase_sector_verified((uint16_t)(info.first_page + offset))) {
+            return POGO_FLASH_FILE_VERIFY_FAILED;
+        }
+    }
+    return POGO_FLASH_FILE_OK;
 }
 
 pogo_flash_file_status_t pogo_flash_file_replace(
