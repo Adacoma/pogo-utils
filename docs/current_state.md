@@ -1,282 +1,103 @@
 # Current project state
 
-Last updated: 2026-09-29.
-
-This file is a concise engineering and scientific handoff. Statements under
-"Understood" describe the current implementation, not guarantees established
-by hardware or experimental validation.
+Last updated: 2026-10-01. This is a concise engineering/scientific handoff,
+not a hardware-certification report. [Documentation map](index.md);
+[historical audit](code_audit.md).
 
 ## Inspected
 
-- Repository layout, tracked-file inventory, build scripts, installation rules,
-  version metadata, and recent project history.
-- Public headers and representative implementations for sensing, heading
-  control, motor calibration, wall avoidance, kinematics, SSR, optimization,
-  social learning, fixed-point arithmetic, and neural runtimes.
-- A repository-scale static code audit covering correctness, memory safety,
-  numerical behavior, embedded resources, protocols, scientific assumptions,
-  examples, and build/packaging infrastructure. Findings are recorded in
-  `docs/code_audit.md`.
-- All example categories and the available Pogosim configuration files, with
-  closer inspection of the current kinematics, Vicsek, SSR, and distributed
-  MNIST integrations.
-- Existing build artifacts and repository cleanliness. Fresh temporary
-  library/example builds, focused host tests, and headless and GUI-paced
-  calibration simulator runs have been performed. Physical-robot evidence so
-  far comes from user-reported serial output for robot 23342.
-- Pogosim's flash-state lifecycle and the updated local SDK API: 5,888
-  256-byte user pages at physical offset `0x90000`, 16-bit page indices,
-  whole-region erase, and physical 4 KiB SPI sector erase.
-- The PFFS v3 layout: 16 catalog pages in separate erase sectors, 80 stable
-  IDs, and contiguous multi-sector extents across the 1,408 KiB data region.
-- The append-only log extension: reserved PFFS payload format, page-level CRC,
-  one-page RAM caches, and synchronous page-write/readback behavior.
-- The flash-file example's serial command path, simulator stdin routing, and
-  new blank-create, catalog-check, and rename writer operations.
-- The linked `libs/ACU-selfadapt` ACU law, fixed-genotype configuration, and
-  separation between motility parameters and HIT/FT optimization machinery.
+- Library architecture, all 42 installed public headers, all 34 examples,
+  build/install rules, relevant source implementations and scenario configs.
+- Current PFFS v3, append logs, magnetometer collection/runtime/storage split,
+  motion ownership and recovery, ANN layouts, optimizer contracts, SSR and numerics.
+- Earlier work included broader static audit and dependency/API inspection.
+  External repositories were not modified for this documentation milestone.
 
 ## Understood
 
-- The project is an embedded swarm-robotics research toolbox for both Pogobot
-  firmware and Pogosim, rather than a standalone application or middleware.
-- CMake package metadata and the public version header identify the current
-  release as `0.1.0`.
-- Modules generally use caller-owned state and explicit `init`, `update`, or
-  `step` calls. Examples provide the application lifecycle, communication
-  callbacks, experiment policy, and per-robot state.
-- The current motion path separates heading acquisition, PID control, wall
-  planning, kinematic arbitration, and calibrated motor actuation. Legacy
-  wall-avoidance paths with direct motor ownership remain in the tree.
-- SSR and Vicsek cover two distinct collective-control directions: distributed
-  spectral estimation/classification and local heading alignment.
-- Optimization is exposed through standalone strict ask-tell implementations
-  and a common facade. Caller-provided workspaces and `tiny_alloc` reduce
-  reliance on a platform heap.
-- Fixed-point and int8 components target constrained processors, but the whole
-  repository is not floating-point-free: calibration, training, several
-  optimizers, SSR, and some model setup paths use floating point.
-- Examples are currently the main integration documentation and also contain
-  most of the available assertions and benchmarks.
-- The dynamic int8 MLP workspace alternation and Q16.16 saturating addition,
-  subtraction, and absolute value have been corrected locally. The changes
-  have received only source-level verification because compilation and
-  execution were excluded.
-- `tiny_alloc` now checks size/address arithmetic, class ordering and slot-size
-  representation, validates exact slot boundaries and allocation state, and
-  prevents API-level double-free cycles. Invalid inputs fail closed without a
-  public error-reporting channel.
-- SEP-CMA-ES now has explicit population limits, checked workspace arithmetic,
-  numeric parameter validation, and strict one-ask/one-tell sequencing. Its
-  generation update reuses caller workspace rather than consuming a
-  dimension-dependent stack allocation.
-- In the Vicsek application, wall-avoidance faults reached after successful
-  startup now trigger a local state reset instead of permanently latching
-  the coordinator in STOP. Calibration and its heading reference are retained;
-  the coordinator, avoidance state, and heading median window are reset.
-- `go_straight` now resets post-start motion faults, pauses for at least 500 ms
-  while refilling its heading window, and resumes with a fresh heading without
-  recalibration. Permanent sensor or motor failure can still prevent safe
-  motion. Physical validation is pending.
-- Magnetometer collection/fitting is now separately linked. Its dedicated
-  example stores a versioned, checksummed model and canonical steering sign in
-  flash; magnetometer missions only load the model, adapt sign chirality, and
-  warm their live sample window.
-- Magnetometer calibration now uses a named flash file at the first free ID,
-  retaining that ID on replacement and preserving unrelated files after
-  initial formatting. No numeric ID is reserved. Raw-page loading and the
-  old destructive erase/store API have been removed; old flash images require
-  recalibration into the catalog format.
-- The new static ACU example uses five immutable motility parameters with the
-  current flash-heading, PID, kinematics, wall-recovery, and bounded wire
-  protocol stack. It does not link optimizer, fitness, genotype, HIT/FT, or
-  calibration-fitting code.
-- `vicsek_u_turns` keeps Vicsek's alignment and adds ACU-style turn events on
-  wall-avoidance entry, using a separate controller packet tag. Its simulator
-  target compiles; physical behavior and firmware size remain unverified.
-- Its pairwise antipodal-heading fallback now asks only the higher-ID robot to
-  reverse briefly, then pivot toward the lower-ID robot's advertised target.
-  Kinematics owns reverse actuation and preserves wall priority. This uses
-  fresh packets, not motion sensing; a three-second physical-escape bound still
-  requires empirical validation.
-- `flash_log` now buffers independent byte streams in separate PFFS files.
-  Regular service writes only full pages without erasure; explicit force-flush
-  consumes a partial page. A full or damaged log returns an error without
-  stopping the application. A dedicated example uses IDs 2 and 3 for text and
-  CSV and can be rebuilt in read-only dump mode. Newly created example logs
-  reserve 64 KiB each; older fixed-size logs reopen without resizing. A
-  64 KiB create/clear synchronously erases and verifies 16 data sectors.
-- `examples/flash_file` is now an interactive shell for hardware UART and
-  Pogosim stdin. It lists and inspects files, creates blank bounded extents,
-  edits one-page ordinary files, renames labels, deletes entries, and formats
-  only with an explicit `YES` token. Its read-only `df` reports the full
-  1,408 KiB data-sector capacity and 80 file IDs. In Pogosim, `use` selects a robot ID.
-- PFFS v3 uses full-region 16-bit page addressing without v1/v2 compatibility.
-  Direct ID reads remain two physical reads; large ordinary files can be
-  streamed one page at a time using a caller-owned writer. Format clears
-  metadata only, then data sectors are erased on reuse. Existing PFFS images
-  require a new calibration; physical timing and firmware footprint are open.
-- Magnetometer missions find their named record with a bounded catalog scan
-  at startup, then read one page. The scan costs up to 16 catalog reads but
-  frees every ID for ordinary files or logs.
-- The flash-file shell now offers explicit, incremental `defrag YES` to compact
-  contiguous extents after deletions. Host NOR tests cover overlapping moves
-  and log preservation. A move is readback-verified but not power-fail atomic;
-  physical timing and recovery behavior remain unmeasured.
-- The flash-file shell now keeps four recent nonblank commands in a fixed RAM
-  ring. UART and interactive Pogosim terminals accept Up/Down history keys;
-  simulator stdin remains unchanged for piped commands. Physical terminal
-  behavior has not yet been validated.
-
-## What remains unknown
-
-- Behavior, timing margins, RAM/stack use, and numerical accuracy on each
-  supported physical Pogobot revision.
-- Whether a clean checkout builds against the current `pogobot-sdk` and
-  `pogosim` revisions on all intended toolchains.
-- Empirical robustness of magnetometer calibration, wall recovery, collective
-  convergence, and learned controllers across arenas and robot populations.
-- Which legacy APIs are intentionally supported and which are retained only for
-  old experiments.
-- Intended release policy, compatibility guarantees, and distribution terms;
-  no repository license is currently visible.
+- Embedded research toolbox for Pogobot/Pogosim, version 0.1.0. Applications own
+  lifecycle, acquisition, experiment policy and communication; library objects
+  are generally caller-owned/per robot.
+- Timestamp/reference-aware motion separates sensor acquisition, circular PID,
+  heading-aware wall planning and one kinematic motor owner. Legacy direct
+  avoidance remains separate.
+- Calibration firmware collects/fits/stores; missions load the named record
+  and warm a live window. No calibration ID is reserved or old format supported.
+- PFFS uses 5,888 physical pages, 80 IDs and contiguous sector-owned extents:
+  64 KiB catalog sectors and 1,408 KiB data. Replacement cannot resize.
+  Writes/defrag are not transactional; creation can autoformat damaged catalogs.
+- Logs use one-page caches and per-page CRC. New defaults are 64 KiB per log;
+  existing sizes remain fixed. Uncommitted RAM bytes disappear on reset.
+- Quantized inference does not make setup/training/calibration/optimization/SSR
+  floating-point-free. Standalone optimizers and the allocating facade differ
+  in memory and evaluation contracts.
+- Prior fixes cover dynamic-MLP buffer alternation, Q16.16 add/sub/abs saturation,
+  allocator overflow/boundary/order/double-free checks and bounded SEP-CMA-ES.
+  These do not establish correctness of every remaining numerical path.
+- Rich motion examples reset/reacquire after post-start faults; startup failures
+  may stop permanently. Vicsek-U-turns adds reverse/pivot yielding, not measured
+  collision detection or guaranteed jam escape. ACU remains static, not optimized.
 
 ## Currently working analyses
 
-- The repository-level structure, dependency map, and broad static code audit
-  are complete.
-- The first audit remediation milestone corrected the dynamic MLP buffer alias
-  and Q16.16 add/subtract/absolute-value saturation logic.
-- The second milestone hardened `tiny_alloc`; its exact boundary checks trade
-  constant-time pointer operations for O(number of slots) worst-case walks.
-- The SEP-CMA-ES milestone rejects invalid or oversized populations, exposes
-  initialization status without changing the legacy initializer signature,
-  and makes partial unified-factory allocation failure recoverable.
-- A physical-robot report of permanent violet stops is consistent with the
-  runtime avoidance-fault latch. The Vicsek application now records the
-  cause/count and shows amber while reacquiring a heading; hardware validation
-  remains pending.
-- The library, calibration example, and five flash-loading simulator targets
-  compile. Focused host tests cover round trips, chirality, malformed records,
-  model bounds, and failed-write verification. A GUI-paced run with Pogosim's
-  mixed uninitialized flash contents now formats and stores all four calibration
-  records successfully; mission import and physical-robot validation remain
-  open.
-- The static ACU simulator executable compiles without warnings and its paired
-  flash export/import YAML parses. It has not been launched in Pogosim or on
-  physical robots. Firmware compilation is currently blocked before source
-  compilation because this checkout's `pogobot-sdk` link lacks the referenced
-  `tools/variables.mak`.
-- Flash-file host tests cover formatting, direct-ID and name lookup, catalog
-  pages, fast and secure reads, multi-page CRCs, fixed-size replacement,
-  deletion/reuse, damaged catalogs/data, verification failure, and preservation
-  of an unrelated file during magnetometer replacement. A separate NOR host
-  test models NOR programming as bitwise AND and checks sector erasure and
-  preservation across create/replace/delete. Create now autoformats absent or
-  corrupt catalogs, deliberately erasing all user files; read-only paths never
-  do so. A v3 host test streams the maximum 5,632-page file at ID 80 through
-  page 5,887, verifies fixed-size replacement and metadata-only format.
-  Pogosim v0.10.10 can expose uninitialized allocator contents as flash.
-- A host NOR-flash test now covers two append logs, independent clearing,
-  full-page and partial writes, persistence/reopen, full-file status, damaged
-  page detection, and destructive recovery of a corrupt catalog. The library
-  and simulator example compile. The 64 KiB extension additionally covers page
-  255, full-log reopen, all-sector clear, and failed-clear recovery; physical
-  flash-write and erase timing remain unmeasured.
-- Flash-file and magnetometer-calibration production sources now document their
-  serialized byte layouts, ownership and RAM assumptions, state transitions,
-  numerical conventions, mutation ordering, and failure semantics in place.
-- The shell's `ls` retains the former inventory's catalog and data CRC checks.
-  Its Pogosim configuration imports and exports the four-robot magnetometer
-  archive. Host tests cover blank creation and rename, and its simulator target
-  compiles; interactive and hardware behavior have not yet been exercised.
-  On robot 23342, the earlier read-only inventory reported ten empty slots after the
-  calibration program stopped with a violet fatal LED. Its serial log reported
-  `MAG_CAL_FATAL` with `flash-file catalog error` and a 354 ms step against a
-  50 ms budget. A later read-only inventory found page 0's CRC stored as
-  `90012c70` versus `98092d7b` calculated, with empty slot and generation
-  bytes still zero. The calculated value is exactly an empty v1 page-0 CRC;
-  the stored CRC contains only a subset of its one bits, consistent with
-  programming NOR flash without erasing first. The v2 writer erases dedicated
-  4 KiB sectors; calibration logs exact PFFS failures and gives fitting/storage
-  separate 1 Hz ticks. On robot 23342, explicit v2 format completed; subsequent
-  calibration reached green and inventory found ID 1 at page 16 with valid CRC,
-  one occupied and nine empty slots. These are historical v2 observations;
-  v3 autoformat and timing on physical robots remain unvalidated.
+- Documentation milestone implemented: expanded README, ten new system guides
+  plus canonical PFFS guide, six tutorials, example READMEs and exhaustive coverage.
+- Validation: 60 Markdown files/local anchors checked; seven tutorial C blocks
+  compiled; small ANN/optimizer/fixed-point host fixtures passed. Fresh Debug
+  library build and all four CTest persistence tests passed.
+- All 34 simulator targets rebuilt with installed dependencies; numerical
+  targets needed explicit local-source path. Existing heading/fixed-point
+  benchmark warnings remain. **No simulation/hardware program, training, flash
+  format or installation was run during this milestone.** Firmware was not built.
+- Configuration/build traps documented, not changed: ACU calibration exports
+  acu.pgflash while mission imports magnetometer.pgflash; numerical Makefiles
+  can silently skip wrong-path builds; optim example enables only five entries
+  from a six-entry class table; distributed MNIST exporter/C basis defaults differ.
+- Historical robot-23342 evidence: violet calibration was failure, catalog CRC
+  damage was consistent with NOR writes without erase, and v2 sector-based format
+  plus calibration succeeded. This is not physical validation of current v3.
+  Earlier simulator runs do not imply new runs at this milestone.
 
 ## Current scientific decisions
 
-The following choices are encoded in the current implementation:
+- Heading consumers carry original timestamp, validity and frame identity;
+  sample outages do not become fresh readings or trigger mission refitting.
+- Local state/communication and explicit ask–tell/reward windows retain application
+  control over scheduling and objective evaluation.
+- Flash records are portable by policy, not bound to robot/motor identity.
+  App chirality/offset/filtering are not persisted; compatibility remains a duty.
+- PFFS favors bounded firmware/RAM and fast ID reads over resizing/transactions.
+  Logs separately trade cached speed and page density against checkpoint loss.
+- ACU's fixed genotype uses physical angular/noise units; collective-turn events
+  and pairwise yielding remain application policies, not optimizer claims.
+- Mathematical explanations describe implementations; no new accuracy, stability,
+  classifier, learning-performance or worst-case timing claim was established.
 
-- Heading consumers use an explicit sample with timestamp, validity, and
-  reference identity so recalibration or source changes can invalidate control
-  history safely.
-- Current motion code separates sensing and planning from final motor ownership;
-  kinematics is the normal arbitration point.
-- Swarm methods rely on local communication and per-robot state rather than a
-  centralized controller.
-- Embedded optimization uses ask-tell interfaces so objective evaluation remains
-  under application control.
-- Low-precision inference and optional fixed-point heading estimation are used
-  where useful, while validation gates or floating-point paths remain where the
-  implementation needs them.
-- Magnetometer flash records are portable by policy: they are checksummed and
-  versioned but not bound to a robot or motor configuration. Application
-  chirality, offset, filtering, and timeouts are not persisted.
-- ACU's fixed reference genotype is represented in physical units: beta
-  9 rad/s, sigma 0 rad/sqrt(s), speed 0.8, U-turn phase 0.4 pi, and crowding
-  depth 0. Local wall encounters start 1.5-second, hop-bounded U-turn events.
-- Flash-file IDs, page counts, and sectors are bounded. Fast reads skip CRCs;
-  secure reads validate the selected catalog and complete file. Replacement
-  erases and rewrites the same multi-sector extent non-transactionally; it
-  cannot resize a file.
-- Logs use the same bounded extents but commit one page at a time. They do not
-  maintain the catalog's whole-file CRC; their reader checks per-page CRCs.
-  Uncommitted RAM bytes are lost on reset, and a torn page requires explicit
-  clear before logging can resume.
+## What remains unknown
 
-These are implementation decisions, not yet documented experimental findings.
+Physical revision compatibility, firmware size/RAM/stack/deadline margins,
+flash wear/power-failure behavior, calibration robustness, multi-robot recovery
+and collective/learning performance across conditions. Clean-checkout dependency
+pinning, public API stability/deprecation policy, packaging and licensing need
+clarification. Host builds do not answer these questions.
 
 ## Known data limitations
 
-- No tracked experimental dataset, golden simulator trace, or hardware
-  calibration corpus was found.
-- Pogosim YAML files define scenarios but do not establish expected outcomes or
-  acceptance tolerances.
-- Generated neural parameters and test images are tracked for some examples,
-  but end-to-end provenance and reproducibility are not standardized.
-- Papers and run outputs present in ignored `doc`, `frames`, or `tmp` paths are
-  not guaranteed to be available in another checkout.
-- Example assertions and timing prints do not constitute a repeatable regression
-  suite.
+No standardized experimental dataset, golden trajectory, calibration corpus or
+acceptance tolerances. YAML scenarios are not evidence of outcomes. Generated
+ANN assets lack standardized provenance; fixed-point plot data are hard-coded.
+Example assertions/benchmarks are not a complete repeatable regression suite.
 
 ## Next concrete tasks
 
-1. Add targeted tests for the corrected MLP, Q16.16, and `tiny_alloc` normal,
-   boundary, overflow, invalid-pointer, and double-free cases, then run them
-   when compilation is permitted.
-2. Enforce the remaining unified optimizer default/override contract, then
-   harden the SSR and distributed-MNIST message protocols.
-3. Perform a clean library and example build against pinned SDK and simulator
-   revisions; record toolchains, warnings, binary sizes, RAM, and stack use.
-4. Define the supported public API surface and document migration from the
-   legacy motion and wall-avoidance modules.
-5. Add host-side tests for platform-neutral numerics, angle/time wraparound,
-   PID state transitions, optimizer invariants, and serialization boundaries.
-6. Validate create-time autoformat on a second physical robot with disposable
-   user-flash contents, then run paired Pogosim flash
-   export/import scenarios and deterministic motion regressions.
-7. Clarify licensing, compatibility guarantees, and the intended
-   install/package interface.
-8. Record experimental hypotheses, metrics, datasets, configurations, and
-   acceptance criteria before drawing scientific conclusions from simulations
-   or robot runs.
-9. Flash the updated `go_straight` and Vicsek firmware on representative robots;
-   verify that manual heading jumps, transient read loss, and difficult wall
-   escapes recover without permanent violet stops, recording recovery logs.
-10. Run the paired ACU calibration/mission scenarios, compare its trajectory
-    statistics with the fixed reference controller, and then validate binary
-    size, RAM, timing, wall recovery, and collective turns on hardware.
-11. Measure one synchronous log page program/readback on physical robots,
-    including the worst case against the 50 ms step budget; check long-run
-    flash wear and persistence with separate print and CSV files.
+1. Address documented config/Makefile/facade traps in a separately authorized code change.
+2. Add platform-neutral regression tests for PID/reference/time wrap, MLP buffers,
+   fixed-point boundaries, allocator and optimizer invariants.
+3. Validate v3 autoformat, logs/checkpoints and power interruption on disposable
+   physical flash; measure erase/program, stack and deadline margins.
+4. Test manual heading jumps, sensor/IR outages and jams on representative robots;
+   log recovery and actual displacement separately.
+5. Pin dependencies/toolchains and record firmware/map/RAM/stack measurements.
+6. Define scientific objectives, datasets, seeds, metrics and acceptance criteria
+   before comparing flocking, SSR or learned controllers.
+7. Clarify release/API support, licensing and install/package interface.

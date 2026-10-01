@@ -54,3 +54,43 @@ stored steering sign to a robot ID or motor configuration. Normal experiments
 should still keep one calibration per physical or simulated robot. The flash
 API stores steering handedness in a canonical convention and adapts it if a
 mission selects the opposite magnetometer-heading chirality before loading.
+
+## Integration reference
+
+Collect and fit a planar magnetometer model, then store it in the named PFFS calibration file.
+
+Entry point: [main.c](main.c); build rules: [Makefile](Makefile).
+See the [system guide](../../docs/systems/sensing_and_calibration.md) and [all examples](../../docs/examples.md).
+
+### Build and run
+
+From the repository root, with the library/platform dependencies installed:
+
+```sh
+make -C examples/magnetometer_calibration sim
+./examples/magnetometer_calibration/magnetometer_calibration -c conf/magnetometer_calibration.yaml
+make -C examples/magnetometer_calibration bin
+```
+
+The last command only builds firmware; artifact:
+`examples/magnetometer_calibration/build/bin/firmware.bin`.
+The simulator command starts an experiment. For SDK paths and upload procedure,
+see [getting started](../../docs/getting_started.md). Rebuild/reinstall compiled
+library modules before rebuilding simulator examples; changing YAML does not
+change compiler-defined dimensions or source switches.
+
+### Configuration and expected behavior
+
+The source controls motor rotation, fit thresholds, and separate slow fitting/storage ticks; the YAML exports magnetometer.pgflash.
+
+MAG_CAL_STORED and green indicate successful verified storage; MAG_CAL_FATAL/violet means failure, not success.
+
+### Constraints and validation
+
+Writes flash and can autoformat absent/corrupt catalogs; calibrate every mission robot and exit normally to export.
+
+Check stdout/diagnostics and the relevant header contracts rather than treating
+a successful build as scientific validation. No new hardware timing or trajectory
+validation is claimed by this documentation; host tests cover only selected
+persistence paths. See [troubleshooting](../../docs/troubleshooting.md) before
+interpreting a failure.

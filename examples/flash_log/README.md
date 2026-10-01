@@ -36,3 +36,43 @@ For a simple checkpoint demonstration, set `FLASH_LOG_FORCE_EVERY_N_TICKS` to
 a nonzero interval in `main.c`; the default `0` keeps full-page-only service.
 Flash programming is synchronous and its worst-case physical-robot duration
 has not yet been measured against the 50 ms step budget.
+
+## Integration reference
+
+Separate print/CSV streams with bounded RAM caches and regular page service.
+
+Entry point: [main.c](main.c); build rules: [Makefile](Makefile).
+See the [system guide](../../docs/systems/flash_logs.md) and [all examples](../../docs/examples.md).
+
+### Build and run
+
+From the repository root, with the library/platform dependencies installed:
+
+```sh
+make -C examples/flash_log sim
+./examples/flash_log/flash_log -c conf/magnetometer.yaml
+make -C examples/flash_log bin
+```
+
+The last command only builds firmware; artifact:
+`examples/flash_log/build/bin/firmware.bin`.
+The simulator command starts an experiment. For SDK paths and upload procedure,
+see [getting started](../../docs/getting_started.md). Rebuild/reinstall compiled
+library modules before rebuilding simulator examples; changing YAML does not
+change compiler-defined dimensions or source switches.
+
+### Configuration and expected behavior
+
+FLASH_LOG_DUMP_ONLY, FLASH_LOG_CLEAR_ON_BOOT and FLASH_LOG_FORCE_EVERY_N_TICKS are source switches; new logs default to 64 KiB each.
+
+FLASH_LOG_WARN status=7 means FULL; committed old bytes remain. Dump mode reads committed text in bounded chunks.
+
+### Constraints and validation
+
+Writes persistent flash; creation can autoformat broken catalogs. Existing logs keep fixed size; partial RAM pages need explicit flush to survive reset.
+
+Check stdout/diagnostics and the relevant header contracts rather than treating
+a successful build as scientific validation. No new hardware timing or trajectory
+validation is claimed by this documentation; host tests cover only selected
+persistence paths. See [troubleshooting](../../docs/troubleshooting.md) before
+interpreting a failure.

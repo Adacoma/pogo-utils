@@ -45,3 +45,43 @@ simulation: `enable_cluster_u_turn`, `u_turn_angle_rad`, and
 `cluster_u_turn_duration_ms` (default 1500). All ordinary Vicsek parameters
 retain their original defaults. Changing turn events cannot guarantee straight
 trajectories while robots are aligning or physically interacting.
+
+## Integration reference
+
+Retain Vicsek alignment while adding bounded collective turn events and asymmetric head-on backoff.
+
+Entry point: [main.c](main.c); build rules: [Makefile](Makefile).
+See the [system guide](../../docs/systems/motion_and_avoidance.md) and [all examples](../../docs/examples.md).
+
+### Build and run
+
+From the repository root, with the library/platform dependencies installed:
+
+```sh
+make -C examples/vicsek_u_turns sim
+./examples/vicsek_u_turns/vicsek_u_turns -c conf/magnetometer.yaml
+make -C examples/vicsek_u_turns bin
+```
+
+The last command only builds firmware; artifact:
+`examples/vicsek_u_turns/build/bin/firmware.bin`.
+The simulator command starts an experiment. For SDK paths and upload procedure,
+see [getting started](../../docs/getting_started.md). Rebuild/reinstall compiled
+library modules before rebuilding simulator examples; changing YAML does not
+change compiler-defined dimensions or source switches.
+
+### Configuration and expected behavior
+
+enable_cluster_u_turn, u_turn_angle_rad and cluster_u_turn_duration_ms configure events. Pair yielding includes reverse then pivot; see existing detailed description.
+
+Inspect opposition_active/reverse/pivot/target/event_count exports and wall/event priority. Default turn event is 72 degrees, not 180.
+
+### Constraints and validation
+
+Requires calibration. VU packets do not interoperate with VK/AC. Reverse/pivot commands are bounded but cannot guarantee escape from physical jams.
+
+Check stdout/diagnostics and the relevant header contracts rather than treating
+a successful build as scientific validation. No new hardware timing or trajectory
+validation is claimed by this documentation; host tests cover only selected
+persistence paths. See [troubleshooting](../../docs/troubleshooting.md) before
+interpreting a failure.

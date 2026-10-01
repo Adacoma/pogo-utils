@@ -87,3 +87,24 @@ on reset. Creating or clearing a 64 KiB log erases and verifies 16 data sectors
 synchronously (creation also updates a catalog sector), so physical timing
 must be checked before doing so in a deadline-limited control step.
 See the [two-stream example](../examples/flash_log/README.md).
+
+## Application integration
+
+The public entry point is [flash_file.h](../src/pogo-utils/flash_file.h).
+Keep IDs, names and immutable page counts in application policy; the library
+does not reserve calibration ID 1 or provide a POSIX file descriptor interface.
+For one-page records, serialize into a caller-owned 256-byte buffer. For large
+files, begin a writer, provide every page in order, and finish to publish the
+catalog entry. Abort clears RAM state only, not previously erased data.
+
+Use `pogo_flash_file_check` for read-only catalog/extent validation and status
+strings for diagnostics. `NOT_FOUND`, `UNFORMATTED`, `CORRUPT_CATALOG`,
+`BAD_CHECKSUM`, `NO_SPACE`, and `VERIFY_FAILED` are different failure classes;
+do not collapse corruption into an empty directory. CRC detects accidental
+damage, not authenticity or atomicity.
+
+Follow the [PFFS tutorial](tutorials/pffs.md) for checked record/streaming examples,
+[log guide](systems/flash_logs.md) for append streams, and
+[extension guide](extending.md) for new payload schemas. In a robot loop,
+schedule synchronous erases and catalog edits deliberately, and serialize access
+across all clients using the same flash peripheral.

@@ -76,3 +76,43 @@ pages` counts reserved pages, **not** bytes actually written or committed in
 a log. Deleted files are considered free by the catalog even though their old
 payload bytes remain until those sectors are reused. Fragmentation may prevent
 a large allocation despite free sectors shown by `df`.
+
+## Integration reference
+
+Interactive catalog/file management on UART or simulator stdin.
+
+Entry point: [main.c](main.c); build rules: [Makefile](Makefile).
+See the [system guide](../../docs/flash_files.md) and [all examples](../../docs/examples.md).
+
+### Build and run
+
+From the repository root, with the library/platform dependencies installed:
+
+```sh
+make -C examples/flash_file sim
+./examples/flash_file/flash_file -c conf/flash_file.yaml
+make -C examples/flash_file bin
+```
+
+The last command only builds firmware; artifact:
+`examples/flash_file/build/bin/firmware.bin`.
+The simulator command starts an experiment. For SDK paths and upload procedure,
+see [getting started](../../docs/getting_started.md). Rebuild/reinstall compiled
+library modules before rebuilding simulator examples; changing YAML does not
+change compiler-defined dimensions or source switches.
+
+### Configuration and expected behavior
+
+Commands include ls, df, stat, cat, touch, write, mv, rm, format YES and defrag YES; Up/Down recalls four RAM history entries.
+
+ls validates files; df distinguishes allocated erase sectors from payload pages. Corrupt catalogs are reported, not empty slots.
+
+### Constraints and validation
+
+Back up flash first; destructive commands are explicit. In simulation use robots/use to select the recipient, and exit normally to save.
+
+Check stdout/diagnostics and the relevant header contracts rather than treating
+a successful build as scientific validation. No new hardware timing or trajectory
+validation is claimed by this documentation; host tests cover only selected
+persistence paths. See [troubleshooting](../../docs/troubleshooting.md) before
+interpreting a failure.
