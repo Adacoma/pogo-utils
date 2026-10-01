@@ -144,7 +144,6 @@ objects:
 ########### Parameters used to directly initialize variables from the C code of the robots ###########
 parameters:
     # Configuration parameters
-    todo: 0
 
 # Produced by running examples/magnetometer_calibration with the matching
 # conf/magnetometer_calibration.yaml before this mission.

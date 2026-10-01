@@ -76,7 +76,7 @@ parameters:
     # normalized values after the source controller's factor-of-ten scaling.
     acu_beta_rad_per_s: 9.0
     acu_noise_sigma_rad_sqrt_s: 0.0
-    acu_base_speed_ratio: 0.80
+    acu_base_speed_ratio: 0.40
     acu_u_turn_angle_rad: 1.2566370614
     acu_crowd_depth: 0.0
     acu_target_neighbors: 6.0
@@ -92,5 +92,5 @@ parameters:
 
 # Produced first by examples/magnetometer_calibration with the paired file.
 flash_state:
-    input_file: "acu.pgflash"
-    output_file: "acu.pgflash"
+    input_file: "magnetometer.pgflash"
+    output_file: "magnetometer.pgflash"
