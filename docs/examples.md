@@ -1,6 +1,6 @@
 # Examples and public API coverage
 
-This catalog covers all **35** example Makefiles and **44** installed public
+This catalog covers all **36** example Makefiles and **44** installed public
 headers in the current checkout. Each example README explains entry point,
 commands, settings, expected diagnostics, and limitations.
 Read [getting started](getting_started.md) before building; configurations are
@@ -30,6 +30,7 @@ not benchmark datasets.
 | [heading_PID](../examples/heading_PID/README.md) | [main.c](../examples/heading_PID/main.c) | [magnetometer.yaml](../conf/magnetometer.yaml) | Hold the initial heading at 0.5 calibrated power using timestamped PID. |
 | [kinematics](../examples/kinematics/README.md) | [main.c](../examples/kinematics/main.c) | [magnetometer.yaml](../conf/magnetometer.yaml) | Combine application-owned heading, PID, heading-aware wall planner, and calibrated motor ownership. |
 | [go_straight](../examples/go_straight/README.md) | [main.c](../examples/go_straight/main.c) | [magnetometer.yaml](../conf/magnetometer.yaml) | Straight heading tracking with active walls, detailed diagnostics and post-start reset/reacquire recovery. |
+| [go_straight_simple](../examples/go_straight_simple/README.md) | [main.c](../examples/go_straight_simple/main.c) | [magnetometer.yaml](../conf/magnetometer.yaml) | Fully commented small controller: flash heading, default PID/kinematics/walls and post-start recovery, without tuning/telemetry callbacks. |
 | [wall_avoidance](../examples/wall_avoidance/README.md) | [run_and_tumble.c](../examples/wall_avoidance/run_and_tumble.c) | [test.yaml](../conf/test.yaml) | Run-and-tumble application with heading-free IR wall avoidance and direct motor execution. |
 | [wall_avoidance_heading](../examples/wall_avoidance_heading/README.md) | [run_and_tumble.c](../examples/wall_avoidance_heading/run_and_tumble.c) | [photostart.yaml](../conf/photostart.yaml) | Run-and-tumble with photosensor-referenced wall targets and direct actuation. |
 | [vicsek](../examples/vicsek/README.md) | [main.c](../examples/vicsek/main.c) | [magnetometer.yaml](../conf/magnetometer.yaml) | Local circular heading alignment with flash-loaded heading, PID, walls and runtime recovery. |

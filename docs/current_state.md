@@ -1,12 +1,12 @@
 # Current project state
 
-Last updated: 2026-10-01. This is a concise engineering/scientific handoff,
+Last updated: 2026-10-06. This is a concise engineering/scientific handoff,
 not a hardware-certification report. [Documentation map](index.md);
 [historical audit](code_audit.md).
 
 ## Inspected
 
-- Library architecture, all 44 installed public headers, all 35 examples,
+- Library architecture, all 44 installed public headers, all 36 examples,
   build/install rules, relevant source implementations and scenario configs.
 - Current PFFS v3, append logs, magnetometer collection/runtime/storage split,
   motion ownership and recovery, ANN layouts, optimizer contracts, SSR and numerics.
@@ -44,6 +44,12 @@ not a hardware-certification report. [Documentation map](index.md);
 
 ## Currently working analyses
 
+- go_straight_simple now has 356 lines of annotated source: flash-loaded heading,
+  default PID/kinematics/walls and 500 ms post-start retry policy. The original
+  127-line executable logic is unchanged; the line-budget check was removed.
+  Comment-stripped source and optimized host objects match the original exactly.
+  Strict host compilation and simulator rebuild passed; no simulation/hardware
+  run or firmware build. YAML tuning/telemetry remain omitted; go_straight is unchanged.
 - Latest printing validation: fresh Debug library build and all six host tests
   passed; two new tests also passed ASan/UBSan with warnings-as-errors. Coverage
   includes exhaustive 16-bit Q values at precisions 0..6, 32-bit bounds/random
@@ -108,7 +114,7 @@ Example assertions/benchmarks are not a complete repeatable regression suite.
 3. Validate v3 autoformat, logs/checkpoints and power interruption on disposable
    physical flash; measure erase/program, stack and deadline margins.
 4. Test manual heading jumps, sensor/IR outages and jams on representative robots;
-   log recovery and actual displacement separately.
+   include go_straight_simple and log recovery/displacement separately.
 5. Pin dependencies/toolchains and record firmware/map/RAM/stack measurements.
 6. Define scientific objectives, datasets, seeds, metrics and acceptance criteria
    before comparing flocking, SSR or learned controllers.

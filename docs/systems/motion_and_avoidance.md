@@ -89,6 +89,8 @@ permanent obstruction. Application recovery must re-establish a trustworthy
 live window before relatching motion. The richer
 [go_straight](../../examples/go_straight/README.md) and collective examples
 provide post-start recovery policy; the small
+[go_straight_simple](../../examples/go_straight_simple/README.md) retains that
+policy with default settings and detailed comments explaining the control flow. The
 [kinematics](../../examples/kinematics/README.md) demo is not the same policy.
 
 ## Legacy avoidance

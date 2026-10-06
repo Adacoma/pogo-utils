@@ -96,6 +96,7 @@ examples/flash_file/flash_file
 examples/flash_file_format/flash_file_format
 examples/flash_log/flash_log
 examples/go_straight/go_straight
+examples/go_straight_simple/go_straight_simple
 examples/vicsek/vicsek
 examples/vicsek_u_turns/vicsek_u_turns
 examples/acu/acu

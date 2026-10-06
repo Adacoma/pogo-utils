@@ -34,3 +34,6 @@ Start with the [project README](../README.md), [getting started](getting_started
 
 The [example catalog](examples.md) links all example READMEs and maps all
 installed public headers to guides. Internal headers are implementation details.
+
+For a compact controller, start with
+[go_straight_simple](../examples/go_straight_simple/README.md), with a fully commented main.c.
