@@ -134,7 +134,12 @@ class Transfers(unittest.TestCase):
     def test_raw_upload_and_prefix_download(self):
         data = b"\x00\xffhello" * 60
         self.upload(data, raw=True)
-        self.assertEqual(self.download(length=len(data)), data)
+        for keep in (0, 1, 47, len(data)):
+            with self.subTest(keep=keep):
+                output = io.BytesIO()
+                result = self.client().download("binary", output, length=keep)
+                self.assertEqual(output.getvalue(), data[:keep])
+                self.assertEqual(result, (keep, pft.binascii.crc32(data[:keep])))
         self.assertEqual(len(self.download()), 512)
 
     def test_duplicate_ack_and_finish_are_idempotent(self):

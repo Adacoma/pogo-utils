@@ -104,6 +104,7 @@ typedef struct __attribute__((__packed__)) {
 
 /* ==== Messaging RX ======================================================= */
 static void on_rx(message_t *mr){
+    if (!mydata->opt) return; /* Initialization may have exhausted the arena. */
     if (mr->header.payload_length < SL_MSG_BYTES) return;
 
     /* Copy out of the packed payload into aligned locals */
@@ -148,6 +149,7 @@ static void on_rx(message_t *mr){
 
 /* ==== Messaging TX ======================================================= */
 static bool on_tx(void){
+    if (!mydata->opt) return false;
     uint32_t now = current_time_milliseconds();
     const uint32_t period_ms = 200; /* 5 Hz beacons */
     if (now - mydata->last_tx_ms < period_ms) return false;
@@ -201,9 +203,10 @@ void user_init(void){
     msg_tx_fn = on_tx;
     error_codes_led_idx = 3;
 
-    // Initialize the heap, with large chunks (512) allowed
+    /* Include the large class needed by SEP-CMA-ES's stored population steps. */
     const uint16_t classes[] = { 32, 48, 64, 128, 512, 4096 };
-    tiny_alloc_init(&mydata->ta, mydata->heap, sizeof(mydata->heap), classes, 5);
+    tiny_alloc_init(&mydata->ta, mydata->heap, sizeof(mydata->heap), classes,
+                    (uint8_t)(sizeof(classes) / sizeof(classes[0])));
 
     for (int i = 0; i < D; ++i){
         mydata->lo[i] = -2.0f;
@@ -218,6 +221,10 @@ void user_init(void){
     if (!ok || !mydata->opt) {
         printf("[OPT] create failed (heap=%uB). Try bigger heap or smaller lambda/repo.\n",
                (unsigned)sizeof(mydata->heap));
+        /* Do not evaluate a NULL genome or run callbacks after failed setup. */
+        msg_rx_fn = NULL;
+        msg_tx_fn = NULL;
+        return;
     }
 
     uint32_t seed = pogobot_helper_getRandSeed()
@@ -238,6 +245,7 @@ void user_init(void){
 
 /* =============================== STEP =================================== */
 void user_step(void){
+    if (!mydata->opt) return;
     if (chosen_algo() == OPT_HIT){
         /* CEC2020 HIT: at each control step, evaluate the current genome
            and feed the instantaneous cost into the sliding window. */

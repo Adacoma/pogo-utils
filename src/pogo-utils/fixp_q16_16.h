@@ -18,7 +18,7 @@
 /* --- Conversions Between int and Q16.16 --- */
 /* Convert int to Q16.16 (by shifting left 16 bits) */
 static inline q16_16_t q16_16_from_int(int x) {
-    return (q16_16_t)x << Q16_16_FRACTIONAL_BITS;
+    return pogo_scale_i32_sat(x, Q16_16_FRACTIONAL_BITS);
 }
 
 /* Convert Q16.16 to int (by shifting right 16 bits) */
@@ -54,7 +54,7 @@ static inline q16_16_t q16_16_from_q8_24(int32_t q8_24) {
 
 /* Convert Q16.16 to Q8.24 by shifting left by 8 bits */
 static inline int32_t q8_24_from_q16_16(q16_16_t x) {
-    return ((int32_t)x) << (24 - Q16_16_FRACTIONAL_BITS);
+    return pogo_scale_i32_sat(x, 24 - Q16_16_FRACTIONAL_BITS);
 }
 
 /* --- Conversions Between Q1.15 and Q16.16 --- */
@@ -64,7 +64,7 @@ static inline int32_t q8_24_from_q16_16(q16_16_t x) {
    by (16-15)=1 bit.
 */
 static inline q16_16_t q16_16_from_q1_15(int16_t q1_15) {
-    return ((q16_16_t)q1_15) << (Q16_16_FRACTIONAL_BITS - 15);
+    return (int32_t)q1_15 * 2; /* Full int16 range fits without signed shifts. */
 }
 
 /* Convert Q16.16 to Q1.15 by shifting right by 1 bit.
@@ -276,7 +276,7 @@ static inline q16_16_t q16_16_exp(q16_16_t x) {
 
     /* k = floor(y),  f = y - k  (Q16.16) */
     int32_t k = (int32_t)(y >> 16);
-    q16_16_t f = (q16_16_t)(y - ((int64_t)k << 16)); /* 0..65535 */
+    q16_16_t f = (q16_16_t)(y - (int64_t)k * 65536); /* k may be negative. */
 
     /* i = floor(f*64)  => exact: (f * 64) >> 16 == f >> 10  */
     int32_t i = ((int32_t)f) >> 10;  /* 0..63 */

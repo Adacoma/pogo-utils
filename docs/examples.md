@@ -1,6 +1,6 @@
 # Examples and public API coverage
 
-This catalog covers all **36** example Makefiles and **44** installed public
+This catalog covers all **36** example Makefiles and **45** installed public
 headers in the current checkout. Each example README explains entry point,
 commands, settings, expected diagnostics, and limitations.
 Read [getting started](getting_started.md) before building; configurations are
@@ -55,7 +55,7 @@ not benchmark datasets.
 | [MLP_int8_dyn](../examples/MLP_int8_dyn/README.md) | [main.c](../examples/MLP_int8_dyn/main.c) | [test.yaml](../conf/test.yaml) | Flat borrowed parameters and dynamic shape/depth, using two hidden buffers. |
 | [MLP_int8_dyn_act](../examples/MLP_int8_dyn_act/README.md) | [main.c](../examples/MLP_int8_dyn_act/main.c) | [test.yaml](../conf/test.yaml) | Dynamic genome introspection, evolved shifts/clamps and optional hard-SwiGLU gates. |
 | [MLP_int8_MNIST](../examples/MLP_int8_MNIST/README.md) | [main.c](../examples/MLP_int8_MNIST/main.c) | [test.yaml](../conf/test.yaml) | Run pre-exported test images through a 784/32/10 Q0.7 classifier. |
-| [distributed_MLP_int8_MNIST](../examples/distributed_MLP_int8_MNIST/README.md) | [mnist.c](../examples/distributed_MLP_int8_MNIST/mnist.c) | [test.yaml](../conf/test.yaml) | PRANC-encoded classifier ensemble plus IR gossip of output scores. |
+| [distributed_MLP_int8_MNIST](../examples/distributed_MLP_int8_MNIST/README.md) | [mnist.c](../examples/distributed_MLP_int8_MNIST/mnist.c) | [test.yaml](../conf/test.yaml) | PRANC-encoded ensemble with epoch-tagged, unique-origin prediction gossip. |
 | [ESN_int8](../examples/ESN_int8/README.md) | [main.c](../examples/ESN_int8/main.c) | [test.yaml](../conf/test.yaml) | Mackey–Glass washout, floating-point ridge readout training and int8 recurrent prediction. |
 | [ESN_int8_PRANC](../examples/ESN_int8_PRANC/README.md) | [main.c](../examples/ESN_int8_PRANC/main.c) | [test.yaml](../conf/test.yaml) | Compare dense and PRANC-compressed readout on Mackey–Glass using a leaky/gated sparse reservoir. |
 | [TRM_int8](../examples/TRM_int8/README.md) | [main.c](../examples/TRM_int8/main.c) | [test.yaml](../conf/test.yaml) | Random shared-trunk recursive inference with answer and latent state. |
@@ -128,6 +128,7 @@ no independent runtime subsystem.
 | [ssr_colors.h](../src/pogo-utils/ssr_colors.h) | [Guide](systems/ssr.md) | [ssr](../examples/ssr/README.md) | Classification colors |
 | [fixp.h](../src/pogo-utils/fixp.h) | [Guide](systems/fixed_point.md) | [fixp](../examples/fixp/README.md) | All-format umbrella |
 | [fixp_base.h](../src/pogo-utils/fixp_base.h) | [Guide](systems/fixed_point.md) | [fixp](../examples/fixp/README.md) | Types/constants/setup/formatting |
+| [fixed_math.h](../src/pogo-utils/fixed_math.h) | [Guide](systems/fixed_point.md) | [MLP_int8_dyn_act](../examples/MLP_int8_dyn_act/README.md) | Defined signed scaling and symmetric integer rounding |
 | [fixp_q1_15.h](../src/pogo-utils/fixp_q1_15.h) | [Guide](systems/fixed_point.md) | [fixp](../examples/fixp/README.md) | Q1.15 primitives |
 | [fixp_q6_10.h](../src/pogo-utils/fixp_q6_10.h) | [Guide](systems/fixed_point.md) | [fixp](../examples/fixp/README.md) | Q6.10 primitives |
 | [fixp_q8_24.h](../src/pogo-utils/fixp_q8_24.h) | [Guide](systems/fixed_point.md) | [fixp](../examples/fixp/README.md) | Q8.24 primitives |

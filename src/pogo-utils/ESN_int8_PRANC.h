@@ -1,6 +1,7 @@
 #ifndef ESN_INT8_PRANC_H_
 #define ESN_INT8_PRANC_H_
 
+#include "fixed_math.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <math.h>
@@ -43,6 +44,12 @@
 
 #ifndef ESN_INT8_RES_WEIGHT_ABS
 #define ESN_INT8_RES_WEIGHT_ABS 24   /* 4*24 = 96 ~ 0.75 in Q0.7 */
+#endif
+
+/* Unique sparse neighbors must exist and fit the uint8_t index storage. */
+#if ESN_INT8_RESERVOIR_DIM < 1 || ESN_INT8_RESERVOIR_DIM > 256 || \
+    ESN_INT8_RES_FIXED_K < 1 || ESN_INT8_RES_FIXED_K > ESN_INT8_RESERVOIR_DIM
+#error "ESN_INT8 requires 1 <= K <= reservoir dimension <= 256"
 #endif
 
 #ifndef ESN_INT8_WIN_WEIGHT_ABS
@@ -162,13 +169,8 @@ typedef struct {
 /* --- Helpers --- */
 
 static inline int8_t esn_int8_lg_from_acc32(int32_t acc) {
-#if ESN_INT8_FRAC_BITS > 0
-    if (acc >= 0)
-        acc += (1 << (ESN_INT8_FRAC_BITS - 1));
-    else
-        acc -= (1 << (ESN_INT8_FRAC_BITS - 1));
-    acc >>= ESN_INT8_FRAC_BITS;
-#endif
+    /* Round magnitude, then restore sign: subtract-before-shift biases negatives. */
+    acc = pogo_round_shift_i32(acc, ESN_INT8_FRAC_BITS);
     if (acc > 127)   acc = 127;
     if (acc < -128)  acc = -128;
     return (int8_t)acc;
@@ -329,7 +331,7 @@ static void esn_int8_lg_step(ESN_INT8_PRANC *net,
 
     /* --- Reservoir update --- */
     for (int i = 0; i < ESN_INT8_RESERVOIR_DIM; ++i) {
-        int32_t acc = ((int32_t)net->b_res[i]) << ESN_INT8_FRAC_BITS;
+        int32_t acc = (int32_t)net->b_res[i] * (INT32_C(1) << ESN_INT8_FRAC_BITS); /* Defined for negative biases. */
 
         /* Input contribution: Win[i,:] * in */
         const int8_t *win_row = &net->Win[i][0];
@@ -369,7 +371,7 @@ static void esn_int8_lg_step(ESN_INT8_PRANC *net,
 
     /* --- Output computation --- */
     for (int o = 0; o < ESN_INT8_OUTPUT_DIM; ++o) {
-        int32_t acc = ((int32_t)net->b_out[o]) << ESN_INT8_FRAC_BITS;
+        int32_t acc = (int32_t)net->b_out[o] * (INT32_C(1) << ESN_INT8_FRAC_BITS); /* Defined for negative biases. */
 
         const int8_t *wout_row    = &net->Wout[o][0];
         const int8_t *wout_in_row = &net->Wout_in[o][0];

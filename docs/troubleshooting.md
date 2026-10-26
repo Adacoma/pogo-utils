@@ -116,8 +116,10 @@ Optimizer asks returning NULL: check initial fitness, readiness and whether a
 candidate already awaits tell. Do not fabricate fitness just to unlock the state.
 Facade allocation failure needs individual slot sizing, not merely a bigger
 total arena. Default allocator largest slot is 192 bytes; the optim example
-currently passes five entries from its six-element custom class table, leaving
-4096 disabled. Documented defaults/union overrides require deliberate config.
+enables its 4096-byte class for the default SEP workspace. Check individual
+requests after changing dimensions, population or repository capacity. See
+[configuration semantics](systems/optimization.md#facade-and-allocation) for
+partial defaults versus explicit zero/false overrides.
 
 Fixed-point saturation does not protect an earlier signed overflow.
 Check finite conversion input, negative shifts, nonlinear domains, accumulator

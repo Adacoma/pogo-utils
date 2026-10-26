@@ -14,6 +14,10 @@ before they should be treated as behavioral defects.
 
 ## Critical findings
 
+The sections below preserve the original audit. The
+[2026-10-26 follow-up](#2026-10-26-follow-up) records the later fixes and their
+validation; it does not mark every historical risk as resolved.
+
 ### Dynamic int8 MLP corrupts multi-hidden-layer inference
 
 Status: fixed locally on 2026-09-15; not compiled or executed as part of this
@@ -212,3 +216,51 @@ kilobyte state require measurement on target hardware.
    protocol parsing.
 8. Validate SSR convergence, magnetometer calibration quality, and wall
    behavior using recorded datasets and supervised hardware trials.
+
+## 2026-10-26 follow-up
+
+The latest review's confirmed defects are addressed in the source:
+
+- The optimizer example enables all six arena classes and stops initialization
+  and callbacks after creation failure. Every backend records partial buffer
+  ownership before checking allocation success, so failure cleanup frees it.
+- The factory rejects invalid dispatch enums and invalid bounds. Complete
+  default configurations remain editable, including zero/false overrides;
+  `use_defaults=1` now merges nonzero fields of a partial configuration.
+- Quantized ANN and Q1.15 rounding uses unsigned magnitudes and ties away from
+  zero. Negative exact multiples remain exact, and accumulator endpoints do
+  not overflow during rounding. Signed negative scaling uses multiplication;
+  affected range-reducing conversions and integer conversions saturate.
+- Dynamic MLP inference rejects fixed shifts above 31 before writing buffers.
+  SwiGLU gate counts survive default normalization and are bounded per layer.
+  Existing multi-gate genome layouts and numerical baselines need revalidation.
+- Both sparse ESN variants reject impossible connectivity or reservoirs larger
+  than their byte-sized indices can represent at compile time.
+- HIT and SL reject nonfinite remote fitness/genomes before state changes.
+  HIT block-length clamping avoids signed addition overflow.
+- SSR packets carry a protocol tag. Synchronization uses its own offset,
+  bounded to 1,000 ms, without changing the robot clock. Neighbor expiry keeps
+  raw time. Default Metropolis weights retain a self weight and tau is capped
+  at one, eliminating the degree-one two-node swap.
+- Distributed MNIST uses epoch/image-tagged, unique-origin vote relaying.
+  Broadcasts/retries cannot multiply a vote, failed sends remove no votes,
+  and the nominal 50 Hz period is 20 ms. The cache defaults to 64 origins;
+  incomplete delivery and capacity limits can still yield different tallies.
+- Trimmed UART downloads validate the full stream but return the CRC of the
+  saved prefix, consistent with their returned byte count.
+
+All 12 Debug CTest tests pass, including a build with AddressSanitizer and
+UndefinedBehaviorSanitizer. New fixtures cover numerical endpoints, negative
+biases, deep MLP buffer alternation, separate gates, allocation failure cleanup,
+invalid remote values, sparse ESN configuration rejection, SSR clock wrap and
+two-node contraction, vote relay/de-duplication and trimmed-download digests.
+All six optimizer configurations, full/block HIT and distributed MNIST pass
+strict host syntax checks. Existing header warnings concern redundant int8
+range checks and unused header-only functions in the broad numeric fixture.
+
+No simulation, robot program, firmware build, training, installation or linked
+repository inspection was performed for this follow-up. SSR and MNIST require
+matching updated peers. Their experiment performance, ANN accuracy and target
+firmware timing/size/RAM remain unmeasured. Other historical concerns, including
+legacy controllers, photosensors, unbounded optional stack workspaces and
+remaining numerical/protocol assumptions, need separate work.

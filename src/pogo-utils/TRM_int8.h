@@ -1,6 +1,7 @@
 #ifndef TRM_INT8_H_
 #define TRM_INT8_H_
 
+#include "fixed_math.h"
 #include <stdint.h>
 
 /*
@@ -86,13 +87,8 @@ typedef struct {
 
 /* Convert from 32-bit accumulator (Q0.14) back to int8 Q0.7 with rounding + saturation. */
 static inline int8_t trm_int8_from_acc32(int32_t acc) {
-#if TRM_INT8_FRAC_BITS > 0
-    if (acc >= 0)
-        acc += (1 << (TRM_INT8_FRAC_BITS - 1));
-    else
-        acc -= (1 << (TRM_INT8_FRAC_BITS - 1));
-    acc >>= TRM_INT8_FRAC_BITS;
-#endif
+    /* Round magnitude, then restore sign: subtract-before-shift biases negatives. */
+    acc = pogo_round_shift_i32(acc, TRM_INT8_FRAC_BITS);
 
     if (acc > 127)   acc = 127;
     if (acc < -128)  acc = -128;
@@ -118,7 +114,7 @@ static void trm_int8_dense_layer(const int8_t *weights,
                                  int8_t *out)
 {
     for (int i = 0; i < rows; ++i) {
-        int32_t acc = ((int32_t)biases[i]) << TRM_INT8_FRAC_BITS;
+        int32_t acc = (int32_t)biases[i] * (INT32_C(1) << TRM_INT8_FRAC_BITS); /* Defined for negative biases. */
         const int8_t *w_row = &weights[i * cols];
 
         for (int k = 0; k < cols; ++k) {

@@ -27,14 +27,17 @@ domain and rounding behavior rather than assuming exact floating-point math.
 
 Q16.16 addition, subtraction, and absolute value deliberately saturate,
 including abs(INT32_MIN)->INT32_MAX, using widened arithmetic where needed.
-This does **not** mean every conversion, shift, nonlinear function, or operation
-in all formats is equally hardened. Some conversion helpers use signed shifts;
-out-of-range inputs and negative left shifts can invoke undefined or
-implementation-defined C behavior. Avoid those paths or validate their exact
-target behavior before deploying. The [audit](../code_audit.md) records remaining
-numerical risks.
+Integer conversions now saturate before scaling. Negative cross-format scaling,
+Q1.15/Q6.10 division numerators and ANN biases use multiplication rather than
+left shifts of negative signed values. Q16.16-to-Q8.24 and Q6.10-to-Q1.15
+conversions saturate to the destination range. Q1.15 rounded multiplication and
+ANN accumulator conversion use nearest rounding with ties away from zero.
+[fixed_math.h](../../src/pogo-utils/fixed_math.h) supplies the shared integer
+helpers without tables, floating point or heap allocation.
 
-Integer-to-fixed shifts do not universally clamp. Float conversion requires
+Other narrowing conversions, signed right shifts, nonlinear approximations and
+accumulator ranges still need checking for the chosen domain and compiler.
+These changes do not harden every arithmetic path. Float conversion requires
 finite inputs; NaN is not a valid fixed number. Macro conversions can evaluate
 arguments repeatedly: do not pass side-effecting expressions.
 Cross-format conversion must check destination range as well as lost precision.

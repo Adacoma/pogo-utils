@@ -30,7 +30,7 @@ extern "C" {
 /* ---------- Activations ---------- */
 
 typedef enum {
-    /* acc = dot(W,x) + (b<<7); y = clip((acc + round) >> s) */
+    /* acc = dot(W,x) + b*128; y = clip(round_nearest(acc / 2^s)). */
     MLP_I8_ACT_LINEAR_FIXED_SHIFT = 0,
 
     /* same as linear, but shift "s" is stored in the genome (one byte per layer) */
@@ -62,7 +62,7 @@ typedef struct {
      * "shift" is the total right-shift applied on the int32 accumulator.
      * Typical values: 6..10, default 7.
      */
-    uint8_t fixed_shift;        /* used when shift is not evolved */
+    uint8_t fixed_shift;        /* 1..31; 0 selects default 7; >31 rejects forward */
     bool    shift_is_evolved;   /* if true, one byte per layer in genome */
 
     /* --- Clamp handling ---

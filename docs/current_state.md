@@ -6,12 +6,12 @@ not a hardware-certification report. [Documentation map](index.md);
 
 ## Inspected
 
-- Library architecture, all 44 installed public headers, all 36 examples,
+- Library architecture, all 45 installed public headers, all 36 examples,
   build/install rules, relevant source implementations and scenario configs.
 - Current PFFS v3, append logs, magnetometer collection/runtime/storage split,
   motion ownership and recovery, ANN layouts, optimizer contracts, SSR and numerics.
 - Earlier work included broader static audit and dependency/API inspection.
-  External repositories were not modified for this documentation milestone.
+  This fix milestone neither inspected nor modified linked repositories.
 
 ## Understood
 
@@ -48,37 +48,23 @@ not a hardware-certification report. [Documentation map](index.md);
 
 ## Currently working analyses
 
-- UART upload/download implemented with a Python client and a shell-only C
-  engine. All seven Debug host tests pass with warnings-as-errors; the transfer
-  test also passes ASan/UBSan. Cases cover binary/empty/page/sector boundaries,
-  retries without duplicate writes, destination fingerprinting, corruption,
-  logs/raw reads, interrupted replacement, timeout/reset and local no-clobber.
-  Shell simulator target builds; no simulation, hardware/serial run, SDK build,
-  dependency installation or external-repository edits in this milestone.
-- go_straight_simple now has 356 lines of annotated source: flash-loaded heading,
-  default PID/kinematics/walls and 500 ms post-start retry policy. The original
-  127-line executable logic is unchanged; the line-budget check was removed.
-  Comment-stripped source and optimized host objects match the original exactly.
-  Strict host compilation and simulator rebuild passed; no simulation/hardware
-  run or firmware build. YAML tuning/telemetry remain omitted; go_straight is unchanged.
-- Latest printing validation: fresh Debug library build and all six host tests
-  passed; two new tests also passed ASan/UBSan with warnings-as-errors. Coverage
-  includes exhaustive 16-bit Q values at precisions 0..6, 32-bit bounds/random
-  integer oracle checks, RAM-only print bursts, queue/terminal backpressure,
-  file-full checks, one-page service limits, readback and torn-write failure.
-- New print_log simulator target built (not run), and terminal-on/endless and
-  default modes passed strict syntax checks. Formatter/adapter object symbols
-  have no printf/double-math dependency. Target timing/size remain unmeasured.
-- Earlier documentation validation checked 60 Markdown files/local anchors,
-  seven tutorial C blocks and small ANN/optimizer/fixed-point host fixtures.
-  All 34 earlier simulator targets rebuilt with installed dependencies; numerical
-  targets needed explicit local-source path. Existing heading/fixed-point
-  benchmark warnings remain. **No simulation/hardware program, training, physical
-  flash format or installation was run in the printing milestone.** Firmware was not built.
+- Latest audit fixes cover optimizer ownership/defaults/enums and example
+  failure handling; symmetric ANN rounding, signed scaling, MLP shifts/gates,
+  ESN configuration bounds, nonfinite HIT/SL adverts, isolated SSR time and
+  contracting default weights, unique-origin MNIST voting and trimmed UART CRC.
+  See [fix details](code_audit.md#2026-10-26-follow-up).
+- All 12 Debug host tests pass normally and with ASan/UBSan. Fixtures include
+  integer oracles/endpoints, deep MLP buffers/gates, allocator failure cleanup,
+  SSR clock wrap/two-node contraction, vote relays and transfer/NOR failures.
+  All six optimizer selections, full/block HIT and MNIST pass strict syntax
+  checks. No simulation, hardware/serial run, firmware build or install occurred.
+- Earlier validation covered printing, UART persistence, documentation fixtures
+  and simulator builds. go_straight_simple retains annotated flash-loaded
+  heading, PID/kinematics/walls and a 500 ms post-start retry policy.
 - Configuration/build traps documented, not changed: ACU calibration exports
   acu.pgflash while mission imports magnetometer.pgflash; numerical Makefiles
-  can silently skip wrong-path builds; optim example enables only five entries
-  from a six-entry class table; distributed MNIST exporter/C basis defaults differ.
+  can silently skip wrong-path builds; distributed MNIST exporter/C basis
+  defaults differ. Target size, stack and deadlines remain unmeasured.
 - Historical robot-23342 evidence: violet calibration was failure, catalog CRC
   damage was consistent with NOR writes without erase, and v2 sector-based format
   plus calibration succeeded. This is not physical validation of current v3.
@@ -102,6 +88,11 @@ not a hardware-certification report. [Documentation map](index.md);
   into an endpoint. Logging does not change controller arithmetic or scheduling.
 - ACU's fixed genotype uses physical angular/noise units; collective-turn events
   and pairwise yielding remain application policies, not optimizer claims.
+- ANN conversion rounds nearest with ties away from zero. SSR now retains
+  self weight in Metropolis diffusion and requires updated protocol tags;
+  existing thresholds/baselines need recalibration. MNIST counts unique origins
+  within an epoch/image, bounded to 64 cached votes, with no finite-time global
+  agreement guarantee under incomplete communication.
 - Mathematical explanations describe implementations; no new accuracy, stability,
   classifier, learning-performance or worst-case timing claim was established.
 
@@ -122,9 +113,10 @@ Example assertions/benchmarks are not a complete repeatable regression suite.
 
 ## Next concrete tasks
 
-1. Address documented config/Makefile/facade traps in a separately authorized code change.
-2. Add platform-neutral regression tests for PID/reference/time wrap, MLP buffers,
-   fixed-point boundaries, allocator and optimizer invariants.
+1. Revalidate ANN exports/layouts, SSR thresholds and MNIST experiment baselines
+   with matching peers after numerical/protocol changes.
+2. Address remaining config/Makefile traps and extend host coverage to PID,
+   sensor/reference handling and remaining arithmetic paths.
 3. Validate v3 autoformat, logs/checkpoints and power interruption on disposable
    physical flash; measure erase/program, stack and deadline margins.
 4. Test manual heading jumps, sensor/IR outages and jams on representative robots;

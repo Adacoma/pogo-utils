@@ -356,6 +356,10 @@ void hit_observe_remote(hit_t *h, uint16_t from_id, uint32_t epoch,
     if (!h || !x_remote || h->n <= 0){
         return;
     }
+    /* Check the whole message before evolving alpha or touching local state.
+     * Comparisons/clamps alone cannot remove NaN coordinates. */
+    if (!isfinite(f_remote)) return;
+    for (int i = 0; i < h->n; ++i) if (!isfinite(x_remote[i])) return;
 
     /* Maturation: ignore all messages until we have a full window. */
     if (!h->have_f){
@@ -379,6 +383,7 @@ void hit_observe_remote_block(hit_t *h, uint16_t from_id, uint32_t epoch,
     if (!h || !x_block || h->n <= 0){
         return;
     }
+    if (!isfinite(f_remote)) return;
 
     /* Maturation: ignore all messages until we have a full window. */
     if (!h->have_f){
@@ -397,7 +402,9 @@ void hit_observe_remote_block(hit_t *h, uint16_t from_id, uint32_t epoch,
     if (offset < 0)      offset = 0;
     if (offset > n)      offset = n;
     if (len < 0)         len = 0;
-    if (offset + len > n) len = n - offset;
+    /* Subtraction avoids overflow for untrusted lengths near INT_MAX. */
+    if (len > n - offset) len = n - offset;
+    for (int i = 0; i < len; ++i) if (!isfinite(x_block[i])) return;
 
     /* If len==0, we fall back to “pure mutation + optional α evolution”. */
     if (len < 0) len = 0;

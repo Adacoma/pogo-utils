@@ -1,4 +1,5 @@
 #include "MLP_int8_dyn_act.h"
+#include "fixed_math.h"
 
 /* ------------------------------ Small utilities ------------------------------ */
 
@@ -24,13 +25,7 @@ static inline int8_t clamp_i8(int32_t x, uint8_t clamp) {
  * shift is total right-shift applied to the int32 accumulator.
  */
 static inline int8_t acc_to_i8(int32_t acc, uint8_t shift, uint8_t clamp) {
-    if (shift != 0u) {
-        /* round-to-nearest (ties away from 0) */
-        int32_t r = (int32_t)(1u << (shift - 1u));
-        if (acc >= 0) acc += r;
-        else          acc -= r;
-        acc >>= shift;
-    }
+    acc = pogo_round_shift_i32(acc, shift);
     return clamp_i8(acc, clamp);
 }
 
@@ -51,8 +46,7 @@ static inline int8_t mul_q7(int8_t a, uint8_t b_q7) {
      * b is non-negative.
      */
     int32_t prod = (int32_t)a * (int32_t)b_q7; /* Q0.7 * Q0.7 -> Q0.14 */
-    prod += (prod >= 0) ? (1 << 6) : -(1 << 6);
-    prod >>= 7;
+    prod = pogo_round_shift_i32(prod, 7u);
     if (prod > 127)  prod = 127;
     if (prod < -128) prod = -128;
     return (int8_t)prod;
@@ -102,7 +96,8 @@ static inline mlp_i8_act_cfg_t cfg_defaults(mlp_i8_act_cfg_t c) {
     if (c.fixed_shift == 0u) c.fixed_shift = 7u;
     if (c.clamp_fixed == 0u) c.clamp_fixed = 127u;
     if (c.type == MLP_I8_ACT_HARD_SWIGLU || c.type == MLP_I8_ACT_HARD_SWIGLU_RANDOM_GATES) {
-        c.gate_count = resolve_gate_count(c.gate_count, 1u); /* will be re-resolved per layer */
+        /* Preserve requested grouping until the actual output width is known. */
+        if (c.gate_count == 0u) c.gate_count = 1u;
     } else {
         c.gate_count = 0u;
         c.gate_seed = 0u;
@@ -286,8 +281,8 @@ static void dense_linear(const mlp_i8_dyn_t *net, const mlp_i8_layer_view_t *v,
     for (uint16_t i = 0; i < v->out_dim; ++i) {
         const int8_t *w_row = W + (uint32_t)i * (uint32_t)v->in_dim;
         int32_t acc = dot_acc_q14(w_row, in, v->in_dim);
-        /* Bias is Q0.7-like, align it to the Q0.14 acc by <<7. */
-        acc += ((int32_t)B[i]) << 7;
+        /* Multiplication, unlike a signed left shift, permits negative biases. */
+        acc += (int32_t)B[i] * 128;
         out[i] = acc_to_i8(acc, shift, clamp);
     }
 }
@@ -314,7 +309,7 @@ static void dense_hard_swiglu(const mlp_i8_dyn_t *net, const mlp_i8_layer_view_t
         for (uint8_t g = 0; g < gate_count; ++g) {
             const int8_t *gw_row = GW + (uint32_t)g * (uint32_t)v->in_dim;
             int32_t accg = dot_acc_q14(gw_row, in, v->in_dim);
-            accg += ((int32_t)GB[g]) << 7;
+            accg += (int32_t)GB[g] * 128;
             gate_buf[g] = acc_to_i8(accg, shift, 127u);
         }
     } else {
@@ -327,7 +322,7 @@ static void dense_hard_swiglu(const mlp_i8_dyn_t *net, const mlp_i8_layer_view_t
                 accg += (int32_t)w * (int32_t)in[k];
             }
             int8_t bg = prand_i8_small(seed ^ 0xA5A5A5A5u, (uint32_t)g, 0xBEEF);
-            accg += ((int32_t)bg) << 7;
+            accg += (int32_t)bg * 128;
             gate_buf[g] = acc_to_i8(accg, shift, 127u);
         }
     }
@@ -336,7 +331,7 @@ static void dense_hard_swiglu(const mlp_i8_dyn_t *net, const mlp_i8_layer_view_t
     for (uint16_t i = 0; i < v->out_dim; ++i) {
         const int8_t *w_row = W + (uint32_t)i * (uint32_t)v->in_dim;
         int32_t acc = dot_acc_q14(w_row, in, v->in_dim);
-        acc += ((int32_t)B[i]) << 7;
+        acc += (int32_t)B[i] * 128;
         int8_t a = acc_to_i8(acc, shift, 127u);
 
         uint8_t gidx = gate_index_for_neuron(i, v->out_dim, gate_count);
@@ -354,6 +349,11 @@ void mlp_i8_forward_ws(const mlp_i8_dyn_t *net,
                        uint32_t ws_bytes) {
     if (!net || !net->genome || !in || !out || net->num_hidden_layers == 0u) return;
     if (net->input_dim == 0u || net->hidden_dim == 0u || net->output_dim == 0u) return;
+    /* Reject malformed fixed shifts before touching outputs or workspaces.
+     * Evolved shifts retain their documented per-gene clamp to 31. */
+    if ((!net->act_in.shift_is_evolved && net->act_in.fixed_shift > 31u) ||
+        (!net->act_hidden.shift_is_evolved && net->act_hidden.fixed_shift > 31u) ||
+        (!net->act_out.shift_is_evolved && net->act_out.fixed_shift > 31u)) return;
 
     uint32_t need_ws = mlp_i8_workspace_bytes(net);
     if (!ws || ws_bytes < need_ws) return;

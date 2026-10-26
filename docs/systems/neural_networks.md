@@ -26,7 +26,9 @@ are usable with another.
 
 For Q0.7, a stored int8 value q represents q/128, in [-1,127/128].
 Products are Q0.14; dot products accumulate in int32 with bias lifted to the
-same scale. Conversion rounds/shifts back and saturates to int8. Linear output
+same scale. Conversion rounds to nearest, with ties away from zero, and
+saturates to int8. Exact negative multiples stay exact; small negative values
+can round to zero. Linear output
 still saturates to int8: it is not an unbounded real-valued output. Hard-tanh
 on already representable Q0.7 mostly expresses the same clipping boundary.
 
@@ -39,9 +41,10 @@ Keep buffers alive and nonoverlapping for inference.
 
 Worst-case accumulator magnitude grows with fan-in. Validate dimensions and
 dot-product ranges independently of final saturation: signed accumulator overflow
-cannot be repaired by clipping afterward. Some legacy shifts/conversions also
-rely on target C integer behavior; these headers are not a blanket portable
-saturating-math guarantee. See [fixed point](fixed_point.md) and the
+cannot be repaired by clipping afterward. Bias scaling uses multiplication so
+negative biases are defined. Other legacy arithmetic still relies on target C
+integer behavior; these headers are not a blanket portable saturating-math
+guarantee. See [fixed point](fixed_point.md) and the
 [historical audit](../code_audit.md).
 
 ## Dynamic activations and genome views
@@ -52,6 +55,11 @@ Use `mlp_i8_init` to describe topology/activation layout,
 Activations include fixed/evolved linear shifts, hard tanh, hard SwiGLU, and
 random-gated hard SwiGLU. Evolved shifts/clamps/gate choices occupy extra genome
 fields, so the simple dynamic parameter-count formula is insufficient.
+Fixed shifts above 31 reject inference before writing output or scratch;
+zero selects the default shift of 7. Evolved shifts clamp to 31. Requested
+SwiGLU gate counts are preserved, then bounded by each layer's output width.
+Corrected rounding and multi-gate layouts can change results from older models;
+regenerate matching layouts and revalidate exported models.
 
 `mlp_i8_forward_ws` is preferred for embedded use. Workspace contains two
 hidden buffers plus gating scratch as needed. Allocate once and keep it separate
@@ -73,6 +81,8 @@ the local headers define the actual implementation.
 
 ESNs maintain temporal reservoir state. Sparse recurrence reduces connections
 to K per reservoir row; forgetting/resetting state changes the experiment.
+Both sparse headers require `1 <= K <= reservoir dimension <= 256` at compile
+time so unique-neighbor sampling terminates and byte-sized indices fit.
 Readout ridge training uses floating-point linear algebra/workspaces and is much
 more expensive than an int8 step. Random initialization or a nominal spectral
 setting is not a proof of the echo-state property after quantization.
@@ -87,8 +97,12 @@ reasoning ability, accuracy, or online training.
 
 The MNIST scripts use PyTorch/torchvision QAT and export C arrays plus selected
 test images. Training is Python-side; the robot runs inference.
-The distributed example exchanges/gossips output scores: it is not distributed
-backpropagation. Compile-time hidden dimension, basis count, and exported C
+The distributed example relays one prediction per origin, tagged with inference
+epoch and image. Duplicate broadcasts count once. Its default 64-vote cache
+retains the local prediction and the first remote origins received; incomplete
+delivery, different epochs, or a larger swarm can produce different local
+tallies. It does not implement distributed backpropagation. Compile-time hidden
+dimension, basis count, and exported C
 metadata must agree; notably the distributed C default basis count differs
 from its Python exporter's default.
 

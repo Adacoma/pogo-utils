@@ -15,6 +15,10 @@ Neighbor diffusion approximates a graph process: conceptually
 `s_next = s - tau*L*s`, where L is the interaction-graph Laplacian.
 The selected kernel/normalization changes the operator; do not compare lambda
 across kernels as if units and spectra were identical.
+The default Metropolis edge weight is now `1/(1+max(degree_i,degree_j))`,
+leaving a positive self weight. Its tau values are bounded to `(0,1]`; two
+degree-one robots at tau=1 average rather than swap values forever. Existing
+lambda thresholds and experiment baselines need recalibration for this operator.
 After appropriate centering/consensus, fitting a decaying signal uses the
 relationship `log(abs(s)) approximately intercept - lambda*t`.
 The module tracks multiple diffusion channels, fit quality, and an aggregate
@@ -43,6 +47,13 @@ elapsed time, iteration, diffusion validity, result readiness, per-channel s,
 lambda/average lambda, diffusion time/tau, best MSE, and fitted point count.
 Read readiness/validity before interpreting a numeric result.
 
+Time synchronization adjusts an SSR-owned forward offset, capped at 1,000 ms
+relative to the local robot clock. Corrections below 10 ms, backward corrections
+and corrections exceeding that total cap are ignored. Phase timers and outgoing
+SSR timestamps use this offset; neighbor expiry uses raw robot time. SSR never
+sets the application clock or resets its timer. Large startup skew therefore
+needs application-level coordination rather than repeated clock correction.
+
 ## Bounds and resources
 
 Default compile-time capacities are 20 neighbors, 3 diffusion channels,
@@ -55,6 +66,9 @@ The implementation uses floating-point math and serialized application-level
 messages. Several protocol paths rely on native float/struct conventions, so
 heterogeneous architectures/untrusted packets need a separately specified
 wire format and validation. The library is not a generic robust transport layer.
+Packets now require `SSR_PROTOCOL_TAG` in the existing `reserved` field; rebuild
+all peers together. This tag prevents accidental protocol collisions, but is
+not authentication or an experiment epoch.
 
 Measure processing/fitting/logging time against the control loop. Faster
 diffusion sampling is not necessarily better if packet reception cannot supply

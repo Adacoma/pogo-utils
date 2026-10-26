@@ -18,6 +18,7 @@
 
 #include "pogo-utils/MLP_int8.h"
 #include "pogo-utils/MLP_int8_pranc.h"
+#include "vote_gossip.h"
 
 /* -------------------------------------------------------------------------- */
 /* Parameters & data generated in mnist_mlp_pranc_params.c                    */
@@ -80,18 +81,11 @@ static void set_led_from_digit(int digit) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Push-sum style majority voting (vector s[10], scalar w)                    */
+/* Unique-origin majority voting, bounded by VOTE_GOSSIP_CAPACITY             */
 /* -------------------------------------------------------------------------- */
 
 /// Broadcast frequency (Hz) for gossip
 uint32_t vote_gossip_hz = 50;
-#define VOTE_GOSSIP_PERIOD_MS (500U / vote_gossip_hz)
-
-typedef struct __attribute__((__packed__)) {
-    float    s[MLP_INT8_OUTPUT_DIM];  ///< Half of sender's current s vector.
-    float    w;                       ///< Half of sender's current weight.
-    uint16_t sender_id;              ///< UID of the sender.
-} vote_msg_t;
 
 #define MSG_SIZE ((uint16_t)sizeof(vote_msg_t))
 
@@ -107,12 +101,12 @@ typedef struct {
     int32_t  logits[MLP_INT8_OUTPUT_DIM]; ///< Raw MLP logits (int32_t).
     uint8_t  local_pred;                  ///< Local argmax class.
 
-    float    s[MLP_INT8_OUTPUT_DIM];      ///< Push-sum state: votes.
-    float    w;                           ///< Push-sum state: weight.
+    vote_gossip_t votes;                  ///< One vote per origin, including self.
+    uint32_t inference_epoch;             ///< Changes even when image index wraps.
     float    estimate[MLP_INT8_OUTPUT_DIM]; ///< Estimated global vote frequencies.
 
     uint32_t last_send_ms;                ///< Last time we broadcast votes.
-    uint32_t round;                       ///< Push-sum round counter.
+    uint32_t round;                       ///< Successful gossip transmissions.
 
     uint32_t last_infer_ms;               ///< Last time we recomputed local inference.
 
@@ -141,14 +135,14 @@ static void recompute_local_inference_and_reset_votes(void) {
 
     mydata->local_pred = (uint8_t)argmax_int32(mydata->logits, MLP_INT8_OUTPUT_DIM);
 
-    /* Initialise votes as one-hot vector for local prediction */
+    /* Epoch and image must both match before a remote vote can be accepted. */
+    vote_gossip_reset(&mydata->votes, ++mydata->inference_epoch,
+                      (uint32_t)mydata->current_img_idx,
+                      (uint16_t)pogobot_helper_getid(), mydata->local_pred);
     for (int k = 0; k < MLP_INT8_OUTPUT_DIM; ++k) {
-        mydata->s[k] = 0.0f;
         mydata->estimate[k] = 0.0f;
     }
-    mydata->s[mydata->local_pred] = 1.0f;
-    mydata->w = 1.0f;
-    mydata->estimate[mydata->local_pred] = 1.0f;  /* since w == 1 initially */
+    mydata->estimate[mydata->local_pred] = 1.0f;
 
     mydata->round = 0;
 
@@ -161,28 +155,21 @@ static void recompute_local_inference_and_reset_votes(void) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Messaging callbacks (vector push-sum)                                      */
+/* Messaging callbacks (loss/retries do not remove or multiply votes)          */
 /* -------------------------------------------------------------------------- */
 
 bool send_message(void) {
     uint32_t now = current_time_milliseconds();
-    if (now - mydata->last_send_ms < VOTE_GOSSIP_PERIOD_MS) {
+    if (vote_gossip_hz == 0u) return false; /* Explicitly disable gossip. */
+    uint32_t period_ms = 1000u / vote_gossip_hz;
+    if (period_ms == 0u) period_ms = 1u;
+    if (now - mydata->last_send_ms < period_ms) {
         return false;
     }
 
-    /* Split mass in half for push-sum (vector version) */
-    vote_msg_t msg;
-    msg.w = mydata->w * 0.5f;
-    mydata->w -= msg.w;
-
-    for (int k = 0; k < MLP_INT8_OUTPUT_DIM; ++k) {
-        msg.s[k] = mydata->s[k] * 0.5f;
-        mydata->s[k] -= msg.s[k];
-    }
-
-    msg.sender_id = (uint16_t)pogobot_helper_getid();
-
-    pogobot_infrared_sendShortMessage_omni((uint8_t *)&msg, MSG_SIZE);
+    vote_msg_t msg = vote_gossip_packet(&mydata->votes);
+    if (!pogobot_infrared_sendShortMessage_omni((uint8_t *)&msg, MSG_SIZE)) return false;
+    vote_gossip_sent(&mydata->votes);
 
     mydata->last_send_ms = now;
     mydata->round++;
@@ -190,18 +177,12 @@ bool send_message(void) {
 }
 
 void process_message(message_t *mr) {
-    if (mr->header.payload_length < MSG_SIZE) {
+    if (mr->header.payload_length != MSG_SIZE) {
         return;
     }
-    vote_msg_t const *msg = (vote_msg_t const *)mr->payload;
-    if (msg->sender_id == (uint16_t)pogobot_helper_getid()) {
-        return; // ignore echo
-    }
-
-    mydata->w += msg->w;
-    for (int k = 0; k < MLP_INT8_OUTPUT_DIM; ++k) {
-        mydata->s[k] += msg->s[k];
-    }
+    vote_msg_t msg;
+    memcpy(&msg, mr->payload, sizeof(msg));
+    (void)vote_gossip_observe(&mydata->votes, &msg);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -227,6 +208,7 @@ void user_init(void) {
 
     /* Initial inference / votes */
     mydata->current_img_idx = 0;
+    mydata->inference_epoch = 0;
     mydata->last_send_ms = 0;
     mydata->last_infer_ms = current_time_milliseconds();
     mydata->n_samples = 0;            /* [NEW] */
@@ -234,7 +216,7 @@ void user_init(void) {
     mydata->n_correct_consensus = 0;  /* [NEW] */
     recompute_local_inference_and_reset_votes();
 
-    /* Radio power & scheduler (push-sum-style settings) */
+    /* Radio power & scheduler; each packet relays one cached origin. */
     pogobot_infrared_set_power(2);
     main_loop_hz                  = 60;
     max_nb_processed_msg_per_tick = 4;
@@ -251,11 +233,11 @@ void user_init(void) {
 void user_step(void) {
     uint32_t now = current_time_milliseconds();
 
-    /* Update running estimates from push-sum state */
-    if (mydata->w > 1e-6f) {
-        for (int k = 0; k < MLP_INT8_OUTPUT_DIM; ++k) {
-            mydata->estimate[k] = mydata->s[k] / mydata->w;
-        }
+    /* Frequencies describe unique known voters, not guaranteed swarm totals. */
+    uint8_t counts[VOTE_GOSSIP_CLASSES];
+    vote_gossip_tally(&mydata->votes, counts);
+    for (int k = 0; k < MLP_INT8_OUTPUT_DIM; ++k) {
+        mydata->estimate[k] = (float)counts[k] / (float)mydata->votes.count;
     }
     int consensus_pred = argmax_float(mydata->estimate, MLP_INT8_OUTPUT_DIM);
 
@@ -306,12 +288,14 @@ void user_step(void) {
     /* Optional extra debug occasionally */
     if ((pogobot_ticks % 1000U) == 0U && pogobot_helper_getid() == 0U) {
         uint8_t label = mnist_labels[mydata->current_img_idx];
-        printf0("[Round %lu] img=%d label=%u local=%u consensus=%d\n",
+        printf0("[Round %lu] img=%d label=%u local=%u consensus=%d known=%u cache_full=%u\n",
                 (unsigned long)mydata->round,
                 mydata->current_img_idx,
                 (unsigned)label,
                 (unsigned)mydata->local_pred,
-                consensus_pred);
+                consensus_pred,
+                (unsigned)mydata->votes.count,
+                (unsigned)mydata->votes.full);
     }
 }
 

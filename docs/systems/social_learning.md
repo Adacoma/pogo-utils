@@ -45,6 +45,9 @@ A block update preserves coordinates outside that block. Validate offset/length
 and the epoch/controller consistency required by the application. Blockwise
 exchange reduces one packet's size but can produce partially updated
 controllers, not an atomic genome transaction.
+SL and HIT reject nonfinite remote fitness or controller coordinates before
+changing local state. HIT block bounds use overflow-safe subtraction when
+clamping lengths. Epoch freshness still belongs to the application.
 
 ## Transport integration
 

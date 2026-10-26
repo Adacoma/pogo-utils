@@ -250,6 +250,9 @@ float sl_tell(sl_t *sl, float f_try){
 void sl_observe_remote(sl_t *sl, uint16_t from_id, uint32_t epoch,
                        const float *x_remote, float f_adv){
     if (!sl || !x_remote) return;
+    /* Reject a poisoned advert before it can enter the repository. */
+    if (!isfinite(f_adv)) return;
+    for (int i = 0; i < sl->n; ++i) if (!isfinite(x_remote[i])) return;
     repo_upsert(sl, x_remote, f_adv, epoch, from_id);
 }
 

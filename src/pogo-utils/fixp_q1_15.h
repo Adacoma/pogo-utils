@@ -24,7 +24,7 @@ static inline q1_15_t q1_15_from_int(int x) {
         return Q1_15_MAX;
     if (x < -1)
         return Q1_15_MIN;
-    return (q1_15_t)(x << Q1_15_FRACTIONAL_BITS);
+    return (q1_15_t)(x * Q1_15_ONE); /* x is -1 or 0 after the checks. */
 }
 
 /* Convert Q1.15 fixed-point to an integer (truncating the fractional part). */
@@ -37,7 +37,7 @@ static inline int q1_15_to_int(q1_15_t x) {
  * Since Q8.24 has a wider range, conversion is done by shifting left 9 bits.
  */
 static inline q8_24_t q8_24_from_q1_15(q1_15_t x) {
-    return ((q8_24_t)x) << (Q8_24_FRACTIONAL_BITS - Q1_15_FRACTIONAL_BITS);
+    return (int32_t)x * 512; /* Full int16 range fits int32. */
 }
 
 
@@ -95,9 +95,7 @@ static inline q1_15_t q1_15_sub(q1_15_t a, q1_15_t b) {
 /* Rounded multiply: returns (a*b)>>15 with rounding, saturated to q1_15_t range */
 static inline q1_15_t q1_15_mul(q1_15_t a, q1_15_t b) {
     int32_t p = (int32_t)a * (int32_t)b;               /* Q2.30 */
-    /* add 0.5 ulp for rounding toward nearest */
-    p += (p >= 0 ? (1 << (Q1_15_FRACTIONAL_BITS - 1)) : -(1 << (Q1_15_FRACTIONAL_BITS - 1)));
-    int32_t r = p >> Q1_15_FRACTIONAL_BITS;            /* back to Q1.15 */
+    int32_t r = pogo_round_shift_i32(p, Q1_15_FRACTIONAL_BITS);
     if (r > Q1_15_MAX) r = Q1_15_MAX;
     if (r < Q1_15_MIN) r = Q1_15_MIN;
     return (q1_15_t)r;
@@ -106,8 +104,8 @@ static inline q1_15_t q1_15_mul(q1_15_t a, q1_15_t b) {
 /* Multiply two Q1.15 values, but keep full int32 in Q1.15 for intermediate work (with rounding). */
 static inline int32_t q1_15_mul32_r(int32_t a, int32_t b) {
     int64_t p = (int64_t)a * (int64_t)b;               /* Q2.30 */
-    p += (p >= 0 ? (1LL << (Q1_15_FRACTIONAL_BITS - 1)) : -(1LL << (Q1_15_FRACTIONAL_BITS - 1)));
-    return (int32_t)(p >> Q1_15_FRACTIONAL_BITS);
+    int64_t rounded = pogo_round_shift_i64(p, Q1_15_FRACTIONAL_BITS);
+    return rounded > INT32_MAX ? INT32_MAX : rounded < INT32_MIN ? INT32_MIN : (int32_t)rounded;
 }
 
 /* Divide by small integer with rounding using 32-bit “magic reciprocals”. */
@@ -118,7 +116,7 @@ static inline int32_t div5_r32(int32_t x){ return (int32_t)(((int64_t)x *  85899
 static inline q1_15_t q1_15_div(q1_15_t a, q1_15_t b) {
     if (b == 0)
         return (a >= 0) ? Q1_15_MAX : Q1_15_MIN;
-    int32_t res = (((int32_t)a) << Q1_15_FRACTIONAL_BITS) / b;
+    int32_t res = ((int32_t)a * Q1_15_ONE) / b;
     if (res > Q1_15_MAX)
         return Q1_15_MAX;
     if (res < Q1_15_MIN)
@@ -204,7 +202,7 @@ static inline q1_15_t q1_15_log(q1_15_t x) {
     int32_t num = m - Q1_15_ONE;                         /* Q1.15 */
     int32_t den = m + Q1_15_ONE;                         /* Q1.15 */
     /* y = (num / den). Do a Q1.15 division with rounding: (num<<15)/den */
-    int64_t y64 = ((int64_t)num << Q1_15_FRACTIONAL_BITS);
+    int64_t y64 = (int64_t)num * Q1_15_ONE;
     if ( (y64 ^ den) >= 0 ) y64 += (den/2); else y64 -= (den/2);
     int32_t y = (int32_t)(y64 / den);                    /* Q1.15, |y| <= ~0.333 */
 
@@ -217,7 +215,7 @@ static inline q1_15_t q1_15_log(q1_15_t x) {
     int32_t S = y + term3 + term5;                       /* Q1.15 */
 
     /* ln(m) ≈ 2*S */
-    int32_t ln_m = (S << 1);                             /* Q1.15 */
+    int32_t ln_m = S * 2;                               /* Q1.15 */
 
     /* ln(x) = ln(m) + n*ln2 */
     int32_t ln_x = ln_m + n * Q1_15_LN2_CONST;
@@ -335,10 +333,8 @@ static inline int32_t q1_15_mac32(int32_t acc, q1_15_t a, q1_15_t b) {
 
 // convert 32-bit Q2.30 accumulator to Q1.15 with rounding & saturation
 static inline q1_15_t q1_15_from_acc32(int32_t acc) {
-    // round: shift from Q2.30 -> Q1.15
-    acc += (acc >= 0 ? (1 << (Q1_15_FRACTIONAL_BITS - 1))
-                     : -(1 << (Q1_15_FRACTIONAL_BITS - 1)));
-    acc >>= Q1_15_FRACTIONAL_BITS;
+    /* Defined symmetric rounding, including INT32_MIN. */
+    acc = pogo_round_shift_i32(acc, Q1_15_FRACTIONAL_BITS);
 
     if (acc > Q1_15_MAX) acc = Q1_15_MAX;
     if (acc < Q1_15_MIN) acc = Q1_15_MIN;

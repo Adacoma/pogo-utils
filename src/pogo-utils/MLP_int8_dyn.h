@@ -1,6 +1,7 @@
 #ifndef MLP_INT8_DYN_H_
 #define MLP_INT8_DYN_H_
 
+#include "fixed_math.h"
 #include <stdint.h>
 
 /*
@@ -60,13 +61,8 @@ typedef struct {
 
 /* Convert from 32-bit accumulator (Q0.14) back to int8 Q0.7 with rounding + saturation. */
 static inline int8_t mlp_int8_dyn_from_acc32(int32_t acc) {
-#if MLP_INT8_DYN_FRAC_BITS > 0
-    if (acc >= 0)
-        acc += (1 << (MLP_INT8_DYN_FRAC_BITS - 1));
-    else
-        acc -= (1 << (MLP_INT8_DYN_FRAC_BITS - 1));
-    acc >>= MLP_INT8_DYN_FRAC_BITS;
-#endif
+    /* Round magnitude, then restore sign: subtract-before-shift biases negatives. */
+    acc = pogo_round_shift_i32(acc, MLP_INT8_DYN_FRAC_BITS);
 
     if (acc > 127)   acc = 127;
     if (acc < -128)  acc = -128;
@@ -165,7 +161,7 @@ static void mlp_int8_dyn_dense_hidden_hardtanh(const int8_t **pp,
     *pp = biases + rows;
 
     for (uint16_t i = 0; i < rows; ++i) {
-        int32_t acc = ((int32_t)biases[i]) << MLP_INT8_DYN_FRAC_BITS;
+        int32_t acc = (int32_t)biases[i] * (INT32_C(1) << MLP_INT8_DYN_FRAC_BITS); /* Defined for negative biases. */
 
         const int8_t *w_row = weights + (uint32_t)i * (uint32_t)cols;
         for (uint16_t k = 0; k < cols; ++k) {
@@ -196,7 +192,7 @@ static void mlp_int8_dyn_dense_output(const int8_t **pp,
     *pp = biases + rows;
 
     for (uint16_t i = 0; i < rows; ++i) {
-        int32_t acc = ((int32_t)biases[i]) << MLP_INT8_DYN_FRAC_BITS;
+        int32_t acc = (int32_t)biases[i] * (INT32_C(1) << MLP_INT8_DYN_FRAC_BITS); /* Defined for negative biases. */
 
         const int8_t *w_row = weights + (uint32_t)i * (uint32_t)cols;
         for (uint16_t k = 0; k < cols; ++k) {

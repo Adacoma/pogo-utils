@@ -29,7 +29,7 @@ static inline q8_24_t q8_24_from_int(int x) {
         return Q8_24_MAX;
     if (x < -128)
         return Q8_24_MIN;
-    return (q8_24_t)(x << Q8_24_FRACTIONAL_BITS);
+    return x * Q8_24_ONE; /* Range checked above, including negative x. */
 }
 
 /* Convert Q8.24 fixed point to an integer (truncates fractional part). */

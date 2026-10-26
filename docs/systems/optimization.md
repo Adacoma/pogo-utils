@@ -103,11 +103,13 @@ population/workspace arrays, and repository blocks. Default tiny_alloc classes
 only reach 192 bytes; use appropriately sized custom classes or standalone
 caller buffers for larger problems. Increasing dimension is not free.
 
-The `use_defaults` field's header commentary should not be treated as a
-universal default-merging contract; current creation copies the supplied config
-rather than applying arbitrary partial-config defaults. A zeroed config is not
-a substitute for `opt_default_cfg`. The audit records remaining facade-contract
-work separately from hardened standalone SEP.
+`opt_default_cfg` returns a complete configuration with `use_defaults=0`.
+Edit it to request intentional zero or false values. Alternatively, start with
+`opt_cfg_t cfg = {0}; cfg.use_defaults = 1;`: nonzero parameter fields override
+algorithm defaults and zero fields mean unspecified. Sizing fields still use
+zero for the documented default. The factory rejects invalid algorithm/mode
+values and nonfinite or reversed bounds before allocating, and releases all
+partial allocations on failure.
 
 ## Experiments and debugging
 

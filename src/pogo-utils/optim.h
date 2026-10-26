@@ -36,7 +36,10 @@ typedef enum { OPT_MINIMIZE = 0, OPT_MAXIMIZE = 1 } opt_mode_t;
 
 typedef struct {
     /* common toggles */
-    int use_defaults;   /* if non-zero, per-algo defaults are applied first */
+    /* Nonzero: zero-initialized partial config, nonzero fields override defaults.
+     * Zero: complete config, including intentional zero/false parameter values.
+     * opt_default_cfg() returns the latter, ready to edit. */
+    int use_defaults;
 
     union {
         es1p1_params_t es1p1;

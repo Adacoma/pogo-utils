@@ -63,7 +63,7 @@ static void dense_hidden_hard_tanh(const q1_15_t *weights,  /* [rows][cols] */
 {
     for (int i = 0; i < rows; ++i) {
         /* Start accumulator from bias: convert Q1.15 -> Q2.30  */
-        int32_t acc = ((int32_t)biases[i]) << Q1_15_FRACTIONAL_BITS;
+        int32_t acc = (int32_t)biases[i] * Q1_15_ONE; /* Negative bias is valid. */
 
         const q1_15_t *w_row = &weights[i * cols];
 
@@ -86,7 +86,7 @@ static void dense_output_layer(const q1_15_t *weights,  /* [rows][cols] */
                                q1_15_t *out)            /* [rows] */
 {
     for (int i = 0; i < rows; ++i) {
-        int32_t acc = ((int32_t)biases[i]) << Q1_15_FRACTIONAL_BITS;
+        int32_t acc = (int32_t)biases[i] * Q1_15_ONE;
         const q1_15_t *w_row = &weights[i * cols];
 
         for (int k = 0; k < cols; ++k) {

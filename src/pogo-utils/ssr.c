@@ -7,6 +7,10 @@
 
 /* -------------------- Internal helpers -------------------- */
 
+static uint32_t ssr_now(const ssr_state_t *state) {
+    return current_time_milliseconds() + state->time_offset_ms;
+}
+
 static bool ssr_float_is_valid(float value) {
     return isfinite(value);
 }
@@ -42,7 +46,7 @@ static void ssr_set_behavior(ssr_state_t *state, ssr_behavior_t behavior) {
 
     state->previous_behavior = state->behavior;
     state->behavior = behavior;
-    state->behavior_start_ms = current_time_milliseconds();
+    state->behavior_start_ms = ssr_now(state);
     state->behavior_changed = true;
 
     if (!state->config.manage_leds || !state->config.show_behavior_leds) {
@@ -154,6 +158,11 @@ static void ssr_normalize_config(ssr_config_t *config) {
         config->tau_max < config->tau_initial) {
         config->tau_max = config->tau_initial;
     }
+    /* Metropolis must retain a nonnegative self weight, even with tau growth. */
+    if (config->kernel == SSR_KERNEL_METROPOLIS) {
+        if (config->tau_initial > 1.0f) config->tau_initial = 1.0f;
+        if (config->tau_max > 1.0f) config->tau_max = 1.0f;
+    }
 }
 
 static void ssr_enter_idle_phase(
@@ -200,7 +209,7 @@ static void ssr_update_photo_start(ssr_state_t *state) {
     if (diff_back >= state->config.light_threshold ||
         diff_front_left >= state->config.light_threshold ||
         diff_front_right >= state->config.light_threshold) {
-        ssr_begin_experiment(state, current_time_milliseconds());
+        ssr_begin_experiment(state, ssr_now(state));
     }
 }
 
@@ -363,7 +372,8 @@ static void ssr_compute_next_s(ssr_state_t *state) {
         if (state->config.kernel == SSR_KERNEL_METROPOLIS) {
             const float degree_j = (float)ssr_clamped_degree(neighbor->degree);
             const float maximum_degree = degree_i > degree_j ? degree_i : degree_j;
-            weight = 1.0f / maximum_degree;
+            /* A self weight breaks the two-node/bipartite swap at tau=1. */
+            weight = 1.0f / (1.0f + maximum_degree);
         }
 
         for (uint8_t j = 0; j < SSR_NUMBER_DIFFUSIONS; ++j) {
@@ -859,7 +869,7 @@ void ssr_init(ssr_state_t *state, const ssr_config_t *config) {
     state->outgoing_message.data_type = (uint8_t)SSR_DATA_NULL;
     state->outgoing_message.degree = 1u;
     state->outgoing_message.sender_id = pogobot_helper_getid();
-    state->outgoing_message.reserved = 0u;
+    state->outgoing_message.reserved = SSR_PROTOCOL_TAG;
     for (uint8_t i = 0; i < SSR_NUMBER_DIFFUSIONS; ++i) {
         state->outgoing_message.val[i] = 0.0f;
     }
@@ -876,7 +886,7 @@ void ssr_init(ssr_state_t *state, const ssr_config_t *config) {
         state->last_photo_front_right = pogobot_photosensors_read(2);
         state->started = false;
     } else {
-        ssr_begin_experiment(state, current_time_milliseconds());
+        ssr_begin_experiment(state, ssr_now(state));
     }
 }
 
@@ -892,7 +902,7 @@ void ssr_trigger_start(ssr_state_t *state) {
     if (state == NULL || state->started) {
         return;
     }
-    ssr_begin_experiment(state, current_time_milliseconds());
+    ssr_begin_experiment(state, ssr_now(state));
 }
 
 ssr_step_result_t ssr_step(ssr_state_t *state) {
@@ -911,7 +921,7 @@ ssr_step_result_t ssr_step(ssr_state_t *state) {
         return state->started ? SSR_STEP_ACTIVE : SSR_STEP_WAITING_FOR_START;
     }
 
-    const uint32_t now = current_time_milliseconds();
+    const uint32_t now = ssr_now(state);
 
     if (now - state->experiment_start_ms < state->config.initial_motility_ms) {
         if (state->behavior != SSR_BEHAVIOR_INITIAL_MOTILITY) {
@@ -981,6 +991,7 @@ bool ssr_process_message(ssr_state_t *state, message_t *message) {
 
     ssr_message_data_t data;
     memcpy(&data, &message->payload, sizeof(data));
+    if (data.reserved != SSR_PROTOCOL_TAG) return false;
 
     if (data.data_type < (uint8_t)SSR_DATA_PRE_S ||
         data.data_type > (uint8_t)SSR_DATA_CONSENSUS_LAMBDA) {
@@ -1021,10 +1032,15 @@ bool ssr_process_message(ssr_state_t *state, message_t *message) {
         neighbor->val[i] = data.val[i];
     }
 
-    if (state->config.enable_time_sync &&
-        neighbor->time_ms >= current_time_milliseconds() + 10u) {
-        _current_time_milliseconds = neighbor->time_ms;
-        pogobot_stopwatch_reset(&_global_timer);
+    if (state->config.enable_time_sync) {
+        /* Unsigned differences handle clock wrap and reject backward/large
+         * jumps. Bound the total offset so repeated packets cannot advance
+         * SSR arbitrarily far ahead of its own robot clock. */
+        const uint32_t ahead = neighbor->time_ms - ssr_now(state);
+        if (ahead >= 10u && ahead <= SSR_TIME_SYNC_MAX_OFFSET_MS &&
+            state->time_offset_ms <= SSR_TIME_SYNC_MAX_OFFSET_MS - ahead) {
+            state->time_offset_ms += ahead;
+        }
     }
 
     return true;
@@ -1039,7 +1055,7 @@ bool ssr_send_message(ssr_state_t *state) {
     state->outgoing_message.degree = ssr_clamped_degree(
         state->neighbor_count > 0u ? state->neighbor_count : state->last_degree
     );
-    state->outgoing_message.time_ms = current_time_milliseconds();
+    state->outgoing_message.time_ms = ssr_now(state);
 
     pogobot_infrared_sendShortMessage_omni(
         (uint8_t *)&state->outgoing_message,
@@ -1096,7 +1112,7 @@ uint32_t ssr_get_behavior_elapsed_ms(const ssr_state_t *state) {
     if (state == NULL) {
         return 0u;
     }
-    return current_time_milliseconds() - state->behavior_start_ms;
+    return ssr_now(state) - state->behavior_start_ms;
 }
 
 uint16_t ssr_get_iteration(const ssr_state_t *state) {

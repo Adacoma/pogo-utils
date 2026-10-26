@@ -163,6 +163,7 @@ class Client:
 
         length optionally retains a prefix of a padded raw file; CRC checking
         still covers the COMPLETE remote stream, including discarded padding.
+        Returns (saved byte count, CRC32 of the saved bytes).
         """
         self._name(str(target))
         command = f"get {self.token:08x} {target} {'raw' if raw else 'file'}"
@@ -174,7 +175,9 @@ class Client:
         keep = size if length is None else length
         if not 0 <= keep <= size:
             raise TransferError("requested length exceeds the remote stream")
-        offset, crc = 0, 0
+        # Validate the entire remote stream, but report the digest of the bytes
+        # actually saved when --length trims a raw file's padding.
+        offset, crc, saved_crc = 0, 0, 0
         while offset < size:
             count = min(CHUNK, size - offset)
 
@@ -195,6 +198,7 @@ class Client:
                 piece = block[:min(len(block), keep - offset)]
                 if destination.write(piece) != len(piece):
                     raise TransferError("short local write")
+                saved_crc = binascii.crc32(piece, saved_crc)
             crc = binascii.crc32(block, crc)
             offset += len(block)
             if progress:
@@ -203,7 +207,7 @@ class Client:
             raise TransferError("download content checksum mismatch")
         self.request(f"getend {self.token:08x} {crc:08x}", "DONE",
                      lambda f: len(f) == 4 and f[1] == "GET" and int(f[2]) == size and int(f[3], 16) == crc)
-        return keep, crc
+        return keep, saved_crc
 
 
 def download_file(client, target, path, *, overwrite=False, **options):

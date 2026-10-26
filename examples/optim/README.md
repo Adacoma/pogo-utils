@@ -24,7 +24,10 @@ change compiler-defined dimensions or source switches.
 
 ## Configuration and expected behavior
 
-OPT_EXAMPLE_ALGO selects 0 ES,1 SPSA,2 PGPE,3 SEP,4 social learning,5 HIT; D=16 and HIT_BLOCK_SIZE=4. Current class-array count enables only its first five entries.
+OPT_EXAMPLE_ALGO selects 0 ES,1 SPSA,2 PGPE,3 SEP,4 social learning,5 HIT;
+D=16 and HIT_BLOCK_SIZE=4. All six allocator classes are enabled, including the
+4096-byte slot needed by the default SEP workspace. Creation failure disables
+the example callbacks and skips evaluation of the missing genome.
 
 [OPT] creation failure indicates config/allocation limits; inspect selected algorithm's update/advertised-score semantics.
 

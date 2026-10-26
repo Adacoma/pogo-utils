@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #ifndef OPT_CLAMP
 #define OPT_CLAMP(v,a,b) ((v)<(a)?(a):((v)>(b)?(b):(v)))
@@ -79,7 +80,8 @@ static uint16_t sep_default_mu(uint16_t lambda) {
 
 opt_cfg_t opt_default_cfg(opt_algo_t algo, int n){
     opt_cfg_t c; memset(&c, 0, sizeof(c));
-    c.use_defaults = 1;
+    /* This is a complete, editable configuration: zero/false overrides count. */
+    c.use_defaults = 0;
 
     switch (algo){
     default:
@@ -164,6 +166,55 @@ static float *own_or_make_bounds(tiny_alloc_t *ta, const float *ext, int n, floa
 
 /* ------------------------------ Create ---------------------------------- */
 
+/* Partial configurations use zero as "unspecified". Starting from the public
+ * default helper instead permits intentional zero/false values without a new
+ * presence-mask API or extra state in each optimizer. */
+static opt_cfg_t resolve_cfg(opt_algo_t algo, int n, const opt_cfg_t *in) {
+    if (in && !in->use_defaults) return *in;
+    opt_cfg_t cfg = opt_default_cfg(algo, n);
+    if (!in) return cfg;
+#define COPY_NONZERO(backend, field) \
+    do { if (in->P.backend.field != 0) cfg.P.backend.field = in->P.backend.field; } while (0)
+    switch (algo) {
+    case OPT_ES1P1:
+        COPY_NONZERO(es1p1, sigma0); COPY_NONZERO(es1p1, sigma_min);
+        COPY_NONZERO(es1p1, sigma_max); COPY_NONZERO(es1p1, s_target);
+        COPY_NONZERO(es1p1, s_alpha); COPY_NONZERO(es1p1, c_sigma);
+        break;
+    case OPT_SPSA:
+        COPY_NONZERO(spsa, a); COPY_NONZERO(spsa, c); COPY_NONZERO(spsa, A);
+        COPY_NONZERO(spsa, alpha); COPY_NONZERO(spsa, gamma); COPY_NONZERO(spsa, g_clip);
+        break;
+    case OPT_PGPE:
+        COPY_NONZERO(pgpe, eta_mu); COPY_NONZERO(pgpe, eta_sigma);
+        COPY_NONZERO(pgpe, sigma_min); COPY_NONZERO(pgpe, sigma_max);
+        COPY_NONZERO(pgpe, baseline_alpha); COPY_NONZERO(pgpe, normalize_pair);
+        break;
+    case OPT_SEP_CMAES:
+        COPY_NONZERO(sep, sigma0); COPY_NONZERO(sep, sigma_min);
+        COPY_NONZERO(sep, sigma_max); COPY_NONZERO(sep, cc); COPY_NONZERO(sep, cs);
+        COPY_NONZERO(sep, c1); COPY_NONZERO(sep, cmu); COPY_NONZERO(sep, damps);
+        if (in->P.sep.weights) cfg.P.sep.weights = in->P.sep.weights;
+        break;
+    case OPT_SOCIAL_LEARNING:
+        COPY_NONZERO(sl, roulette_random_prob); COPY_NONZERO(sl, loss_mut_gain);
+        COPY_NONZERO(sl, loss_mut_clip); COPY_NONZERO(sl, dup_eps);
+        COPY_NONZERO(sl, repo_capacity);
+        break;
+    case OPT_HIT:
+        COPY_NONZERO(hit, alpha); COPY_NONZERO(hit, sigma); COPY_NONZERO(hit, eval_T);
+        COPY_NONZERO(hit, evolve_alpha); COPY_NONZERO(hit, alpha_sigma);
+        COPY_NONZERO(hit, alpha_min); COPY_NONZERO(hit, alpha_max);
+        COPY_NONZERO(hit, auto_sigma); COPY_NONZERO(hit, loss_mut_gain);
+        COPY_NONZERO(hit, loss_mut_clip);
+        break;
+    }
+#undef COPY_NONZERO
+    /* Leave size defaults to the factory, so mu follows a supplied lambda. */
+    cfg.sz = in->sz;
+    return cfg;
+}
+
 //static int alloc_fail(void **pp){ *pp = NULL; return 0; }
 
 int opt_create(opt_t **self_out, tiny_alloc_t *ta, int n,
@@ -171,10 +222,19 @@ int opt_create(opt_t **self_out, tiny_alloc_t *ta, int n,
                const float *lo, const float *hi,
                const opt_cfg_t *cfg_in)
 {
-    if (!self_out || !ta || n <= 0) return 0;
+    if (!self_out) return 0;
     *self_out = NULL;
+    /* Reject invalid dispatch values before acquiring any ownership. */
+    if (!ta || n <= 0 || (size_t)n > SIZE_MAX / sizeof(float) ||
+        algo < OPT_ES1P1 || algo > OPT_HIT ||
+        (mode != OPT_MINIMIZE && mode != OPT_MAXIMIZE)) return 0;
+    for (int i = 0; i < n; ++i) {
+        const float lower = lo ? lo[i] : -1.0f;
+        const float upper = hi ? hi[i] : 1.0f;
+        if (!isfinite(lower) || !isfinite(upper) || lower > upper) return 0;
+    }
 
-    opt_cfg_t cfg = cfg_in ? *cfg_in : opt_default_cfg(algo, n);
+    opt_cfg_t cfg = resolve_cfg(algo, n, cfg_in);
 
     opt_t *self = (opt_t*)tiny_calloc(ta, 1, sizeof(*self));
     //printf("DEBUGGG 1: sizeof(opt_t)=%d\n", sizeof(*self));
@@ -194,9 +254,10 @@ int opt_create(opt_t **self_out, tiny_alloc_t *ta, int n,
     case OPT_ES1P1: {
         float *x = (float*)tiny_calloc(ta, n, sizeof(float));
         float *t = (float*)tiny_calloc(ta, n, sizeof(float));
+        /* Record ownership before testing the group: a later request may fail. */
+        self->buf.es1p1.x = x; self->buf.es1p1.x_try = t;
         if (!x || !t) goto fail;
         for (int i=0;i<n;++i) x[i] = 0.0f;
-        self->buf.es1p1.x = x; self->buf.es1p1.x_try = t;
 
         es1p1_params_t P = cfg.P.es1p1;
         P.mode = (mode==OPT_MINIMIZE)?ES1P1_MINIMIZE:ES1P1_MAXIMIZE;
@@ -209,8 +270,8 @@ int opt_create(opt_t **self_out, tiny_alloc_t *ta, int n,
         float *x  = (float*)tiny_calloc(ta, n, sizeof(float));
         float *wk = (float*)tiny_calloc(ta, n, sizeof(float));
         int   *dl = (int  *)tiny_calloc(ta, n, sizeof(int));
-        if (!x || !wk || !dl) goto fail;
         self->buf.spsa.x = x; self->buf.spsa.x_work = wk; self->buf.spsa.delta = dl;
+        if (!x || !wk || !dl) goto fail;
 
         spsa_params_t P = cfg.P.spsa;
         spsa_mode_t M = (mode==OPT_MINIMIZE)?SPSA_MINIMIZE:SPSA_MAXIMIZE;
@@ -224,9 +285,9 @@ int opt_create(opt_t **self_out, tiny_alloc_t *ta, int n,
         float *sg = (float*)tiny_calloc(ta, n, sizeof(float));
         float *xt = (float*)tiny_calloc(ta, n, sizeof(float));
         float *ep = (float*)tiny_calloc(ta, n, sizeof(float));
+        self->buf.pgpe.mu=mu; self->buf.pgpe.sigma=sg; self->buf.pgpe.x_try=xt; self->buf.pgpe.eps=ep;
         if (!mu || !sg || !xt || !ep) goto fail;
         for (int i=0;i<n;++i){ mu[i]=0.0f; sg[i]=0.2f; }
-        self->buf.pgpe.mu=mu; self->buf.pgpe.sigma=sg; self->buf.pgpe.x_try=xt; self->buf.pgpe.eps=ep;
 
         pgpe_params_t P = cfg.P.pgpe;
         P.mode = (mode==OPT_MINIMIZE)?PGPE_MINIMIZE:PGPE_MAXIMIZE;
@@ -274,18 +335,18 @@ int opt_create(opt_t **self_out, tiny_alloc_t *ta, int n,
     } break;
 
     case OPT_SOCIAL_LEARNING: {
-        const uint16_t cap = cfg.sz.repo_capacity ? cfg.sz.repo_capacity : 16;
+        const uint16_t cap = cfg.sz.repo_capacity ? cfg.sz.repo_capacity : 8;
+        if ((size_t)cap > SIZE_MAX / (size_t)n) goto fail;
         float *x  = (float*)tiny_calloc(ta, n, sizeof(float));
         float *xt = (float*)tiny_calloc(ta, n, sizeof(float));
         float *RX = (float*)tiny_calloc(ta, (size_t)cap*n, sizeof(float));
         float *RF = (float*)tiny_calloc(ta, cap, sizeof(float));
         uint32_t *RE = (uint32_t*)tiny_calloc(ta, cap, sizeof(uint32_t));
         uint16_t *FR = (uint16_t*)tiny_calloc(ta, cap, sizeof(uint16_t));
-        if (!x || !xt || !RX || !RF || !RE || !FR) goto fail;
-
         self->buf.sl.x=x; self->buf.sl.x_try=xt;
         self->buf.sl.repo_X=RX; self->buf.sl.repo_F=RF;
         self->buf.sl.repo_epoch=RE; self->buf.sl.repo_from=FR; self->buf.sl.capacity=cap;
+        if (!x || !xt || !RX || !RF || !RE || !FR) goto fail;
 
         sl_params_t P = cfg.P.sl;
         P.mode = (mode==OPT_MINIMIZE)?SL_MINIMIZE:SL_MAXIMIZE;
@@ -298,10 +359,9 @@ int opt_create(opt_t **self_out, tiny_alloc_t *ta, int n,
     case OPT_HIT: {
         float *x     = (float*)tiny_calloc(ta, n, sizeof(float));
         float *x_buf = (float*)tiny_calloc(ta, n, sizeof(float));  /* optional */
-        if (!x || !x_buf) goto fail;
-
         self->buf.hit.x     = x;
         self->buf.hit.x_buf = x_buf;
+        if (!x || !x_buf) goto fail;
 
         hit_params_t P = cfg.P.hit;
         P.mode = (mode == OPT_MINIMIZE) ? HIT_MINIMIZE : HIT_MAXIMIZE;

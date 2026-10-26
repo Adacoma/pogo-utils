@@ -88,10 +88,40 @@ install(FILES
 
 include(CTest)
 if(BUILD_TESTING)
+    # Pure host regression fixtures: no simulation, hardware or serial device.
+    add_executable(test_numeric_regressions tests/test_numeric_regressions.c
+        src/pogo-utils/MLP_int8_dyn_act.c src/pogo-utils/fixp.c)
+    target_include_directories(test_numeric_regressions PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(test_numeric_regressions PRIVATE m)
+    add_test(NAME numeric_regressions COMMAND test_numeric_regressions)
+
+    add_executable(test_optimizer_regressions tests/test_optimizer_regressions.c
+        src/pogo-utils/optim.c src/pogo-utils/tiny_alloc.c
+        src/pogo-utils/oneplusone_es.c src/pogo-utils/spsa.c src/pogo-utils/pgpe.c
+        src/pogo-utils/sep_cmaes.c src/pogo-utils/social_learning.c src/pogo-utils/hit.c)
+    target_include_directories(test_optimizer_regressions PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(test_optimizer_regressions PRIVATE m)
+    add_test(NAME optimizer_regressions COMMAND test_optimizer_regressions)
+
+    add_executable(test_ssr_regressions tests/test_ssr_regressions.c src/pogo-utils/ssr_colors.c)
+    target_include_directories(test_ssr_regressions PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/control_stubs ${CMAKE_SOURCE_DIR})
+    target_link_libraries(test_ssr_regressions PRIVATE m)
+    add_test(NAME ssr_regressions COMMAND test_ssr_regressions)
+
+    add_executable(test_vote_gossip tests/test_vote_gossip.c)
+    target_include_directories(test_vote_gossip PRIVATE ${CMAKE_SOURCE_DIR})
+    add_test(NAME vote_gossip COMMAND test_vote_gossip)
+
     # Exercise the actual firmware transfer engine and Python host client over
     # pipes with strict NOR mocks. No serial device or simulator is launched.
     find_package(Python3 3.8 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+            add_test(NAME esn_configuration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tests/test_esn_configuration.py
+                ${CMAKE_C_COMPILER} ${CMAKE_SOURCE_DIR})
+        endif()
         add_executable(pffs_transfer_bridge tests/pffs_transfer_bridge.c
             examples/flash_file/transfer.c src/pogo-utils/flash_log.c
             src/pogo-utils/flash_file_read.c src/pogo-utils/flash_file_secure.c

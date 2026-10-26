@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <stdbool.h>
 #include <math.h>
+#include "fixed_math.h"
 
 /////////////////////////////////////////////////////////////////
 ///                     BASE TYPES                     /// {{{1
@@ -53,7 +54,7 @@ typedef int32_t q8_24_t;
 #define Q8_24_ONE      ((q8_24_t)(1UL << Q8_24_FRACTIONAL_BITS))         // 1.0 in Q8.24 (16777216)
 #define Q8_24_NEG_ONE  ((q8_24_t)(- (1UL << Q8_24_FRACTIONAL_BITS)))     // -1.0 in Q8.24 (-16777216)
 
-#define Q8_24_FROM_INT(x) ((q8_24_t)((x) << 24)) /* In Q8.24, converting an int x means computing x << 24.*/
+#define Q8_24_FROM_INT(x) pogo_scale_i32_sat((x), 24u) /* Defined saturated scaling. */
 
 // Precomputed constant macro for ln(2) in Q8.24.
 // For Q8.24, 1.0 = (1UL << 24) = 16777216, so ln(2) ≈ 0.693147 * 16777216 ≈ 11639491.

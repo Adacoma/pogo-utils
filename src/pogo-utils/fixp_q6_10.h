@@ -21,6 +21,9 @@
 
 /* Convert an int to Q6.10 by multiplying by 1024 */
 static inline q6_10_t q6_10_from_int(int x) {
+    /* Check before multiplication; an arbitrary int may overflow int32_t. */
+    if (x >= 32) return Q6_10_MAX;
+    if (x < -32) return Q6_10_MIN;
     return (q6_10_t)(x * Q6_10_ONE);
 }
 
@@ -58,7 +61,7 @@ static inline q6_10_t q6_10_from_q8_24(int32_t x) {
 
 /* Convert from Q6.10 to Q8.24 by shifting left by 14 bits */
 static inline int32_t q8_24_from_q6_10(q6_10_t x) {
-    return ((int32_t)x) << (24 - Q6_10_FRACTIONAL_BITS);
+    return (int32_t)x * 16384;
 }
 
 /*-------------------------------*/
@@ -74,7 +77,7 @@ static inline q6_10_t q6_10_from_q1_15(int16_t x) {
 
 /* Convert from Q6.10 to Q1.15 by shifting left by 5 bits */
 static inline int16_t q1_15_from_q6_10(q6_10_t x) {
-    return (int16_t)(x << (15 - Q6_10_FRACTIONAL_BITS));
+    return pogo_sat_i16((int32_t)x * 32); /* Narrowing conversion saturates. */
 }
 
 /*-------------------------------*/
@@ -90,7 +93,7 @@ static inline q6_10_t q6_10_from_q16_16(int32_t x) {
 
 /* Convert from Q6.10 to Q16.16 by shifting left by 6 bits */
 static inline int32_t q16_16_from_q6_10(q6_10_t x) {
-    return ((int32_t)x) << (16 - Q6_10_FRACTIONAL_BITS);
+    return (int32_t)x * 64;
 }
 
 
@@ -163,7 +166,7 @@ static inline int32_t q6_10_mul32_r(int32_t a, int32_t b) {
 static inline q6_10_t q6_10_div(q6_10_t a, q6_10_t b) {
     if (b == 0)
         return (a >= 0) ? Q6_10_MAX : Q6_10_MIN;
-    int32_t res = (((int32_t)a) << Q6_10_FRACTIONAL_BITS) / b;
+    int32_t res = ((int32_t)a * Q6_10_ONE) / b;
     if (res > Q6_10_MAX)
         return Q6_10_MAX;
     if (res < Q6_10_MIN)

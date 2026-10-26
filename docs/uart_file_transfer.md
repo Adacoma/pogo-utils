@@ -51,7 +51,8 @@ Raw upload stores the input at byte zero and pads the final 256-byte page with
 0xff. Its PFFS payload format is 1, and no original byte length is saved. A
 raw empty file therefore allocates one erased page. `download --length N`
 retains only N bytes but still validates the complete remote stream. For a
-physical file image, `download --raw` exports every allocated page, including
+trimmed download, the reported byte count and CRC describe the saved prefix.
+For a physical file image, `download --raw` exports every allocated page, including
 upload/log headers and erased padding.
 Raw mode still validates files; it does not bypass checks to salvage corrupt data.
 

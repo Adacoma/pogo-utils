@@ -1,6 +1,7 @@
 #ifndef MLP_INT8_H_
 #define MLP_INT8_H_
 
+#include "fixed_math.h"
 #include <stdint.h>
 #include <stdlib.h>   /* for rand() */
 #include <math.h>     /* for sqrtf() */
@@ -60,13 +61,8 @@ static inline int8_t mlp_int8_from_acc32(int32_t acc) {
      * So acc is in Q0.14 and we shift back by 7 to get Q0.7.
      */
 
-#if MLP_INT8_FRAC_BITS > 0
-    if (acc >= 0)
-        acc += (1 << (MLP_INT8_FRAC_BITS - 1));
-    else
-        acc -= (1 << (MLP_INT8_FRAC_BITS - 1));
-    acc >>= MLP_INT8_FRAC_BITS;
-#endif
+    /* Round magnitude, then restore sign: subtract-before-shift biases negatives. */
+    acc = pogo_round_shift_i32(acc, MLP_INT8_FRAC_BITS);
 
     if (acc > 127)   acc = 127;
     if (acc < -128)  acc = -128;
@@ -97,7 +93,7 @@ static void dense_hidden_int8_hard_tanh(const int8_t *weights,  /* [rows][cols] 
 {
     for (int i = 0; i < rows; ++i) {
         /* Start accumulator from bias: Q0.7 -> Q0.14 */
-        int32_t acc = ((int32_t)biases[i]) << MLP_INT8_FRAC_BITS;
+        int32_t acc = (int32_t)biases[i] * (INT32_C(1) << MLP_INT8_FRAC_BITS); /* Defined for negative biases. */
 
         const int8_t *w_row = &weights[i * cols];
 
@@ -123,7 +119,7 @@ static void dense_output_int8_layer(const int8_t *weights,  /* [rows][cols] */
                                     int8_t *out)            /* [rows] */
 {
     for (int i = 0; i < rows; ++i) {
-        int32_t acc = ((int32_t)biases[i]) << MLP_INT8_FRAC_BITS;
+        int32_t acc = (int32_t)biases[i] * (INT32_C(1) << MLP_INT8_FRAC_BITS); /* Defined for negative biases. */
         const int8_t *w_row = &weights[i * cols];
 
         for (int k = 0; k < cols; ++k) {
@@ -190,7 +186,7 @@ static void mlp_int8_forward_logits32(const MLP_INT8 *net,
 
     // Second layer: hidden -> output. Keep accumulators as Q0.14 int32
     for (int i = 0; i < MLP_INT8_OUTPUT_DIM; ++i) {
-        int32_t acc = ((int32_t)net->b2[i]) << MLP_INT8_FRAC_BITS;
+        int32_t acc = (int32_t)net->b2[i] * (INT32_C(1) << MLP_INT8_FRAC_BITS); /* Defined for negative biases. */
         const int8_t *w_row = &net->W2[0][0] + i * MLP_INT8_HIDDEN_DIM;
         for (int k = 0; k < MLP_INT8_HIDDEN_DIM; ++k) {
             acc += (int32_t)w_row[k] * (int32_t)hidden[k];

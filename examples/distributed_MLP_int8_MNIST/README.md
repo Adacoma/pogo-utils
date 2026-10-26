@@ -1,6 +1,6 @@
-# Distributed MNIST score voting
+# Distributed MNIST prediction voting
 
-PRANC-encoded classifier ensemble plus IR gossip of output scores.
+PRANC-encoded classifier ensemble plus IR gossip of unique robot predictions.
 
 Entry point: [mnist.c](mnist.c); build rules: [Makefile](Makefile).
 See the [system guide](../../docs/systems/neural_networks.md) and [all examples](../../docs/examples.md).
@@ -31,9 +31,25 @@ Defaults input=784,hidden=32,output=10,basis=256; match exporter flags (Python b
 
 Inspect local and collective predictions/scores. This is distributed inference/voting, not decentralized gradient training.
 
+[vote_gossip.h](vote_gossip.h) keeps one vote per origin and tags each packet
+with both image and inference epoch. Relays and retries do not multiply votes;
+old epochs and invalid digits are ignored. The nominal 50 Hz transmit period
+is 20 ms, subject to callback scheduling; zero Hz disables transmission.
+All participating robots must use the new packet format and coordinate their
+inference rounds. Peers in different rounds cannot contribute to each other.
+
 ## Constraints and validation
 
 No calibration needed. Homogeneous message layout and connected peers matter; reconstructed dense weights still occupy runtime RAM.
+
+The default vote cache holds 64 origins. It retains its own vote and the first
+remote votes received; `votes.full` reports overflow.
+Debug output includes `known` and `cache_full` to expose incomplete or bounded
+tallies. Increase
+`VOTE_GOSSIP_CAPACITY` consistently for larger swarms (maximum 255). Loss,
+disconnection, delayed peers and the two-second inference window can leave
+incomplete tallies. Relay traffic grows with cache size; majority agreement
+across the entire swarm is not guaranteed within that window.
 
 The [ensemble exporter](train_mnist_qat_to_c.py) writes
 [mnist_mlp_pranc_params.c](mnist_mlp_pranc_params.c) using torch/torchvision.
@@ -43,6 +59,6 @@ See the [ANN tutorial](../../docs/tutorials/ann.md).
 
 Check stdout/diagnostics and the relevant header contracts rather than treating
 a successful build as scientific validation. No new hardware timing or trajectory
-validation is claimed by this documentation; host tests cover only selected
-persistence paths. See [troubleshooting](../../docs/troubleshooting.md) before
+validation is claimed by this documentation; host tests cover vote de-duplication,
+relaying, stale rounds and bounded cache behavior. See [troubleshooting](../../docs/troubleshooting.md) before
 interpreting a failure.

@@ -31,7 +31,8 @@ Start with the [project README](../README.md), [getting started](getting_started
 ## Development and evidence
 
 [Extending the library](extending.md) · [Troubleshooting](troubleshooting.md) ·
-[Current state and next tasks](current_state.md) · [Historical code audit](code_audit.md).
+[Current state and next tasks](current_state.md) · [Historical code audit](code_audit.md) ·
+[Audit fixes and validation](code_audit.md#2026-10-26-follow-up).
 
 The [example catalog](examples.md) links all example READMEs and maps all
 installed public headers to guides. Internal headers are implementation details.

@@ -158,16 +158,19 @@ typedef enum {
     SSR_DATA_CONSENSUS_LAMBDA = 9
 } ssr_data_type_t;
 
-/*
- * Float-only wire format. Fields are ordered so float values start at an
- * aligned offset even with byte packing.
- */
+/* Protocol tag distinguishes SSR from unrelated same-sized radio packets.
+ * All robots in an SSR experiment must use this protocol revision. */
+#define SSR_PROTOCOL_TAG UINT16_C(0x5352)
+/* Bound total forward synchronization relative to the local robot clock. */
+#define SSR_TIME_SYNC_MAX_OFFSET_MS UINT32_C(1000)
+
+/* Packed wire format; copy into a local struct before accessing fields. */
 #pragma pack(push, 1)
 typedef struct {
     uint8_t data_type;
     uint8_t degree;
     uint16_t sender_id;
-    uint16_t reserved;
+    uint16_t reserved; /* SSR_PROTOCOL_TAG; field name retained for source users. */
     uint32_t time_ms;
     float val[SSR_NUMBER_DIFFUSIONS];
 } ssr_message_data_t;
@@ -253,6 +256,9 @@ typedef struct {
     uint32_t behavior_start_ms;
     uint32_t last_collective_step_ms;
     uint32_t last_final_step_ms;
+    /* SSR phase time = robot time + offset. Never adjust the control clock.
+     * Neighbor expiry always uses the unadjusted robot clock. */
+    uint32_t time_offset_ms;
 
     ssr_behavior_t behavior;
     ssr_behavior_t previous_behavior;
