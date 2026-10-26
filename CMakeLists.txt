@@ -88,6 +88,22 @@ install(FILES
 
 include(CTest)
 if(BUILD_TESTING)
+    # Exercise the actual firmware transfer engine and Python host client over
+    # pipes with strict NOR mocks. No serial device or simulator is launched.
+    find_package(Python3 3.8 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_executable(pffs_transfer_bridge tests/pffs_transfer_bridge.c
+            examples/flash_file/transfer.c src/pogo-utils/flash_log.c
+            src/pogo-utils/flash_file_read.c src/pogo-utils/flash_file_secure.c
+            src/pogo-utils/flash_file_name.c src/pogo-utils/flash_file_write.c)
+        target_include_directories(pffs_transfer_bridge PRIVATE
+            ${CMAKE_SOURCE_DIR}/tests/stubs ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR})
+        target_compile_definitions(pffs_transfer_bridge PRIVATE REAL_ROBOT)
+        add_test(NAME pffs_transfer COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tests/test_pffs_transfer.py $<TARGET_FILE:pffs_transfer_bridge>)
+        set_tests_properties(pffs_transfer PROPERTIES TIMEOUT 60)
+    endif()
+
     # The formatting core is standalone: no SDK, flash, LUTs, or libc printf
     # dependency from production objects. Tests supply a capturing transport.
     add_executable(test_print_format tests/test_print_format.c

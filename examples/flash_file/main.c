@@ -14,6 +14,7 @@
 #include "pogobase.h"
 #include "pogo-utils/flash_file.h"
 #include "pogo-utils/flash_log.h"
+#include "transfer.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -38,12 +39,13 @@ typedef struct {
     pogo_flash_log_t log;
     pogo_flash_file_defrag_t defrag; /**< Incremental compaction state. */
     bool defrag_active; /**< Blocks other commands while extents move. */
+    pffs_transfer_t transfer; /**< Upload/download metadata; shares log.page. */
 } USERDATA;
 
 DECLARE_USERDATA(USERDATA);
 REGISTER_USERDATA(USERDATA);
 
-enum { SHELL_LINE_SIZE = 160, SHELL_MAX_WORDS = 5,
+enum { SHELL_LINE_SIZE = 160, SHELL_MAX_WORDS = 7,
        SHELL_HISTORY_SIZE = 4 };
 
 /** Input state is process-wide in Pogosim, so exactly one selected robot owns
@@ -63,6 +65,21 @@ static struct {
 } shell_input;
 
 static void shell_prompt(void); /* Reprint after an asynchronous defrag result. */
+
+/** A disconnected host may leave half a command in the input editor. Discard
+ * that prefix when its session times out, so reconnecting starts at a clean
+ * prompt and cannot accidentally execute a concatenated command. */
+static void shell_transfer_service(void) {
+    bool active = pffs_transfer_busy(&mydata->transfer);
+    if (!active) return; /* Avoid clock/poll work in the ordinary idle shell. */
+    pffs_transfer_poll(&mydata->transfer, (uint32_t)current_time_milliseconds());
+    if (active && !pffs_transfer_busy(&mydata->transfer)) {
+        shell_input.length = shell_input.history_cursor = 0u;
+        shell_input.escape_state = 0u;
+        shell_input.overflow = shell_input.after_cr = false;
+        shell_prompt();
+    }
+}
 
 #ifndef REAL_ROBOT
 enum { SHELL_MAX_SIM_ROBOTS = 32 };
@@ -584,11 +601,21 @@ static void shell_execute(char *line) {
         if (*p != '\0') *p++ = '\0';
     }
     if (count == 0u) return;
+    /* Transfer frames bypass ordinary commands/history. A live session owns
+     * the page scratch and PFFS until finish/abort/timeout, including in sim. */
+    if (pffs_transfer_command(&mydata->transfer, &mydata->log, words, count,
+                              (uint32_t)current_time_milliseconds())) return;
+    if (pffs_transfer_busy(&mydata->transfer)) {
+        puts("transfer in progress; finish or abort it first");
+        return;
+    }
     const char *command = words[0];
     if (strcmp(command, "help") == 0 && count == 1u) {
         puts("help | ls | df | stat <id|name> | cat <id|name> | rm <id|name>");
         puts("touch <id> <name|-> [pages] | mv <id|name> <new_name|->");
         puts("write <id|name> <offset> <hexbytes> | defrag YES | format YES");
+        puts("UART upload/download: tools/pffs_transfer.py (put/get, CRC, ACK)");
+        puts("abort <session_hex> cancels a transfer; interrupted replacement can lose data.");
 #ifndef REAL_ROBOT
         puts("robots | use <robot_id>  (simulator only)");
 #endif
@@ -697,6 +724,7 @@ static void shell_execute(char *line) {
 /** Hardware terminals typically run without local echo; simulator diagnostics
  * use newline-terminated markers so Pogosim's per-robot log shows them. */
 static void shell_prompt(void) {
+    if (pffs_transfer_busy(&mydata->transfer)) return;
 #ifdef REAL_ROBOT
     printf("flash[%u]> ", (unsigned)pogobot_helper_getid());
 #else
@@ -777,6 +805,7 @@ static void shell_history_move(bool older) {
  * than executing a truncated destructive command. CRLF is one newline. The
  * ESC [ A/B and ESC O A/B sequences navigate command history. */
 static void shell_feed(char byte) {
+    bool transferring = pffs_transfer_busy(&mydata->transfer);
     if (shell_input.escape_state != 0u) {
         if (shell_input.escape_state == 1u) {
             shell_input.escape_state = 0u;
@@ -809,14 +838,17 @@ static void shell_feed(char byte) {
     shell_input.after_cr = byte == '\r';
     if (byte == '\r' || byte == '\n') {
 #ifdef REAL_ROBOT
-        putchar('\n');
+        if (!transferring) putchar('\n');
 #else
         shell_tty_write("\n", 1u);
 #endif
         if (shell_input.overflow) puts("error: command line too long");
         else {
             shell_input.line[shell_input.length] = '\0';
-            shell_history_save();
+            /* Keep automated data packets out of the four-command history. */
+            if (!transferring && strncmp(shell_input.line, "put ", 4u) != 0 &&
+                strncmp(shell_input.line, "get ", 4u) != 0)
+                shell_history_save();
             shell_execute(shell_input.line);
         }
         shell_input.length = 0u;
@@ -850,7 +882,8 @@ static void shell_feed(char byte) {
     shell_input.line[shell_input.length++] = byte;
     shell_input.history_cursor = 0u;
 #ifdef REAL_ROBOT
-    putchar(byte);
+    /* Do not echo UART payload while flash/ACK traffic owns the connection. */
+    if (!transferring) putchar(byte);
 #else
     shell_tty_write(&byte, 1u);
 #endif
@@ -864,6 +897,7 @@ void user_init(void) {
     msg_tx_fn = NULL;
     memset(&mydata->defrag, 0, sizeof(mydata->defrag));
     mydata->defrag_active = false;
+    memset(&mydata->transfer, 0, sizeof(mydata->transfer));
 #ifndef REAL_ROBOT
     uint16_t id = pogobot_helper_getid();
     if (robot_count < SHELL_MAX_SIM_ROBOTS) {
@@ -890,6 +924,7 @@ void user_step(void) {
         shell_prompt();
     }
     shell_defrag_service();
+    shell_transfer_service();
     if (stdin_closed) return;
     for (unsigned i = 0u; i < 64u; ++i) {
         fd_set input;
@@ -919,6 +954,7 @@ int main(void) {
     shell_prompt();
     for (;;) {
         shell_defrag_service();
+        shell_transfer_service();
         if (uart_read_nonblock()) shell_feed((char)uart_read());
     }
 #else

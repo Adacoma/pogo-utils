@@ -5,6 +5,8 @@ PFFS is a bounded catalog over the Pogobot SDK's 5,888 user-flash pages
 caller buffers. It is not a general-purpose, transactional filesystem.
 The [serial shell](../examples/flash_file/README.md) exposes `ls`, `df`,
 `stat`, `cat`, `touch`, `write`, `mv`, `rm`, and explicit `format YES`.
+Its [UART transfer tool](uart_file_transfer.md) uploads binary files and
+downloads ordinary files or committed log payloads without whole-file RAM buffers.
 
 ## Layout and capacity
 

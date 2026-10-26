@@ -125,13 +125,18 @@ cmake --build build-debug --parallel
 ctest --test-dir build-debug --output-on-failure
 ```
 
-The six targets exercise PFFS, strict NOR PFFS behavior, NOR append logs,
+The six core targets exercise PFFS, strict NOR PFFS behavior, NOR append logs,
 magnetometer flash persistence, bounded integer/fixed-point formatting, and
 flash-first printing/backpressure. They use host mocks, not real flash or robot
 motion. Some tests perform setup calls inside assertions: Release
 `-DNDEBUG` removes those calls, so it is not a valid test configuration.
 These tests do not establish hardware latency, wear endurance, controller
 stability, or the correctness of every numerical runtime.
+
+When Python 3.8 or newer is available, CMake also registers `pffs_transfer`.
+It runs the [UART host client](../tools/pffs_transfer.py) over pipes against
+the C transfer engine and strict NOR model. It needs no pyserial package or
+serial device and checks binary round-trips, retries and failure handling.
 
 ## Customizing an example
 

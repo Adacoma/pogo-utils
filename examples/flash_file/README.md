@@ -50,6 +50,34 @@ data buffer; the library's streaming writer supports large-file updates.
 Command lines are limited to 159 bytes; several `write` commands can fill a
 page, but each wears its sector, so use `flash_log` for frequent appends.
 
+## Upload and download over UART
+
+With this shell firmware running, close the serial terminal and use the
+[host tool](../../tools/pffs_transfer.py). Install `pyserial` in your host
+Python environment, then run from the repository root:
+
+```sh
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload config.csv --id 10 --name config
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download config received.csv
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download prints robot-prints.txt
+```
+
+Use a free ID for creation. The uploader refuses missing/corrupt filesystems;
+it never formats them. An upload header preserves the exact original byte
+length, and the downloader removes it automatically. Use `upload --raw` for
+existing binary layouts that must start at byte zero. Native ordinary files
+have page-granular size; `download --length N` can discard known padding.
+Logs download as concatenated committed payload, including arbitrary binary
+bytes. `download --raw` exports physical allocated pages instead.
+
+Remote overwrites need `upload --replace`, matching ID/name, compatible type
+and unchanged page count. Interrupted replacement can damage the old file.
+Local files need `download --overwrite`; only a verified download is published.
+The 48-byte chunk protocol has CRCs, acknowledgements and timeout/retry handling.
+It shares the existing page cache and locks other commands during transfers.
+Read the [UART transfer guide](../../docs/uart_file_transfer.md) for setup,
+payload layout, raw/replacement examples and failure guarantees.
+
 `defrag YES` is for recovering contiguous free space after deletion, not for
 routine maintenance. Back up the flash archive or robot data first and keep
 power connected until `defrag: complete`. The command checks catalog extents,

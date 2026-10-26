@@ -96,8 +96,8 @@ finding list, not a claim that every issue remains unfixed.
 
 ## Tests and contributions
 
-[Getting started](docs/getting_started.md#host-tests) describes the six host
-tests and their limits. [Troubleshooting](docs/troubleshooting.md) covers
+[Getting started](docs/getting_started.md#host-tests) describes the core host
+tests and UART transfer integration test. [Troubleshooting](docs/troubleshooting.md) covers
 build/version mismatches, calibration, motion, and flash failures.
 [Extending the library](docs/extending.md) explains adding modules, heading
 sources, examples, tests, serialization, and documentation without introducing

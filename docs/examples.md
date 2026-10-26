@@ -41,7 +41,7 @@ not benchmark datasets.
 
 | Example | Entry point | Scenario | Purpose |
 | --- | --- | --- | --- |
-| [flash_file](../examples/flash_file/README.md) | [main.c](../examples/flash_file/main.c) | [flash_file.yaml](../conf/flash_file.yaml) | Interactive catalog/file management on UART or simulator stdin. |
+| [flash_file](../examples/flash_file/README.md) | [main.c](../examples/flash_file/main.c) | [flash_file.yaml](../conf/flash_file.yaml) | Interactive catalog/file management and checksummed UART upload/download with a host tool. |
 | [flash_file_format](../examples/flash_file_format/README.md) | [main.c](../examples/flash_file_format/main.c) | [flash_file.yaml](../conf/flash_file.yaml) | Deliberately recreate empty v3 catalogs without immediately creating a payload file. |
 | [flash_log](../examples/flash_log/README.md) | [main.c](../examples/flash_log/main.c) | [magnetometer.yaml](../conf/magnetometer.yaml) | Separate print/CSV streams with bounded RAM caches and regular page service. |
 | [print_log](../examples/print_log/README.md) | [main.c](../examples/print_log/main.c) | [flash_file.yaml](../conf/flash_file.yaml) | Lightweight integer/fixed-point printf-style flash records with optional terminal mirroring. |

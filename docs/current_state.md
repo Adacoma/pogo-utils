@@ -1,6 +1,6 @@
 # Current project state
 
-Last updated: 2026-10-06. This is a concise engineering/scientific handoff,
+Last updated: 2026-10-26. This is a concise engineering/scientific handoff,
 not a hardware-certification report. [Documentation map](index.md);
 [historical audit](code_audit.md).
 
@@ -28,6 +28,10 @@ not a hardware-certification report. [Documentation map](index.md);
   Writes/defrag are not transactional; creation can autoformat damaged catalogs.
 - Logs use one-page caches and per-page CRC. New defaults are 64 KiB per log;
   existing sizes remain fixed. Uncommitted RAM bytes disappear on reset.
+- Flash shell UART transfers use 48-byte CRC/ACK frames and its existing page
+  cache. Type 0x8002 wraps uploads with exact length/content CRC; raw mode keeps
+  native schemas. Downloads unwrap uploads/logs. Creation never autoformats;
+  replacement is explicit, same-page-count and non-transactional.
 - Printing uses a standalone integer/fixed-point core and flash-first adapter:
   RAM-only producer, caller-sized staging, one pending spill/mirror record,
   user-called one-page service/checkpoint, optional byte-budgeted transport.
@@ -44,6 +48,13 @@ not a hardware-certification report. [Documentation map](index.md);
 
 ## Currently working analyses
 
+- UART upload/download implemented with a Python client and a shell-only C
+  engine. All seven Debug host tests pass with warnings-as-errors; the transfer
+  test also passes ASan/UBSan. Cases cover binary/empty/page/sector boundaries,
+  retries without duplicate writes, destination fingerprinting, corruption,
+  logs/raw reads, interrupted replacement, timeout/reset and local no-clobber.
+  Shell simulator target builds; no simulation, hardware/serial run, SDK build,
+  dependency installation or external-repository edits in this milestone.
 - go_straight_simple now has 356 lines of annotated source: flash-loaded heading,
   default PID/kinematics/walls and 500 ms post-start retry policy. The original
   127-line executable logic is unchanged; the line-budget check was removed.
@@ -83,6 +94,9 @@ not a hardware-certification report. [Documentation map](index.md);
   App chirality/offset/filtering are not persisted; compatibility remains a duty.
 - PFFS favors bounded firmware/RAM and fast ID reads over resizing/transactions.
   Logs separately trade cached speed and page density against checkpoint loss.
+- UART transfer preserves PFFS v3. Exact byte length is an optional payload
+  envelope, not new catalog metadata; existing mission layouts use raw upload.
+  Host downloads publish only verified data; CRC is not authentication.
 - Printing deliberately supports a small syntax without float/double fallback;
   Q conversion quantizes finite inputs, and coarse decimal rounding can carry
   into an endpoint. Logging does not change controller arithmetic or scheduling.
