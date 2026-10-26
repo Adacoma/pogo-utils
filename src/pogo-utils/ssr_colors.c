@@ -48,9 +48,11 @@ void ssr_colors_init_defaults(ssr_config_t *config) {
         SSR_RGB(0, 2, 2)
     };
 
-    const uint8_t count = (uint8_t)(
+    const uint8_t available = (uint8_t)(
         sizeof(default_centroids) / sizeof(default_centroids[0])
     );
+    /* Small firmware configurations retain only as many defaults as fit. */
+    const uint8_t count = available < SSR_MAX_CLASSES ? available : SSR_MAX_CLASSES;
     config->class_count = count;
 
     for (uint8_t i = 0; i < count; ++i) {

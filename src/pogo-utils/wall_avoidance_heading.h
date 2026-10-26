@@ -74,7 +74,8 @@ typedef enum {
     WA_HEADING_ACTION_FORWARD,
     WA_HEADING_ACTION_TURN_LEFT,
     WA_HEADING_ACTION_TURN_RIGHT,
-    WA_HEADING_ACTION_FORWARD_COMMIT
+    WA_HEADING_ACTION_FORWARD_COMMIT,
+    WA_HEADING_ACTION_STOP /**< Invalid heading/target; next valid update can resume. */
 } wa_heading_action_t;
 
 /* -------------------- State ---------------------------------------------- */

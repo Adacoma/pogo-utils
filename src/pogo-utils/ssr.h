@@ -38,6 +38,10 @@ extern "C" {
 #ifndef SSR_MAX_CLASSES
 #define SSR_MAX_CLASSES 10
 #endif
+/* class_count and class iteration indexes are byte-sized. */
+#if SSR_MAX_CLASSES < 1 || SSR_MAX_CLASSES > 255
+#error "SSR_MAX_CLASSES must be in 1..255"
+#endif
 
 #if (SSR_NUMBER_DIFFUSIONS < 1)
 #error "SSR_NUMBER_DIFFUSIONS must be at least 1"

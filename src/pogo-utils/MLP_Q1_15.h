@@ -63,17 +63,19 @@ static void dense_hidden_hard_tanh(const q1_15_t *weights,  /* [rows][cols] */
 {
     for (int i = 0; i < rows; ++i) {
         /* Start accumulator from bias: convert Q1.15 -> Q2.30  */
-        int32_t acc = (int32_t)biases[i] * Q1_15_ONE; /* Negative bias is valid. */
+        /* int64_t retains large partial sums and subsequent cancellation.
+         * Each int16 product fits int32_t, but even two products may not. */
+        int64_t acc = (int64_t)biases[i] * Q1_15_ONE;
 
         const q1_15_t *w_row = &weights[i * cols];
 
         /* Dot product: acc += sum_k w[i,k]*in[k] (Q2.30) */
         for (int k = 0; k < cols; ++k) {
-            acc = q1_15_mac32(acc, w_row[k], in[k]);
+            acc += (int32_t)w_row[k] * (int32_t)in[k];
         }
 
         /* Back to Q1.15 with rounding + saturation, then hard tanh */
-        q1_15_t z = q1_15_from_acc32(acc);
+        q1_15_t z = q1_15_from_acc64(acc);
         out[i] = q1_15_hard_tanh(z);
     }
 }
@@ -86,14 +88,14 @@ static void dense_output_layer(const q1_15_t *weights,  /* [rows][cols] */
                                q1_15_t *out)            /* [rows] */
 {
     for (int i = 0; i < rows; ++i) {
-        int32_t acc = (int32_t)biases[i] * Q1_15_ONE;
+        int64_t acc = (int64_t)biases[i] * Q1_15_ONE;
         const q1_15_t *w_row = &weights[i * cols];
 
         for (int k = 0; k < cols; ++k) {
-            acc = q1_15_mac32(acc, w_row[k], in[k]);
+            acc += (int32_t)w_row[k] * (int32_t)in[k];
         }
 
-        q1_15_t z = q1_15_from_acc32(acc);
+        q1_15_t z = q1_15_from_acc64(acc);
 
 #ifdef MLP_Q1_15_OUTPUT_HARD_TANH
         out[i] = q1_15_hard_tanh(z);

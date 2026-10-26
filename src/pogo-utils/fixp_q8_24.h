@@ -16,10 +16,7 @@
 /////////////////////////////////////////////////////////////////
 
 static inline q8_24_t q8_24_from_float(float x) {
-    if (x >= 128.0f)  return Q8_24_MAX;
-    if (x <  -128.0f) return Q8_24_MIN;
-    float y = x * 16777216.0f + (x >= 0 ? 0.5f : -0.5f);
-    return (q8_24_t)y;
+    return fixp_from_float_scaled(x, 16777216.0f, INT32_MIN, INT32_MAX);
 }
 
 

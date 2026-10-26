@@ -14,6 +14,8 @@ procedure and per-sensor normalization. Initialize a `photostart_t`, call
 `photostart_step` regularly until done, then normalize sensor values using the
 collected min/max values. EWMA helpers smooth normalized readings; updating
 them more often changes their effective temporal response.
+`PHOTOSTART_NSENS` must be exactly three, matching the implemented hardware
+positions; other values now fail compilation instead of indexing invalid arrays.
 
 The light detector combines sensor geometry, chirality, and optionally
 photostart normalization into a gradient heading.

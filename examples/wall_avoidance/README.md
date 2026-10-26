@@ -27,6 +27,9 @@ change compiler-defined dimensions or source switches.
 Configure policy, face-memory duration and forward power in run_and_tumble.c; default wall beacons must be registered.
 
 Watch lateral face indicators and transition from nominal motion into avoidance; there is no compass-frame escape target.
+Forward execution now applies the configured ratio to each calibrated motor,
+including zero power at ratio zero. Turn/commit deadlines handle uint32 clock
+wrap; oversized individual intervals are capped below the half-range.
 
 ## Constraints and validation
 

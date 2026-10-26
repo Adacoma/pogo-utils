@@ -61,6 +61,9 @@ Default compile-time capacities are 20 neighbors, 3 diffusion channels,
 sizes and protocol consistency; rebuild all corresponding library/application
 objects. State, neighbor arrays, and fit buffers belong per robot, not in one
 shared simulator global.
+`SSR_MAX_CLASSES` accepts 1..255. If fewer than five classes fit, default setup
+copies only that many centroids/colors. Zero or values beyond the byte-sized
+class counter fail compilation.
 
 The implementation uses floating-point math and serialized application-level
 messages. Several protocol paths rely on native float/struct conventions, so

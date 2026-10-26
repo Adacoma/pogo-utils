@@ -24,6 +24,10 @@ extern "C" {
 #ifndef PHOTOSTART_NSENS
 #define PHOTOSTART_NSENS 3
 #endif
+/* The acquisition/state machine implements these three hardware positions. */
+#if PHOTOSTART_NSENS != 3
+#error "PHOTOSTART_NSENS must be 3 (front and two lateral photosensors)"
+#endif
 
 /**
  * @brief Tunable parameters for the photostart procedure.

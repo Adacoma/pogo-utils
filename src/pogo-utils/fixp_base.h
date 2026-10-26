@@ -8,6 +8,22 @@
 #include <math.h>
 #include "fixed_math.h"
 
+/** Float-only quantization for the 32-bit Q formats. Check the rounded value
+ * before the integer cast, since rounding can cross a representable endpoint.
+ * Use a positive power-of-two scale and signed destination bounds.
+ * NaN maps to zero; infinities saturate. Arguments are evaluated once. */
+static inline int32_t fixp_from_float_scaled(float x, float scale,
+                                            int32_t lower, int32_t upper) {
+    if (isnan(x)) return 0;
+    float scaled = x * scale;
+    if (scaled >= (float)upper) return upper;
+    if (scaled <= (float)lower) return lower;
+    scaled += scaled >= 0.0f ? 0.5f : -0.5f;
+    if (scaled >= (float)upper) return upper;
+    if (scaled <= (float)lower) return lower;
+    return (int32_t)scaled;
+}
+
 /////////////////////////////////////////////////////////////////
 ///                     BASE TYPES                     /// {{{1
 /////////////////////////////////////////////////////////////////
@@ -33,9 +49,13 @@ typedef int16_t q1_15_t;
 #define Q1_15_LN2_CONST 22713
 
 // Q1.15: 1.0 = 2^15 = 32768.0f; saturate if x >= 1.0 or x < -1.0.
-#define Q1_15_FROM_FLOAT(x)  ((q1_15_t)(((x) >= 1.0f) ? Q1_15_MAX : \
-                                ((x) < -1.0f) ? Q1_15_MIN : \
-                                (((x) * 32768.0f) + ((x) >= 0 ? 0.5f : -0.5f))))
+/* Keep these macros usable in static initializers. Saturate at the largest
+ * representable value before rounding, and map NaN to zero. As before, pass
+ * side-effect-free arguments: the constant-expression form evaluates x again. */
+#define Q1_15_FROM_FLOAT(x) ((q1_15_t)(((x) != (x)) ? 0 : \
+    ((x) >= 32767.0f / 32768.0f) ? Q1_15_MAX : \
+    ((x) <= -1.0f) ? Q1_15_MIN : \
+    ((x) * 32768.0f + ((x) >= 0.0f ? 0.5f : -0.5f))))
 
 /* Convert a float to Q1.15 fixed-point with saturation.
    Valid input range is [-1.0, 1.0); values outside saturate.
@@ -120,9 +140,10 @@ extern bool q16_16_inited;
 #define Q6_10_MIN ((q6_10_t)0x8000)
 
 // Q6.10: 1.0 = 2^10 = 1024.0f; saturate if x >= 32.0 or x < -32.0.
-#define Q6_10_FROM_FLOAT(x)  ((q6_10_t)(((x) >= 32.0f) ? Q6_10_MAX : \
-                                ((x) < -32.0f) ? Q6_10_MIN : \
-                                (((x) * 1024.0f) + ((x) >= 0 ? 0.5f : -0.5f))))
+#define Q6_10_FROM_FLOAT(x) ((q6_10_t)(((x) != (x)) ? 0 : \
+    ((x) >= 32767.0f / 1024.0f) ? Q6_10_MAX : \
+    ((x) <= -32.0f) ? Q6_10_MIN : \
+    ((x) * 1024.0f + ((x) >= 0.0f ? 0.5f : -0.5f))))
 
 /* Convert a float to Q6.10 */
 #define q6_10_from_float(x) Q6_10_FROM_FLOAT(x)    // Always use the macro instead of the inline function

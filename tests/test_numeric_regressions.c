@@ -3,6 +3,7 @@
  * Run under UBSan as well as CTest: negative shifts used to be undefined. */
 #include <assert.h>
 #include <limits.h>
+#include <float.h>
 #include <string.h>
 #include "src/pogo-utils/fixp_q16_16.h"
 #include "src/pogo-utils/fixp_q8_24.h"
@@ -14,8 +15,8 @@
 #include "src/pogo-utils/MLP_int8.h"
 #include "src/pogo-utils/MLP_int8_dyn.h"
 #include "src/pogo-utils/MLP_int8_dyn_act.h"
-#define MLP_Q1_15_INPUT_DIM 1
-#define MLP_Q1_15_HIDDEN_DIM 1
+#define MLP_Q1_15_INPUT_DIM 6
+#define MLP_Q1_15_HIDDEN_DIM 6
 #define MLP_Q1_15_OUTPUT_DIM 1
 #include "src/pogo-utils/MLP_Q1_15.h"
 #define ESN_INT8_INPUT_DIM 1
@@ -84,6 +85,37 @@ static void conversions(void) {
     assert(q1_15_div(-16384, 16384) == INT16_MIN);
     assert(q6_10_div(-512, 1024) == -512);
     assert(q1_15_mul(-16384, 16384) == -8192);
+    /* Macro conversions remain arithmetic constant expressions in C. */
+    static const q1_15_t half = Q1_15_FROM_FLOAT(0.5f);
+    static const q6_10_t one = Q6_10_FROM_FLOAT(1.0f);
+    assert(half == 16384 && one == 1024);
+    assert(q1_15_from_float(0.99999f) == INT16_MAX);
+    assert(q6_10_from_float(31.9999f) == INT16_MAX);
+    assert(q1_15_from_float(nextafterf(1.0f, 0.0f)) == INT16_MAX);
+    assert(q6_10_from_float(nextafterf(32.0f, 0.0f)) == INT16_MAX);
+    assert(q1_15_from_float(-1.0f) == INT16_MIN);
+    assert(q6_10_from_float(-32.0f) == INT16_MIN);
+    assert(q1_15_from_float(NAN) == 0 && q6_10_from_float(NAN) == 0);
+    assert(q8_24_from_float(NAN) == 0 && q16_16_from_float(NAN) == 0);
+    assert(q1_15_from_float(INFINITY) == INT16_MAX);
+    assert(q1_15_from_float(-INFINITY) == INT16_MIN);
+    assert(q6_10_from_float(INFINITY) == INT16_MAX);
+    assert(q6_10_from_float(-INFINITY) == INT16_MIN);
+    assert(q8_24_from_float(INFINITY) == INT32_MAX);
+    assert(q8_24_from_float(-INFINITY) == INT32_MIN);
+    assert(q16_16_from_float(INFINITY) == INT32_MAX);
+    assert(q16_16_from_float(-INFINITY) == INT32_MIN);
+    assert(q8_24_from_float(FLT_MAX) == INT32_MAX);
+    assert(q16_16_from_float(-FLT_MAX) == INT32_MIN);
+    assert(q8_24_from_float(nextafterf(128.0f, 0.0f)) == INT32_MAX - 127);
+    assert(q16_16_from_float(nextafterf(32768.0f, 0.0f)) == INT32_MAX - 127);
+    /* Every int16 code is exactly representable as a float in either format. */
+    for (int32_t raw = INT16_MIN; raw <= INT16_MAX; ++raw) {
+        assert(q1_15_from_float((float)raw / 32768.0f) == raw);
+        assert(q6_10_from_float((float)raw / 1024.0f) == raw);
+    }
+    assert(q1_15_mac32(INT32_MAX, 1, 1) == INT32_MAX);
+    assert(q1_15_mac32(INT32_MIN, -1, 1) == INT32_MIN);
 }
 
 static void networks(void) {
@@ -93,9 +125,29 @@ static void networks(void) {
     mlp_int8_forward(&mlp, input, output);
     assert(output[0] == -1 && output[1] == 0);
     MLP_Q1_15 qmlp = {0}; qmlp.b1[0] = -1; qmlp.b2[0] = -1;
-    int16_t qi[1] = {0}, qo[1];
+    int16_t qi[6] = {0}, qo[1];
     mlp_q1_15_forward(&qmlp, qi, qo);
     assert(qo[0] == -1);
+    /* Large partial sums must cancel before quantization, rather than being
+     * clipped per term. The exact Q2.30 sum is 3*32768 -> output code 3. */
+    memset(&qmlp, 0, sizeof(qmlp));
+    for (int i = 0; i < 6; ++i) {
+        qi[i] = INT16_MIN;
+        qmlp.W1[0][i] = i < 3 ? INT16_MIN : INT16_MAX;
+    }
+    qmlp.W2[0][0] = INT16_MAX;
+    mlp_q1_15_forward(&qmlp, qi, qo);
+    assert(qo[0] == 3);
+    int16_t weights[6], bias[1] = {0};
+    for (int i = 0; i < 6; ++i) weights[i] = INT16_MIN;
+    dense_hidden_hard_tanh(weights, bias, 1, 6, qi, qo);
+    assert(qo[0] == INT16_MAX);
+    for (int i = 0; i < 6; ++i) weights[i] = INT16_MAX;
+    dense_output_layer(weights, bias, 1, 6, qi, qo);
+    assert(qo[0] == INT16_MIN);
+    for (int i = 0; i < 6; ++i) weights[i] = i < 3 ? INT16_MIN : INT16_MAX;
+    dense_output_layer(weights, bias, 1, 6, qi, qo);
+    assert(qo[0] == 3);
     ESN_INT8_SPARSE esn;
     esn_int8_sparse_init_zero(&esn);
     esn_int8_sparse_init_random_reservoir(&esn); /* K=R must terminate uniquely. */

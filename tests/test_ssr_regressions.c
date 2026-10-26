@@ -22,6 +22,14 @@ static void config(ssr_config_t *c) {
     c->enable_photo_start = false;
 }
 
+static void class_capacity(void) {
+    struct { ssr_config_t c; uint8_t canary[32]; } guarded;
+    memset(&guarded, 0xa5, sizeof(guarded));
+    ssr_config_init_default(&guarded.c);
+    assert(guarded.c.class_count == (SSR_MAX_CLASSES < 5 ? SSR_MAX_CLASSES : 5));
+    for (unsigned i = 0; i < sizeof(guarded.canary); ++i) assert(guarded.canary[i] == 0xa5);
+}
+
 static void two_node_contraction(void) {
     ssr_state_t a, b;
     ssr_config_t c; config(&c);
@@ -80,4 +88,4 @@ static void isolated_time(void) {
     assert(ssr_get_behavior_elapsed_ms(&s) == 81);
 }
 
-int main(void) { two_node_contraction(); isolated_time(); return 0; }
+int main(void) { class_capacity(); two_node_contraction(); isolated_time(); return 0; }

@@ -264,3 +264,42 @@ matching updated peers. Their experiment performance, ANN accuracy and target
 firmware timing/size/RAM remain unmeasured. Other historical concerns, including
 legacy controllers, photosensors, unbounded optional stack workspaces and
 remaining numerical/protocol assumptions, need separate work.
+
+## High-priority fixes after follow-up review
+
+The six high-priority findings from the next review are fixed:
+
+| Finding | Resulting behavior |
+| --- | --- |
+| Cached log addresses survive file movement/reuse | Log I/O validates the catalog entry fingerprint and CRC. Commits also require an erased destination; stale handles fail before programming. Clear validates ownership before erasing. |
+| Legacy forward speed is ignored | Both legacy executors scale each calibrated motor by the configured ratio, including zero, and remove power before direction changes. |
+| Q1.15 neural accumulation overflows | Both layers accumulate in int64 and saturate after the complete dot product. The int32 MAC helper now saturates each addition. |
+| Float conversion overflows near int16 endpoints | All four formats have defined endpoint/NaN/infinity conversion behavior. Q1.15/Q6.10 macros retain C static-initializer support. |
+| Smaller compile-time capacities corrupt arrays | SSR copies only the defaults that fit in 1..255 classes. Photostart requires its implemented three sensors at compile time. |
+| Legacy heading wrapping can hang and deadlines fail at rollover | Large finite angles use bounded reduction. Invalid headings/targets produce a recoverable STOP, and deadlines use modular comparisons with bounded intervals. |
+
+The log checks retain RAM-only append and one-page service programming. They
+add four bytes per handle plus catalog CRC/read and erased-page read costs at
+commit. Reopen after filesystem movement or destructive operations; entry
+fingerprints are not globally unique lifetime identifiers. On-flash formats
+are unchanged, while the public log struct and legacy action enum require
+rebuilding applications. The Q1.15 MLP trades extra integer instructions for
+defined full-sum arithmetic; previous overflowed outputs will change. Float
+conversion uses float arithmetic, with NaN mapped to zero and infinities
+saturated by sign.
+
+All 15 Debug CTest tests pass normally and with AddressSanitizer,
+UndefinedBehaviorSanitizer and float-cast-overflow instrumentation. Tests include
+stale-handle/new-owner isolation with zero rejected writes, competing log handles,
+catalog damage, calibrated speed ratios, invalid-heading recovery, huge finite
+angles, deadline rollover, large dot-product cancellation, conversion endpoints,
+exhaustive int16-code round trips, small SSR arrays and compile-time rejection.
+No simulation, hardware run, firmware build or linked-repository inspection was
+performed. Target code size, stack, timing and physical motor behavior remain
+unmeasured.
+
+The medium-priority findings from that review remain: reciprocal-based division
+accuracy/INT32_MIN handling, local optimizer parameter/fitness validation, SPSA
+probe bounds, photosensor float-to-int narrowing, NaN in SSR's optional signal
+colormap, and photostart threshold addition overflow. These fixes do not resolve
+every historical audit concern or establish swarm performance.

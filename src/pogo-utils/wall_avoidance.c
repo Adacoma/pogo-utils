@@ -1,8 +1,29 @@
 #include "wall_avoidance.h"
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 /* -------------------- Internal Helpers -------------------- */
+
+/* Modular deadlines remain valid across the 32-bit clock wrap. Restrict an
+ * individual interval to the half-range in which temporal ordering is unique. */
+static bool deadline_reached(uint32_t now, uint32_t deadline) {
+    return (uint32_t)(now - deadline) < UINT32_C(0x80000000);
+}
+static uint32_t deadline_after(uint32_t now, uint32_t duration) {
+    return now + (duration > INT32_MAX ? (uint32_t)INT32_MAX : duration);
+}
+
+/* Stop both outputs before setting directions, then restore requested power.
+ * This module does not own the last direction used by the caller's controller. */
+static void apply_motors(uint16_t left, uint16_t right, uint8_t dl, uint8_t dr) {
+    pogobot_motor_set(motorL, motorStop);
+    pogobot_motor_set(motorR, motorStop);
+    pogobot_motor_dir_set(motorL, dl);
+    pogobot_motor_dir_set(motorR, dr);
+    pogobot_motor_set(motorL, left);
+    pogobot_motor_set(motorR, right);
+}
 
 /**
  * @brief Check if message payload contains "wall"
@@ -77,6 +98,7 @@ static int8_t decide_turn_dir(const wall_avoidance_state_t* state, bool front, b
  * @return Clamped value
  */
 static inline float clamp_speed_ratio(float value) {
+    if (!isfinite(value)) return 0.0f;
     if (value < 0.0f) return 0.0f;
     if (value > 1.0f) return 1.0f;
     return value;
@@ -141,7 +163,7 @@ wall_avoidance_action_t wall_avoidance_update(
     // If currently executing a turn, keep turning until duration expires
     if ((state->current_action == WA_ACTION_TURN_LEFT || 
          state->current_action == WA_ACTION_TURN_RIGHT) 
-        && tnow < state->action_until_ms) {
+        && !deadline_reached(tnow, state->action_until_ms)) {
         return state->current_action;
     }
     
@@ -160,15 +182,16 @@ wall_avoidance_action_t wall_avoidance_update(
             state->current_action != WA_ACTION_TURN_RIGHT &&
             state->current_action != WA_ACTION_FORWARD_COMMIT) {
             state->current_action = (rand() & 1) ? WA_ACTION_TURN_LEFT : WA_ACTION_TURN_RIGHT;
-            state->action_until_ms = tnow + state->config.turn_duration_ms;
+            state->action_until_ms = deadline_after(tnow, state->config.turn_duration_ms);
             return state->current_action;
         }
         
         if ((state->current_action == WA_ACTION_TURN_LEFT || 
              state->current_action == WA_ACTION_TURN_RIGHT) &&
-            tnow >= state->action_until_ms) {
+            deadline_reached(tnow, state->action_until_ms)) {
             state->current_action = WA_ACTION_FORWARD_COMMIT;
-            state->action_until_ms = tnow + state->config.forward_commit_ms * 2;
+            state->action_until_ms = deadline_after(tnow, state->config.forward_commit_ms > (uint32_t)INT32_MAX / 2u ?
+                (uint32_t)INT32_MAX : state->config.forward_commit_ms * 2u);
             for(uint8_t i = 0; i < 4; i++) {
                 state->last_wall_seen_ms[i] = 0;
             }
@@ -176,16 +199,16 @@ wall_avoidance_action_t wall_avoidance_update(
         }
         
         if (state->current_action == WA_ACTION_FORWARD_COMMIT && 
-            tnow < state->action_until_ms) {
+            !deadline_reached(tnow, state->action_until_ms)) {
             return state->current_action;
         }
     }
     
     // If in committed forward, keep going but react to front walls
     if (state->current_action == WA_ACTION_FORWARD_COMMIT && 
-        tnow < state->action_until_ms) {
+        !deadline_reached(tnow, state->action_until_ms)) {
         if (front) { int8_t d = decide_turn_dir(state, front, right, back, left); state->current_action = (d > 0) ? WA_ACTION_TURN_RIGHT : WA_ACTION_TURN_LEFT;
-            state->action_until_ms = tnow + state->config.turn_duration_ms;
+            state->action_until_ms = deadline_after(tnow, state->config.turn_duration_ms);
         }
         return state->current_action;
     }
@@ -193,9 +216,9 @@ wall_avoidance_action_t wall_avoidance_update(
     // Transition from turn to committed forward
     if ((state->current_action == WA_ACTION_TURN_LEFT || 
          state->current_action == WA_ACTION_TURN_RIGHT) &&
-        tnow >= state->action_until_ms) {
+        deadline_reached(tnow, state->action_until_ms)) {
         state->current_action = WA_ACTION_FORWARD_COMMIT;
-        state->action_until_ms = tnow + state->config.forward_commit_ms;
+        state->action_until_ms = deadline_after(tnow, state->config.forward_commit_ms);
         return state->current_action;
     }
     
@@ -208,23 +231,23 @@ wall_avoidance_action_t wall_avoidance_update(
         } else {
             state->current_action = (rand() & 1) ? WA_ACTION_TURN_LEFT : WA_ACTION_TURN_RIGHT;
         }
-        state->action_until_ms = tnow + state->config.turn_duration_ms;
+        state->action_until_ms = deadline_after(tnow, state->config.turn_duration_ms);
     }
     else if (left && !right) {
         int8_t d = (state->policy == WALL_CCW) ? -1 : (state->policy == WALL_CW) ? +1 : decide_turn_dir(state, front, right, back, left);
         state->current_action = (d > 0) ? WA_ACTION_TURN_RIGHT : WA_ACTION_TURN_LEFT;
-        state->action_until_ms = tnow + state->config.turn_duration_ms;
+        state->action_until_ms = deadline_after(tnow, state->config.turn_duration_ms);
     }
     else if (right && !left) {
         int8_t d = (state->policy == WALL_CCW) ? -1 : (state->policy == WALL_CW) ? +1 : decide_turn_dir(state, front, right, back, left);
         state->current_action = (d > 0) ? WA_ACTION_TURN_RIGHT : WA_ACTION_TURN_LEFT;
-        state->action_until_ms = tnow + state->config.turn_duration_ms;
+        state->action_until_ms = deadline_after(tnow, state->config.turn_duration_ms);
     }
     else {
         if (front || right || left || back) {
             int8_t d = decide_turn_dir(state, front, right, back, left);
             state->current_action = (d > 0) ? WA_ACTION_TURN_RIGHT : WA_ACTION_TURN_LEFT;
-            state->action_until_ms = tnow + state->config.turn_duration_ms;
+            state->action_until_ms = deadline_after(tnow, state->config.turn_duration_ms);
         } else {
             state->current_action = WA_ACTION_FORWARD;
         }
@@ -239,29 +262,28 @@ void wall_avoidance_execute(
 ) {
     switch (action) {
         case WA_ACTION_TURN_LEFT:
-            pogobot_motor_set(motorL, motorHalf);
-            pogobot_motor_set(motorR, motorHalf);
-            pogobot_motor_dir_set(motorL, (state->motors.dir_left + 1) % 2);
-            pogobot_motor_dir_set(motorR, state->motors.dir_right);
+            apply_motors(motorHalf, motorHalf,
+                         (state->motors.dir_left + 1) % 2, state->motors.dir_right);
             //pogobot_led_setColor(100, 100, 255); // Blue: turning left
             break;
             
         case WA_ACTION_TURN_RIGHT:
-            pogobot_motor_set(motorL, motorHalf);
-            pogobot_motor_set(motorR, motorHalf);
-            pogobot_motor_dir_set(motorL, state->motors.dir_left);
-            pogobot_motor_dir_set(motorR, (state->motors.dir_right + 1) % 2);
+            apply_motors(motorHalf, motorHalf,
+                         state->motors.dir_left, (state->motors.dir_right + 1) % 2);
             //pogobot_led_setColor(255, 100, 100); // Red: turning right
             break;
             
         case WA_ACTION_FORWARD_COMMIT:
-        case WA_ACTION_FORWARD:
-            pogobot_motor_set(motorL, state->motors.motor_left);
-            pogobot_motor_set(motorR, state->motors.motor_right);
-            pogobot_motor_dir_set(motorL, state->motors.dir_left);
-            pogobot_motor_dir_set(motorR, state->motors.dir_right);
+        case WA_ACTION_FORWARD: {
+            /* Scale each calibrated motor separately, preserving their ratio.
+             * In particular, ratio=0 must issue zero PWM during a commit. */
+            float ratio = clamp_speed_ratio(state->config.forward_speed_ratio);
+            apply_motors((uint16_t)((float)state->motors.motor_left * ratio),
+                         (uint16_t)((float)state->motors.motor_right * ratio),
+                         state->motors.dir_left, state->motors.dir_right);
             //pogobot_led_setColor(0, 100, 0); // Dim green: forward
             break;
+        }
             
         case WA_ACTION_NONE:
         default:

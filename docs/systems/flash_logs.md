@@ -39,6 +39,20 @@ at most one full cached page; it is a no-op for a partial page.
 `force_flush(log)` explicitly commits a partial page. Serialize calls across
 all handles sharing a robot's flash peripheral.
 
+Each open handle fingerprints its catalog entry. Before programming a page,
+the library validates that entry's catalog CRC and identity, then checks that
+the destination page is erased. Moving, renaming or replacing the entry returns
+`POGO_FLASH_LOG_STALE_HANDLE` without programming the old location. `clear`
+and diagnostic reads also check ownership. Discard/reopen handles after
+defragmentation, deletion/recreation or formatting; a fingerprint is not a
+globally unique file-lifetime ID. Other files' catalog edits do not invalidate
+an unchanged log. Use one writer per log.
+
+These checks add four bytes of handle state, a catalog read/CRC and an erased
+page read per commit. Appends remain RAM-only and each service call still
+programs at most one page. The on-flash format is unchanged; rebuild applications
+using the updated in-memory handle structure.
+
 `read_page(log,index,out,&used)` CRC-checks one committed page, returning END
 for an unused page. Payload starts at `POGO_FLASH_LOG_HEADER_SIZE`; concatenate
 only `used` bytes, not headers or padding. Use output separate from the cache

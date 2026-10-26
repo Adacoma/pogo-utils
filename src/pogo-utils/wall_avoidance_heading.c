@@ -9,9 +9,37 @@
 
 /* -------------------- Small helpers -------------------- */
 static inline float wrap_pi(float a) {
-    while (a <= -M_PI) a += 2.0f*(float)M_PI;
-    while (a >   M_PI) a -= 2.0f*(float)M_PI;
+    /* Bounded reduction also handles huge finite headings. Repeated addition
+     * can make no progress once a float's spacing exceeds one revolution. */
+    if (!isfinite(a)) return NAN;
+    const float pi = (float)M_PI;
+    a = fmodf(a, 2.0f * pi);
+    if (a <= -pi) a += 2.0f * pi;
+    if (a > pi) a -= 2.0f * pi;
     return a;
+}
+
+static bool deadline_reached(uint32_t now, uint32_t deadline) {
+    return (uint32_t)(now - deadline) < UINT32_C(0x80000000);
+}
+static uint32_t deadline_after(uint32_t now, uint32_t duration) {
+    return now + (duration > INT32_MAX ? (uint32_t)INT32_MAX : duration);
+}
+
+static float clamp_speed_ratio(float ratio) {
+    if (!isfinite(ratio) || ratio < 0.0f) return 0.0f;
+    return ratio > 1.0f ? 1.0f : ratio;
+}
+
+/* The application may also drive these motors, so do not assume a previously
+ * applied direction. Remove power before every direction change. */
+static void apply_motors(uint16_t left, uint16_t right, uint8_t dl, uint8_t dr) {
+    pogobot_motor_set(motorL, motorStop);
+    pogobot_motor_set(motorR, motorStop);
+    pogobot_motor_dir_set(motorL, dl);
+    pogobot_motor_dir_set(motorR, dr);
+    pogobot_motor_set(motorL, left);
+    pogobot_motor_set(motorR, right);
 }
 static inline float ang_diff(float a, float b) { return wrap_pi(a - b); }
 static inline float fsign(float x) { return (x >= 0.0f) ? 1.0f : -1.0f; }
@@ -23,9 +51,8 @@ static inline bool is_wall_payload(const message_t* msg) {
 }
 
 static inline void recompute_forward_speed(wa_heading_state_t* st) {
-    float r = st->config.forward_speed_ratio;
-    if (r < 0.0f) r = 0.0f;
-    if (r > 1.0f) r = 1.0f;
+    float r = clamp_speed_ratio(st->config.forward_speed_ratio);
+    st->config.forward_speed_ratio = r; /* Getter and execution share the effective ratio. */
     st->forward_speed = (uint16_t)((float)motorFull * r);
 }
 
@@ -146,24 +173,20 @@ bool wall_avoidance_heading_process_message(
 }
 
 static void motors_turn_left(const wa_heading_state_t* st) {
-    pogobot_motor_set(motorL, motorHalf);
-    pogobot_motor_set(motorR, motorHalf);
-    pogobot_motor_dir_set(motorL, (st->motors.dir_left + 1) % 2);
-    pogobot_motor_dir_set(motorR, st->motors.dir_right);
+    apply_motors(motorHalf, motorHalf,
+                 (st->motors.dir_left + 1) % 2, st->motors.dir_right);
 }
 
 static void motors_turn_right(const wa_heading_state_t* st) {
-    pogobot_motor_set(motorL, motorHalf);
-    pogobot_motor_set(motorR, motorHalf);
-    pogobot_motor_dir_set(motorL, st->motors.dir_left);
-    pogobot_motor_dir_set(motorR, (st->motors.dir_right + 1) % 2);
+    apply_motors(motorHalf, motorHalf,
+                 st->motors.dir_left, (st->motors.dir_right + 1) % 2);
 }
 
 static void motors_forward(const wa_heading_state_t* st) {
-    pogobot_motor_set(motorL, st->motors.motor_left);
-    pogobot_motor_set(motorR, st->motors.motor_right);
-    pogobot_motor_dir_set(motorL, st->motors.dir_left);
-    pogobot_motor_dir_set(motorR, st->motors.dir_right);
+    float ratio = clamp_speed_ratio(st->config.forward_speed_ratio);
+    apply_motors((uint16_t)((float)st->motors.motor_left * ratio),
+                 (uint16_t)((float)st->motors.motor_right * ratio),
+                 st->motors.dir_left, st->motors.dir_right);
 }
 
 wa_heading_action_t wall_avoidance_heading_update(
@@ -171,6 +194,12 @@ wa_heading_action_t wall_avoidance_heading_update(
     float heading_rad
 ) {
     uint32_t now = current_time_milliseconds();
+    /* A bad sample stops this tick without latching a permanent fault. */
+    if (!isfinite(heading_rad)) {
+        st->target_set = false;
+        st->current_action = WA_HEADING_ACTION_STOP;
+        return st->current_action;
+    }
 
     /* keep turning while deadline hasn't passed */
     if ((st->current_action == WA_HEADING_ACTION_TURN_LEFT ||
@@ -180,8 +209,12 @@ wa_heading_action_t wall_avoidance_heading_update(
         if (!st->target_set) {
             st->start_heading_rad = wrap_pi(heading_rad);
             st->target_heading_rad = pick_target_heading(st, st->start_heading_rad, &st->turn_dir);
+            if (!isfinite(st->target_heading_rad)) {
+                st->current_action = WA_HEADING_ACTION_STOP;
+                return st->current_action;
+            }
             st->turn_started_ms = now;
-            st->action_until_ms = now + st->config.max_turn_ms;
+            st->action_until_ms = deadline_after(now, st->config.max_turn_ms);
             st->target_set = true;
         }
 
@@ -189,15 +222,15 @@ wa_heading_action_t wall_avoidance_heading_update(
         if (fabsf(err) <= st->config.angle_tolerance_rad) {
             /* reached target: commit forward */
             st->current_action = WA_HEADING_ACTION_FORWARD_COMMIT;
-            st->action_until_ms = now + st->config.forward_commit_ms;
+            st->action_until_ms = deadline_after(now, st->config.forward_commit_ms);
             st->target_set = false;
             return st->current_action;
         }
 
         /* timeout safety */
-        if (now >= st->action_until_ms) {
+        if (deadline_reached(now, st->action_until_ms)) {
             st->current_action = WA_HEADING_ACTION_FORWARD_COMMIT;
-            st->action_until_ms = now + st->config.forward_commit_ms;
+            st->action_until_ms = deadline_after(now, st->config.forward_commit_ms);
             st->target_set = false;
             return st->current_action;
         }
@@ -227,7 +260,7 @@ wa_heading_action_t wall_avoidance_heading_update(
             return st->current_action;
         }
         if (st->current_action == WA_HEADING_ACTION_FORWARD_COMMIT &&
-            now < st->action_until_ms) {
+            !deadline_reached(now, st->action_until_ms)) {
             return st->current_action;
         }
     }
@@ -235,7 +268,7 @@ wa_heading_action_t wall_avoidance_heading_update(
     /* Forward-commit: continue until (no walls) AND (timer elapsed). */
     if (st->current_action == WA_HEADING_ACTION_FORWARD_COMMIT) {
         bool walls_present = any_wall_active_t(st, now);
-        bool timer_elapsed = (now >= st->action_until_ms);
+        bool timer_elapsed = (deadline_reached(now, st->action_until_ms));
 
         /* We stop committing ONLY when both conditions are satisfied. */
         if (!walls_present && timer_elapsed) {
@@ -279,6 +312,10 @@ void wall_avoidance_heading_execute(
     wa_heading_action_t action
 ) {
     switch (action) {
+        case WA_HEADING_ACTION_STOP:
+            pogobot_motor_set(motorL, motorStop);
+            pogobot_motor_set(motorR, motorStop);
+            break;
         case WA_HEADING_ACTION_TURN_LEFT:  motors_turn_left(st);  break;
         case WA_HEADING_ACTION_TURN_RIGHT: motors_turn_right(st); break;
         case WA_HEADING_ACTION_FORWARD_COMMIT:

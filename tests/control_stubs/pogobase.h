@@ -1,10 +1,10 @@
-/* Isolated SSR test platform. No SDK or robot/simulator execution is needed. */
+/* Isolated control test platform. No SDK or robot/simulator execution is needed. */
 #ifndef SSR_TEST_POGOBASE_H
 #define SSR_TEST_POGOBASE_H
 #include <stdint.h>
 #include <stdbool.h>
 typedef struct {
-    struct { uint16_t payload_length; } header;
+    struct { uint16_t payload_length; uint8_t _receiver_ir_index; } header;
     uint8_t payload[128];
 } message_t;
 extern uint32_t test_robot_time;
@@ -14,4 +14,8 @@ int16_t pogobot_photosensors_read(uint8_t index);
 void pogobot_led_setColors(uint8_t r, uint8_t g, uint8_t b, uint8_t index);
 void pogobot_infrared_set_power(uint8_t power);
 bool pogobot_infrared_sendShortMessage_omni(uint8_t *data, uint16_t size);
+typedef enum { motorL = 0, motorR = 1 } motor_id;
+enum { motorStop = 0, motorHalf = 512, motorFull = 1023 };
+void pogobot_motor_set(motor_id motor, uint16_t power);
+void pogobot_motor_dir_set(motor_id motor, uint8_t direction);
 #endif

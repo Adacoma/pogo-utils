@@ -69,6 +69,73 @@ static void append_all(pogo_flash_log_t *log, const void *bytes, size_t length) 
     }
 }
 
+static void stale_handles(void) {
+    assert(pogo_flash_file_format() == POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_create_blank(1u, "gap", 1u, 1u) == POGO_FLASH_FILE_OK);
+    pogo_flash_log_t old, current;
+    assert(pogo_flash_log_initialize(&old, 2u, "log", 2u, false, NULL) == POGO_FLASH_LOG_OK);
+    append_all(&old, "pending", 7u);
+    uint16_t old_page = old.first_page;
+    assert(pogo_flash_file_delete(1u) == POGO_FLASH_FILE_OK);
+    pogo_flash_file_defrag_t defrag;
+    assert(pogo_flash_file_defrag_begin(&defrag) == POGO_FLASH_FILE_OK);
+    bool done = false;
+    while (!done) assert(pogo_flash_file_defrag_step(&defrag, &done) == POGO_FLASH_FILE_OK);
+    assert(defrag.moved_files == 1u);
+    assert(pogo_flash_file_create_blank(3u, "new_owner", 1u, 1u) == POGO_FLASH_FILE_OK);
+    pogo_flash_file_info_t info;
+    assert(pogo_flash_file_find(3u, &info) == POGO_FLASH_FILE_OK && info.first_page == old_page);
+    unsigned before_programs = page_programs, before_erases = sector_erases;
+    assert(pogo_flash_log_force_flush(&old) == POGO_FLASH_LOG_STALE_HANDLE);
+    assert(pogo_flash_log_clear(&old) == POGO_FLASH_LOG_STALE_HANDLE);
+    uint8_t page[256], used;
+    assert(pogo_flash_log_read_page(&old, 0, page, &used) == POGO_FLASH_LOG_STALE_HANDLE);
+    size_t accepted;
+    assert(pogo_flash_log_append(&old, "x", 1u, &accepted) == POGO_FLASH_LOG_STALE_HANDLE);
+    assert(page_programs == before_programs && sector_erases == before_erases);
+    assert(pogo_flash_file_read_page_secure(3u, 0u, page, NULL) == POGO_FLASH_FILE_OK);
+    for (unsigned i = 0; i < sizeof(page); ++i) assert(page[i] == 0xffu);
+
+    /* Explicitly reopen at the moved address; the discarded RAM bytes do not
+     * leak into the replacement file or the resumed log. */
+    assert(pogo_flash_log_open(&current, 2u) == POGO_FLASH_LOG_OK);
+    append_all(&current, "fresh", 5u);
+    assert(pogo_flash_log_force_flush(&current) == POGO_FLASH_LOG_OK);
+    assert(pogo_flash_log_read_page(&current, 0u, page, &used) == POGO_FLASH_LOG_OK && used == 5u);
+    assert(memcmp(page + POGO_FLASH_LOG_HEADER_SIZE, "fresh", 5u) == 0);
+
+    old = current;
+    assert(pogo_flash_file_delete(2u) == POGO_FLASH_FILE_OK);
+    assert(pogo_flash_log_initialize(&current, 2u, "replacement", 2u, false, NULL) == POGO_FLASH_LOG_OK);
+    append_all(&old, "stale", 5u);
+    before_programs = page_programs; before_erases = sector_erases;
+    assert(pogo_flash_log_force_flush(&old) == POGO_FLASH_LOG_STALE_HANDLE);
+    assert(pogo_flash_log_clear(&old) == POGO_FLASH_LOG_STALE_HANDLE);
+    assert(page_programs == before_programs && sector_erases == before_erases);
+
+    /* Two independently opened writers may share an unchanged entry. A page
+     * committed by the first must not be programmed a second time. */
+    assert(pogo_flash_log_open(&old, 2u) == POGO_FLASH_LOG_OK);
+    append_all(&current, "first", 5u);
+    assert(pogo_flash_log_force_flush(&current) == POGO_FLASH_LOG_OK);
+    append_all(&old, "second", 6u);
+    before_programs = page_programs;
+    assert(pogo_flash_log_force_flush(&old) == POGO_FLASH_LOG_STALE_HANDLE);
+    assert(page_programs == before_programs);
+    before_erases = sector_erases;
+    assert(pogo_flash_log_clear(&old) == POGO_FLASH_LOG_STALE_HANDLE);
+    assert(sector_erases == before_erases);
+    assert(pogo_flash_log_read_page(&current, 0u, page, &used) == POGO_FLASH_LOG_OK && used == 5u);
+    assert(memcmp(page + POGO_FLASH_LOG_HEADER_SIZE, "first", 5u) == 0);
+
+    /* Valid-looking metadata with a broken CRC must also fail before writing. */
+    append_all(&current, "cached", 6u);
+    flash[0][12u + 48u + 16u] ^= 1u; /* Corrupt this entry's name, not its bounds. */
+    before_programs = page_programs; before_erases = sector_erases;
+    assert(pogo_flash_log_force_flush(&current) == POGO_FLASH_LOG_CORRUPT);
+    assert(page_programs == before_programs && sector_erases == before_erases);
+}
+
 int main(void) {
     erase_write_section_flash();
     assert(pogo_flash_file_format() == POGO_FLASH_FILE_OK);
@@ -248,6 +315,7 @@ int main(void) {
     assert(pogo_flash_log_initialize(&reopened, 3u, "too_large",
            POGO_FLASH_LOG_MAX_PAGES + 1u, false, NULL) ==
            POGO_FLASH_LOG_INVALID_ARGUMENT);
+    stale_handles();
     puts("NOR flash log tests passed");
     return 0;
 }

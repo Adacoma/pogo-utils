@@ -32,6 +32,13 @@ can round to zero. Linear output
 still saturates to int8: it is not an unbounded real-valued output. Hard-tanh
 on already representable Q0.7 mostly expresses the same clipping boundary.
 
+The Q1.15 MLP uses an int64 accumulator for both layers. Even two full-scale
+int16 products can exceed int32, so rounding/saturation occurs only after the
+complete dot product. Large terms can cancel without premature clipping.
+Parameter layout and function signatures remain unchanged; wider accumulation
+may cost additional firmware instructions and changes previously overflowed
+results. Revalidate models that exercised those ranges.
+
 For I inputs, H hidden units, O outputs, and L>=1 hidden layers, the simple
 dynamic layout contains
 `H*I + H + (L-1)*(H*H + H) + O*H + O` bytes,

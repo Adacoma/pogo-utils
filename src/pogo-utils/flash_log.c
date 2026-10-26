@@ -149,6 +149,43 @@ static bool requested_name_matches(const char *name,
         memcmp(name, info->name, length) == 0;
 }
 
+/** Bind only this file's entry: changes to other files must not interrupt two
+ * independent logs. Include ID, type, extent, generation and name in the CRC. */
+static uint32_t entry_identity(const uint8_t catalog[256], uint8_t file_id) {
+    unsigned slot = (file_id - 1u) % POGO_FLASH_FILE_ENTRIES_PER_CATALOG;
+    const uint8_t *entry = catalog + POGO_FLASH_FILE_CATALOG_HEADER_SIZE +
+        slot * POGO_FLASH_FILE_ENTRY_SIZE;
+    return crc_update(UINT32_MAX, entry, POGO_FLASH_FILE_ENTRY_SIZE) ^ UINT32_MAX;
+}
+
+/** Recheck ownership immediately before I/O using caller-provided scratch.
+ * Append remains RAM-only; no global handle registry or writer dependency is
+ * needed. CRC validation rejects accidental catalog damage before any write. */
+static pogo_flash_log_status_t check_owner(const pogo_flash_log_t *log,
+                                           uint8_t scratch[256]) {
+    pogo_flash_file_info_t info;
+    pogo_flash_file_status_t status = pogo_flash_file_internal_load_slot(
+        log->file_id, &info, scratch);
+    if (status == POGO_FLASH_FILE_NOT_FOUND || status == POGO_FLASH_FILE_UNFORMATTED)
+        return POGO_FLASH_LOG_STALE_HANDLE;
+    if (status != POGO_FLASH_FILE_OK) return file_error(status);
+    uint32_t crc = crc_update(UINT32_MAX, scratch,
+        POGO_FLASH_FILE_CATALOG_CRC_OFFSET) ^ UINT32_MAX;
+    if (crc != pogo_flash_file_internal_get_u32(
+            scratch + POGO_FLASH_FILE_CATALOG_CRC_OFFSET)) return POGO_FLASH_LOG_CORRUPT;
+    if (info.format_version != POGO_FLASH_LOG_FORMAT_VERSION ||
+        info.first_page != log->first_page || info.page_count != log->page_count ||
+        entry_identity(scratch, log->file_id) != log->identity_crc)
+        return POGO_FLASH_LOG_STALE_HANDLE;
+    return POGO_FLASH_LOG_OK;
+}
+
+/* Keep stale ownership distinguishable from a torn page on subsequent calls:
+ * clearing a stale handle must never erase its replacement's data. */
+static pogo_flash_log_status_t failed_status(const pogo_flash_log_t *log) {
+    return log->failed == 2u ? POGO_FLASH_LOG_STALE_HANDLE : POGO_FLASH_LOG_VERIFY_FAILED;
+}
+
 pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
                                             uint8_t file_id) {
     if (log == NULL || file_id == 0u ||
@@ -157,7 +194,7 @@ pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
     pogo_flash_log_status_t status = check_catalogs(log->page);
     if (status != POGO_FLASH_LOG_OK) return status;
     pogo_flash_file_info_t info;
-    status = file_error(pogo_flash_file_find(file_id, &info));
+    status = file_error(pogo_flash_file_internal_load_slot(file_id, &info, log->page));
     if (status != POGO_FLASH_LOG_OK) return status;
     if (info.format_version != POGO_FLASH_LOG_FORMAT_VERSION) {
         return POGO_FLASH_LOG_WRONG_FORMAT;
@@ -168,6 +205,7 @@ pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
     log->file_id = file_id;
     log->first_page = info.first_page;
     log->page_count = info.page_count;
+    log->identity_crc = entry_identity(log->page, file_id);
     /* A valid log consists of a contiguous prefix of committed pages followed
      * only by erased pages. A torn page fails closed; explicit clear is needed
      * before writing to that sector again. */
@@ -234,6 +272,15 @@ pogo_flash_log_status_t pogo_flash_log_initialize(
 
 pogo_flash_log_status_t pogo_flash_log_clear(pogo_flash_log_t *log) {
     if (log == NULL || log->ready == 0u) return POGO_FLASH_LOG_INVALID_ARGUMENT;
+    /* A conflicting writer can leave the same catalog identity in place.
+     * Once ownership is lost, only an explicit reopen can authorize a clear. */
+    if (log->failed == 2u) return POGO_FLASH_LOG_STALE_HANDLE;
+    /* clear() discards cached bytes anyway, so reuse them as catalog scratch. */
+    pogo_flash_log_status_t owner = check_owner(log, log->page);
+    if (owner != POGO_FLASH_LOG_OK) {
+        log->failed = owner == POGO_FLASH_LOG_STALE_HANDLE ? 2u : 1u;
+        return owner;
+    }
     uint8_t id = log->file_id;
     pogo_flash_file_status_t result = pogo_flash_file_internal_clear_log(id);
     if (result != POGO_FLASH_FILE_OK) {
@@ -250,7 +297,7 @@ pogo_flash_log_status_t pogo_flash_log_append(
     if (accepted != NULL) *accepted = 0u;
     if (log == NULL || accepted == NULL || log->ready == 0u ||
         (length > 0u && bytes == NULL)) return POGO_FLASH_LOG_INVALID_ARGUMENT;
-    if (log->failed != 0u) return POGO_FLASH_LOG_VERIFY_FAILED;
+    if (log->failed != 0u) return failed_status(log);
     if (length == 0u) return POGO_FLASH_LOG_OK;
     if (log->next_page >= log->page_count) return POGO_FLASH_LOG_FULL;
     size_t space = POGO_FLASH_LOG_PAYLOAD_SIZE - log->used;
@@ -264,7 +311,7 @@ pogo_flash_log_status_t pogo_flash_log_append(
 /** Complete the page header only when the user explicitly requests a write. */
 static pogo_flash_log_status_t commit_page(pogo_flash_log_t *log) {
     if (log == NULL || log->ready == 0u) return POGO_FLASH_LOG_INVALID_ARGUMENT;
-    if (log->failed != 0u) return POGO_FLASH_LOG_VERIFY_FAILED;
+    if (log->failed != 0u) return failed_status(log);
     if (log->used == 0u) return POGO_FLASH_LOG_OK;
     if (log->next_page >= log->page_count) return POGO_FLASH_LOG_FULL;
     memcpy(log->page, log_magic, sizeof(log_magic));
@@ -279,7 +326,19 @@ static pogo_flash_log_status_t commit_page(pogo_flash_log_t *log) {
                      log->used) ^ UINT32_MAX;
     put_u32(log->page + 8u, crc);
     uint8_t actual[POGO_FLASH_FILE_PAGE_SIZE];
+    pogo_flash_log_status_t owner = check_owner(log, actual);
+    if (owner != POGO_FLASH_LOG_OK) {
+        log->failed = owner == POGO_FLASH_LOG_STALE_HANDLE ? 2u : 1u;
+        return owner;
+    }
     uint16_t physical = (uint16_t)(log->first_page + log->next_page);
+    /* A second handle may have committed this page since open(). Never damage
+     * it with another NOR program, even if the catalog entry is unchanged. */
+    read_page_flash(physical, (char *)actual);
+    if (!erased_page(actual)) {
+        log->failed = 2u;
+        return POGO_FLASH_LOG_STALE_HANDLE;
+    }
     write_page_flash(physical, log->page);
     read_page_flash(physical, (char *)actual);
     if (memcmp(actual, log->page, sizeof(actual)) != 0) {
@@ -296,7 +355,7 @@ static pogo_flash_log_status_t commit_page(pogo_flash_log_t *log) {
 pogo_flash_log_status_t pogo_flash_log_service(pogo_flash_log_t *log) {
     if (log == NULL || log->ready == 0u) return POGO_FLASH_LOG_INVALID_ARGUMENT;
     if (log->used < POGO_FLASH_LOG_PAYLOAD_SIZE) return
-        log->failed != 0u ? POGO_FLASH_LOG_VERIFY_FAILED : POGO_FLASH_LOG_OK;
+        log->failed != 0u ? failed_status(log) : POGO_FLASH_LOG_OK;
     return commit_page(log);
 }
 
@@ -310,6 +369,8 @@ pogo_flash_log_status_t pogo_flash_log_read_page(
     if (log == NULL || log->ready == 0u || output == NULL || used == NULL ||
         page_index >= log->page_count) return POGO_FLASH_LOG_INVALID_ARGUMENT;
     *used = 0u;
+    pogo_flash_log_status_t owner = check_owner(log, output);
+    if (owner != POGO_FLASH_LOG_OK) return owner;
     read_page_flash((uint16_t)(log->first_page + page_index), (char *)output);
     if (erased_page(output)) return POGO_FLASH_LOG_END;
     return valid_page(output, page_index, used) ? POGO_FLASH_LOG_OK :

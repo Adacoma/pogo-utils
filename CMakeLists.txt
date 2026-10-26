@@ -109,6 +109,22 @@ if(BUILD_TESTING)
     target_link_libraries(test_ssr_regressions PRIVATE m)
     add_test(NAME ssr_regressions COMMAND test_ssr_regressions)
 
+    # Reuse the SSR fixture with an array smaller than the five default classes.
+    add_executable(test_ssr_small_classes tests/test_ssr_regressions.c src/pogo-utils/ssr_colors.c)
+    target_include_directories(test_ssr_small_classes PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/control_stubs ${CMAKE_SOURCE_DIR})
+    target_compile_definitions(test_ssr_small_classes PRIVATE SSR_MAX_CLASSES=2)
+    target_link_libraries(test_ssr_small_classes PRIVATE m)
+    add_test(NAME ssr_small_classes COMMAND test_ssr_small_classes)
+
+    add_executable(test_legacy_avoidance tests/test_legacy_avoidance.c
+        src/pogo-utils/wall_avoidance.c src/pogo-utils/wall_avoidance_heading.c)
+    target_include_directories(test_legacy_avoidance PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/control_stubs ${CMAKE_SOURCE_DIR})
+    target_link_libraries(test_legacy_avoidance PRIVATE m)
+    add_test(NAME legacy_avoidance COMMAND test_legacy_avoidance)
+    set_tests_properties(legacy_avoidance PROPERTIES TIMEOUT 5)
+
     add_executable(test_vote_gossip tests/test_vote_gossip.c)
     target_include_directories(test_vote_gossip PRIVATE ${CMAKE_SOURCE_DIR})
     add_test(NAME vote_gossip COMMAND test_vote_gossip)
@@ -118,6 +134,9 @@ if(BUILD_TESTING)
     find_package(Python3 3.8 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
         if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+            add_test(NAME compile_capacities COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tests/test_compile_capacities.py
+                ${CMAKE_C_COMPILER} ${CMAKE_SOURCE_DIR})
             add_test(NAME esn_configuration COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/tests/test_esn_configuration.py
                 ${CMAKE_C_COMPILER} ${CMAKE_SOURCE_DIR})

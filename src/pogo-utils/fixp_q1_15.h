@@ -327,8 +327,17 @@ static inline q1_15_t q1_15_relu(q1_15_t x) {
 
 // acc is Q2.30
 static inline int32_t q1_15_mac32(int32_t acc, q1_15_t a, q1_15_t b) {
-    acc += (int32_t)a * (int32_t)b;   // Q2.30, no sat
-    return acc;
+    /* The 32-bit API saturates each addition. Use a widened accumulator when
+     * later terms must be able to cancel a temporarily out-of-range sum. */
+    int64_t sum = (int64_t)acc + (int32_t)a * (int32_t)b;
+    return sum > INT32_MAX ? INT32_MAX : sum < INT32_MIN ? INT32_MIN : (int32_t)sum;
+}
+
+/** Convert a widened Q2.30 dot product, saturating only after all terms. */
+static inline q1_15_t q1_15_from_acc64(int64_t acc) {
+    int64_t rounded = pogo_round_shift_i64(acc, Q1_15_FRACTIONAL_BITS);
+    return rounded > Q1_15_MAX ? Q1_15_MAX :
+           rounded < Q1_15_MIN ? Q1_15_MIN : (q1_15_t)rounded;
 }
 
 // convert 32-bit Q2.30 accumulator to Q1.15 with rounding & saturation

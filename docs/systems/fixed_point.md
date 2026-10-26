@@ -37,10 +37,19 @@ helpers without tables, floating point or heap allocation.
 
 Other narrowing conversions, signed right shifts, nonlinear approximations and
 accumulator ranges still need checking for the chosen domain and compiler.
-These changes do not harden every arithmetic path. Float conversion requires
-finite inputs; NaN is not a valid fixed number. Macro conversions can evaluate
-arguments repeatedly: do not pass side-effecting expressions.
+These changes do not harden every arithmetic path. Float conversions saturate
+at the destination endpoints, including values whose rounding would otherwise
+exceed int16 range. Infinities saturate by sign and NaN maps to zero; fixed
+formats have no NaN encoding. Conversion uses float arithmetic without adding
+double-conversion requirements. Q1.15/Q6.10 macros remain usable in C static
+initializers and can evaluate arguments repeatedly: pass side-effect-free
+expressions.
 Cross-format conversion must check destination range as well as lost precision.
+
+The Q1.15 MLP accumulates complete dot products in int64 before rounding and
+saturation, preserving cancellation after large partial sums. This costs wider
+integer arithmetic on RV32. The separate `q1_15_mac32` API keeps its int32 result
+and now saturates each addition; it cannot preserve those larger partial sums.
 
 ## Initialization, code size, and portability
 

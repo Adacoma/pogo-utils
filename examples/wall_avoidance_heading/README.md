@@ -27,6 +27,9 @@ change compiler-defined dimensions or source switches.
 Default source target mode is opposite heading; configure chirality/policy and light calibration/start. Enable a light object in the YAML.
 
 Observe startup readiness, wall-face indicators and escape targets; poor light can invalidate the reference.
+Invalid headings or targets produce a STOP for that tick; a later valid sample
+can resume. Large finite angles use bounded wrapping and deadlines handle clock
+rollover. Forward power now honors the configured ratio for each calibrated motor.
 
 ## Constraints and validation
 

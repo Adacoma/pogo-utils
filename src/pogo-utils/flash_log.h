@@ -49,7 +49,8 @@ typedef enum {
     POGO_FLASH_LOG_NEEDS_SERVICE,
     POGO_FLASH_LOG_END,
     POGO_FLASH_LOG_VERIFY_FAILED,
-    POGO_FLASH_LOG_FLASH_ERROR
+    POGO_FLASH_LOG_FLASH_ERROR,
+    POGO_FLASH_LOG_STALE_HANDLE /**< File moved/replaced; discard cache and reopen. */
 } pogo_flash_log_status_t;
 
 /** Caller-owned per-file state; keep in robot USERDATA rather than on a small
@@ -63,6 +64,7 @@ typedef struct {
     uint8_t used;
     uint8_t ready;
     uint8_t failed;
+    uint32_t identity_crc; /**< Fingerprint of the catalog entry read at open. */
 } pogo_flash_log_t;
 
 /** Open an existing clean log, scanning at most 256 pages. Never writes.
@@ -90,7 +92,10 @@ pogo_flash_log_status_t pogo_flash_log_clear(pogo_flash_log_t *log);
 pogo_flash_log_status_t pogo_flash_log_append(
     pogo_flash_log_t *log, const void *bytes, size_t length, size_t *accepted);
 
-/** Commit one full cached page, or do nothing if it is not full. */
+/** Commit one full cached page, or do nothing if it is not full.
+ * Before programming, validate the current catalog entry and require an erased
+ * destination. A stale handle fails without programming any data. Reopen after
+ * moving, deleting/recreating or renaming a file; serialize filesystem access. */
 pogo_flash_log_status_t pogo_flash_log_service(pogo_flash_log_t *log);
 
 /** Commit even a partial page. Its unused capacity cannot be used later. */

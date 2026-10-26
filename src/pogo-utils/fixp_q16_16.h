@@ -34,12 +34,7 @@ static inline float q16_16_to_float(q16_16_t x) {
 }
 
 static inline q16_16_t q16_16_from_float(float x) {
-    if (x >= 32767.99998f) return Q16_16_MAX;
-    if (x <= -32768.0f)  return Q16_16_MIN;   // saturate lower
-    float xf = x * 65536.0f;
-    /* round half away from zero */
-    xf += (xf >= 0.0f) ? 0.5f : -0.5f;        // round half away from zero
-    return (q16_16_t)(int32_t)xf;
+    return fixp_from_float_scaled(x, 65536.0f, INT32_MIN, INT32_MAX);
 }
 
 

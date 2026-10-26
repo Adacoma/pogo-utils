@@ -49,6 +49,12 @@ not a hardware-certification report. [Documentation map](index.md);
 
 ## Currently working analyses
 
+- Latest high-priority fixes cover log ownership checks before flash I/O,
+  legacy speed/turn recovery and clock wrap, wide Q1.15 dot products, safe float
+  conversion endpoints/NaN, and SSR/photostart capacity bounds. All 15 Debug
+  tests pass normally and with ASan/UBSan/float-cast-overflow instrumentation.
+  See [details and remaining medium findings](code_audit.md#high-priority-fixes-after-follow-up-review).
+  No simulation, hardware run, firmware build or external-repository work occurred.
 - Raw upload is now the CLI and Python-client default; `--raw` remains accepted
   and `--envelope` enables the stored PFT1 header. Host pipe/NOR tests cover
   one-page 256-byte uploads, padding/empty inputs, replacement, optional headers,
@@ -86,6 +92,8 @@ not a hardware-certification report. [Documentation map](index.md);
   App chirality/offset/filtering are not persisted; compatibility remains a duty.
 - PFFS favors bounded firmware/RAM and fast ID reads over resizing/transactions.
   Logs separately trade cached speed and page density against checkpoint loss.
+  Log entry fingerprints reject changed ownership before I/O; callers reopen
+  after file movement/destructive operations and keep one writer per log.
 - UART transfer preserves PFFS v3. Exact byte length is an optional payload
   envelope, not new catalog metadata; existing mission layouts use raw upload.
   Host downloads publish only verified data; CRC is not authentication.
@@ -99,6 +107,8 @@ not a hardware-certification report. [Documentation map](index.md);
   existing thresholds/baselines need recalibration. MNIST counts unique origins
   within an epoch/image, bounded to 64 cached votes, with no finite-time global
   agreement guarantee under incomplete communication.
+  Q1.15 dot products now retain wide partial sums; float conversion maps NaN
+  to zero and infinities to endpoints. Target arithmetic costs need measurement.
 - Mathematical explanations describe implementations; no new accuracy, stability,
   classifier, learning-performance or worst-case timing claim was established.
 
@@ -121,8 +131,8 @@ Example assertions/benchmarks are not a complete repeatable regression suite.
 
 1. Revalidate ANN exports/layouts, SSR thresholds and MNIST experiment baselines
    with matching peers after numerical/protocol changes.
-2. Address remaining config/Makefile traps and extend host coverage to PID,
-   sensor/reference handling and remaining arithmetic paths.
+2. Address the remaining medium findings listed in the audit, config/Makefile
+   traps, and PID/sensor/reference coverage gaps.
 3. Validate v3 autoformat, logs/checkpoints and power interruption on disposable
    physical flash; measure erase/program, stack and deadline margins.
 4. Test manual heading jumps, sensor/IR outages and jams on representative robots;

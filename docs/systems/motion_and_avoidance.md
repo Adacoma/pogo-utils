@@ -104,6 +104,18 @@ settings. They are useful comparison paths, not plug-in planner replacements
 inside `ddk_t`. Do not call either direct executor alongside kinematics on
 the same motors.
 
+Both legacy executors now apply `forward_speed_ratio` to each calibrated motor;
+zero produces zero forward PWM, and nonfinite ratios map to zero. They remove
+power before changing motor directions. Deadlines use modular clock comparisons
+and individual intervals are capped below the uint32 half-range. The doubled
+surrounded-state commitment is capped before multiplication too.
+
+The heading variant reduces large finite angles with `fmodf`. Nonfinite headings
+or turn targets produce `WA_HEADING_ACTION_STOP`; `step()` takes ownership and
+stops the motors for that tick. A later valid heading can resume normally, with
+no latched fault. These are controller command guarantees, not measured motion
+or jam-escape guarantees.
+
 ## Collective controllers
 
 [Vicsek](../../examples/vicsek/README.md) aligns to nearby headings using
