@@ -5,6 +5,7 @@ The bridge has strict one-way NOR programming and fault-injection controls.
 """
 import importlib.util
 import io
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
 import queue
 import subprocess
@@ -12,6 +13,8 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
+from types import SimpleNamespace
 
 BRIDGE = sys.argv.pop(1)
 spec = importlib.util.spec_from_file_location("pffs_transfer", Path(__file__).parents[1] / "tools/pffs_transfer.py")
@@ -109,8 +112,10 @@ class Transfers(unittest.TestCase):
     def client(self):
         return pft.Client(self.pipe, timeout=0.08, retries=2)
 
-    def upload(self, data, **kwargs):
-        return self.client().upload(io.BytesIO(data), 10, "binary", **kwargs)
+    def upload(self, data, *, raw=False, **kwargs):
+        # Existing envelope/failure fixtures explicitly retain their layout.
+        # Tests below omit the real Client argument to verify the new default.
+        return self.client().upload(io.BytesIO(data), 10, "binary", raw=raw, **kwargs)
 
     def download(self, target="binary", **kwargs):
         output = io.BytesIO()
@@ -141,6 +146,62 @@ class Transfers(unittest.TestCase):
                 self.assertEqual(output.getvalue(), data[:keep])
                 self.assertEqual(result, (keep, pft.binascii.crc32(data[:keep])))
         self.assertEqual(len(self.download()), 512)
+
+    def test_default_upload_preserves_raw_pages_and_replacement(self):
+        for n in (0, 1, 239, 240, 255, 256, 257, 512, 4097):
+            with self.subTest(length=n):
+                self.pipe.control("!format")
+                data = bytes(i % 256 for i in range(n))
+                result = self.client().upload(io.BytesIO(data), 10, "binary")
+                stored = data + b"\xff" * (max(1, (n + 255) // 256) * 256 - n)
+                self.assertEqual(result, (n, pft.binascii.crc32(data)))
+                self.assertEqual(self.download(raw=True), stored)
+                self.assertEqual(self.download(), stored)
+        self.pipe.control("!format")
+        # A native payload resembling the envelope magic is still left intact.
+        data = b"PFT1" + bytes(range(252))
+        self.client().upload(io.BytesIO(data), 10, "binary")
+        self.assertEqual(self.download(), data)
+        replacement = b"PMAG" + b"x" * 252
+        self.client().upload(io.BytesIO(replacement), 10, "binary", replace=True)
+        self.assertEqual(self.download(raw=True), replacement) # Still one page.
+        with self.assertRaisesRegex(pft.TransferError, "SIZE"):
+            self.client().upload(io.BytesIO(b"x" * 257), 10, "binary", replace=True)
+        self.assertEqual(self.download(), replacement)
+
+    def test_cli_default_raw_and_optional_envelope(self):
+        # Exercise argument parsing and main() against the real C engine, with
+        # a pipe replacing only the serial device. No pyserial is required.
+        serial = SimpleNamespace(Serial=mock.Mock(side_effect=lambda *a, **k: nullcontext(self.pipe)),
+                                 SerialException=OSError)
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(sys.modules, {"serial": serial}):
+            source = Path(directory) / "record.bin"
+            data = b"PMAG" + bytes(range(252))
+            source.write_bytes(data)
+            for flags in ([], ["--raw"], ["--envelope"]):
+                with self.subTest(flags=flags):
+                    self.pipe.control("!format")
+                    args = ["--port", "test", "upload", str(source), "--id", "10", "--name", "binary"]
+                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        self.assertEqual(pft.main(args + flags), 0)
+                    physical = self.download(raw=True)
+                    if flags == ["--envelope"]:
+                        self.assertEqual(len(physical), 512)
+                        self.assertEqual(physical[:4], b"PFT1")
+                        self.assertEqual(physical[16:272], data)
+                    else:
+                        self.assertEqual(physical, data) # Exactly one page.
+                    for download_flags in ([], ["--raw"]):
+                        target = Path(directory) / "download.bin"
+                        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                            self.assertEqual(pft.main(["--port", "test", "download", "binary",
+                                                       str(target), "--overwrite"] + download_flags), 0)
+                        self.assertEqual(target.read_bytes(), physical if download_flags else data)
+            serial.Serial.reset_mock()
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                pft.main(args + ["--raw", "--envelope"])
+            self.assertEqual(error.exception.code, 2)
+            serial.Serial.assert_not_called()
 
     def test_duplicate_ack_and_finish_are_idempotent(self):
         data = bytes(range(256)) * 3
@@ -241,7 +302,7 @@ class Transfers(unittest.TestCase):
         with self.assertRaisesRegex(pft.TransferError, "SIZE"):
             self.upload(b"B" * 10, replace=True)
         with self.assertRaisesRegex(pft.TransferError, "NAME"):
-            self.client().upload(io.BytesIO(b"B" * 500), 10, "other", replace=True)
+            self.client().upload(io.BytesIO(b"B" * 500), 10, "other", raw=False, replace=True)
         self.assertEqual(self.pipe.control("!stats")[:2], before)
         self.assertEqual(self.download(), b"A" * 500)
         self.pipe.drop = b" PUT "  # Replacement READY must be retryable too.

@@ -29,8 +29,9 @@ not a hardware-certification report. [Documentation map](index.md);
 - Logs use one-page caches and per-page CRC. New defaults are 64 KiB per log;
   existing sizes remain fixed. Uncommitted RAM bytes disappear on reset.
 - Flash shell UART transfers use 48-byte CRC/ACK frames and its existing page
-  cache. Type 0x8002 wraps uploads with exact length/content CRC; raw mode keeps
-  native schemas. Downloads unwrap uploads/logs. Creation never autoformats;
+  cache. Uploads default to raw native schemas and page-granular length;
+  `--envelope` opts into type 0x8002 with exact length/content CRC. Downloads
+  unwrap envelopes/logs automatically. Creation never autoformats;
   replacement is explicit, same-page-count and non-transactional.
 - Printing uses a standalone integer/fixed-point core and flash-first adapter:
   RAM-only producer, caller-sized staging, one pending spill/mirror record,
@@ -48,13 +49,18 @@ not a hardware-certification report. [Documentation map](index.md);
 
 ## Currently working analyses
 
+- Raw upload is now the CLI and Python-client default; `--raw` remains accepted
+  and `--envelope` enables the stored PFT1 header. Host pipe/NOR tests cover
+  one-page 256-byte uploads, padding/empty inputs, replacement, optional headers,
+  CLI parsing and download decoding. All 18 transfer tests pass normally and
+  with the ASan/UBSan bridge; no serial device or simulation was used.
 - Latest audit fixes cover optimizer ownership/defaults/enums and example
   failure handling; symmetric ANN rounding, signed scaling, MLP shifts/gates,
   ESN configuration bounds, nonfinite HIT/SL adverts, isolated SSR time and
   contracting default weights, unique-origin MNIST voting and trimmed UART CRC.
   See [fix details](code_audit.md#2026-10-26-follow-up).
-- All 12 Debug host tests pass normally and with ASan/UBSan. Fixtures include
-  integer oracles/endpoints, deep MLP buffers/gates, allocator failure cleanup,
+- Audit validation: all 12 Debug host tests passed normally and with ASan/UBSan.
+  Fixtures include integer oracles/endpoints, deep MLP buffers/gates, allocator failure cleanup,
   SSR clock wrap/two-node contraction, vote relays and transfer/NOR failures.
   All six optimizer selections, full/block HIT and MNIST pass strict syntax
   checks. No simulation, hardware/serial run, firmware build or install occurred.

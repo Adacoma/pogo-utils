@@ -15,10 +15,12 @@ host-only serial dependency once:
 python3 -m pip install pyserial
 ```
 
-From the repository root, with ID 10 free and the filesystem already valid:
+From the repository root, with IDs 10/11 free and the filesystem already valid:
 
 ```sh
-python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload config.csv --id 10 --name config
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload record.bin --id 10 --name record
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download record received.bin
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload config.csv --id 11 --name config --envelope
 python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download config received.csv
 python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download prints robot-prints.txt
 ```
@@ -31,19 +33,23 @@ CRC preflight can take longer than a small transfer, so adjust the reply
 timeout if needed. Opening a serial port can reset some adapters/boards;
 make sure the shell is running before starting a transfer.
 
-Ordinary uploads create a new file and preserve its exact byte length,
-including an empty file. Downloading it returns exactly the original bytes.
-Native ordinary files without an upload header have page-granular length.
+Uploads are **raw by default**: the original bytes start at byte zero, without
+a PFT1 header. Files have page-granular length, including final 0xff padding.
+A 256-byte calibration record therefore occupies one page. Use `--envelope`
+when exact-length storage matters; downloads automatically remove that header
+and padding, including for an empty enveloped file. `upload --raw` remains an
+explicit spelling of the default; it cannot be combined with `--envelope`.
 Downloading a log returns its committed payload bytes, concatenated across
 pages without log headers or padding. Cached, uncommitted log bytes cannot be
 downloaded after switching firmware.
 
 ## Raw records and replacements
 
-Use raw mode when mission code expects its existing binary layout at byte zero:
+The default raw mode preserves mission records at byte zero. Use `--length N`
+on download when you know the original length and want to omit page padding:
 
 ```sh
-python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload record.bin --id 11 --name record --raw
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload record.bin --id 10 --name record
 python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download record record-copy.bin --length 180
 ```
 
@@ -56,10 +62,20 @@ For a physical file image, `download --raw` exports every allocated page, includ
 upload/log headers and erased padding.
 Raw mode still validates files; it does not bypass checks to salvage corrupt data.
 
+For an exact-length text or binary file, opt into the 16-byte envelope:
+
+```sh
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload config.csv --id 11 --name config --envelope
+```
+
+The envelope needs `ceil((16 + bytes)/256)` pages, so a 256-byte input needs
+two pages. It is intended for readers that understand PFT1, including the host
+downloader. Existing mission readers expecting a native record use raw uploads.
+
 Overwriting requires explicit flags on each side:
 
 ```sh
-python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload config.csv --id 10 --name config --replace
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload record.bin --id 10 --name record --replace
 python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download config received.csv --overwrite
 ```
 
@@ -69,6 +85,8 @@ uploads or `max(1,ceil(input_bytes/256))` for raw uploads. A different byte
 length is allowed only within that same page-count range. Raw replacement
 retains the existing ordinary payload type; log replacement is refused.
 The tool never deletes/recreates a file to resize it or renames another file.
+To replace a previous PFT1 upload, retain `--envelope --replace`. Replacement
+cannot switch between raw and enveloped layouts or shrink an old allocation.
 
 A new upload is published only after all data and checksums are verified.
 Replacement erases the existing file in place and is not power-fail atomic.
@@ -86,7 +104,7 @@ replacement instead.
 ## Storage and firmware scope
 
 The PFFS catalog format is unchanged. The shell reserves ordinary payload type
-0x8002 for an upload envelope with a 16-byte prefix:
+0x8002 for an optional `--envelope` upload with a 16-byte prefix:
 
 | Byte offset | Content |
 | --- | --- |
@@ -98,7 +116,7 @@ The PFFS catalog format is unchanged. The shell reserves ordinary payload type
 
 PFFS's ordinary-file CRC still covers the entire allocation, including this
 prefix/padding. Applications using normal fast reads see the prefix and must
-decode it or use `--raw` uploads for their existing schema. Ordinary shell
+decode it or use default raw uploads for their existing schema. Ordinary shell
 `cat` remains a physical hexadecimal dump. The host downloader unwraps only
 type 0x8002 with a valid header/content CRC. The maximum payload is 1,441,776
 bytes with the header or 1,441,792 raw bytes, subject to free contiguous sectors
@@ -128,8 +146,9 @@ getend TOKEN CRC
 abort TOKEN
 ```
 
-`NAME=-` means unnamed. Replies begin with `PFT1 TOKEN`. Begin replies are
-`PUT BYTES CRC 48 SIGNATURE` or `GET BYTES CRC 48 SIGNATURE`. SIGNATURE is the
+`NAME=-` means unnamed. Replies begin with `PFT1 TOKEN` in both upload modes;
+this wire-protocol marker is separate from the optional stored header. Begin
+replies are `PUT BYTES CRC 48 SIGNATURE` or `GET BYTES CRC 48 SIGNATURE`. SIGNATURE is the
 CRC32 of all begin-command words, each followed by a NUL, including the command
 and nonce. The host checks it before accepting the destination/source metadata.
 Chunk CRCs cover little-endian uint32 TOKEN and OFFSET followed by decoded data.

@@ -4,6 +4,7 @@
 Only the command-line serial transport needs pyserial; the protocol client is
 transport-independent for tests. No firmware flashing, implicit formatting,
 automatic remote deletion, or automatic replacement is performed.
+Uploads are raw by default; --envelope adds the optional PFT1 length/CRC header.
 """
 from __future__ import annotations
 
@@ -122,8 +123,12 @@ class Client:
         if not 1 <= len(name) <= 32 or any(ord(c) < 33 or ord(c) > 126 for c in name):
             raise TransferError("name must contain 1..32 printable ASCII bytes without spaces")
 
-    def upload(self, source, file_id, name, *, raw=False, replace=False, progress=None):
-        """Hash then stream a seekable source. Returns original byte count/CRC."""
+    def upload(self, source, file_id, name, *, raw=True, replace=False, progress=None):
+        """Hash then stream a seekable source. Returns original byte count/CRC.
+
+        Raw uploads preserve native records at byte zero and use page-granular
+        storage. Pass raw=False to add the optional exact-length PFT1 envelope.
+        """
         self._name(name)
         if not 1 <= file_id <= 80:
             raise TransferError("file ID must be between 1 and 80")
@@ -252,7 +257,14 @@ def main(argv=None):
     put.add_argument("--id", type=int, required=True)
     put.add_argument("--name", help="PFFS name; defaults to source basename; '-' means unnamed")
     put.add_argument("--replace", action="store_true", help="destructive, non-transactional replacement")
-    put.add_argument("--raw", action="store_true", help="omit envelope; byte length becomes page-granular")
+    # Upload raw/envelope selection is separate from download --raw, which
+    # explicitly exports physical pages instead of decoding headers/logs.
+    put_mode = put.add_mutually_exclusive_group()
+    put_mode.add_argument("--raw", dest="raw", action="store_true",
+                          help="store bytes without a header (default; page-granular length)")
+    put_mode.add_argument("--envelope", dest="raw", action="store_false",
+                          help="prepend a 16-byte PFT1 header preserving exact byte length")
+    put.set_defaults(raw=True)
     get = sub.add_parser("download", help="download an ordinary file or a log's committed payload")
     get.add_argument("target", help="PFFS ID or name")
     get.add_argument("destination", type=Path)

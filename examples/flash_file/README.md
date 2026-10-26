@@ -57,21 +57,26 @@ With this shell firmware running, close the serial terminal and use the
 Python environment, then run from the repository root:
 
 ```sh
-python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload config.csv --id 10 --name config
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload record.bin --id 10 --name record
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download record received.bin
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload config.csv --id 11 --name config --envelope
 python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download config received.csv
 python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download prints robot-prints.txt
 ```
 
 Use a free ID for creation. The uploader refuses missing/corrupt filesystems;
-it never formats them. An upload header preserves the exact original byte
-length, and the downloader removes it automatically. Use `upload --raw` for
-existing binary layouts that must start at byte zero. Native ordinary files
-have page-granular size; `download --length N` can discard known padding.
+it never formats them. Uploads are raw by default, preserving binary layouts
+at byte zero. Files have page-granular size; `download --length N` can discard
+known padding. `upload --envelope` adds a 16-byte PFT1 header preserving the
+exact original length, which the downloader removes automatically. A 256-byte
+record needs one page by default or two with the header. Explicit `upload --raw`
+is still accepted; it is mutually exclusive with `--envelope`.
 Logs download as concatenated committed payload, including arbitrary binary
 bytes. `download --raw` exports physical allocated pages instead.
 
 Remote overwrites need `upload --replace`, matching ID/name, compatible type
-and unchanged page count. Interrupted replacement can damage the old file.
+and unchanged page count. Replacing an enveloped file also needs `--envelope`.
+Interrupted replacement can damage the old file.
 Local files need `download --overwrite`; only a verified download is published.
 The 48-byte chunk protocol has CRCs, acknowledgements and timeout/retry handling.
 It shares the existing page cache and locks other commands during transfers.
