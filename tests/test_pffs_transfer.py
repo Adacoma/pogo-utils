@@ -214,6 +214,102 @@ class Transfers(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             serial.Serial.assert_not_called()
 
+    def test_auto_id_uses_first_available_and_preserves_existing_files(self):
+        self.client().upload(io.BytesIO(b"keep ID 2"), 2, "existing")
+        client = self.client()
+        for expected, name, data, raw in ((1, "first", b"one", True),
+                                          (3, "next", b"three", False),
+                                          (4, "-", b"unnamed", True),
+                                          (5, "-", b"another", True)):
+            with self.subTest(expected=expected):
+                result = client.upload(io.BytesIO(data), name=name, raw=raw)
+                self.assertEqual(client.uploaded_file_id, expected)
+                self.assertEqual(result, (len(data), pft.binascii.crc32(data)))
+                self.assertEqual(self.download(str(expected)), data)
+        self.assertEqual(self.download("2"), b"keep ID 2")
+
+    def test_auto_id_ready_retry_does_not_allocate_another_writer(self):
+        self.client().upload(io.BytesIO(b"occupied"), 1, "first")
+        self.pipe.drop = b" PUT "
+        before = int(self.pipe.control("!stats")[0])
+        client = self.client()
+        client.upload(io.BytesIO(bytes(range(256))), name="binary")
+        self.assertEqual(client.uploaded_file_id, 2)
+        # One data page and one catalog commit, despite the lost READY.
+        self.assertEqual(int(self.pipe.control("!stats")[0]) - before, 2)
+        self.assertEqual(self.download("1"), b"occupied")
+        self.assertEqual(self.download("2"), bytes(range(256)))
+
+    def test_auto_id_stops_on_unknown_writer_state_and_catalog_error(self):
+        client = self.client()
+        before = self.pipe.control("!stats")[:2]
+        with mock.patch.object(self.pipe, "write", wraps=self.pipe.write) as writes:
+            # Exhausted READY retries do not mean that ID 1 was rejected. The
+            # real server already owns that writer; never advance to ID 2.
+            with mock.patch.object(client, "_frame", return_value=None):
+                with self.assertRaisesRegex(pft.TransferError, "no valid PUT"):
+                    client.upload(io.BytesIO(b"unconfirmed"), name="binary")
+        wire = [call.args[0] for call in writes.call_args_list]
+        self.assertEqual(len(wire), client.retries + 1)
+        self.assertTrue(all(b" 1 binary " in line for line in wire))
+        self.assertIsNone(client.uploaded_file_id)
+        client.abort()
+        self.assertEqual(self.pipe.control("!stats")[:2], before)
+        self.pipe.control("!blank")
+        before = self.pipe.control("!stats")[:2]
+        with self.assertRaisesRegex(pft.RemoteError, "CATALOG"):
+            self.client().upload(io.BytesIO(b"test"), name="binary")
+        self.assertEqual(self.pipe.control("!stats")[:2], before)
+
+    def test_auto_id_duplicate_name_and_full_id_table_never_overwrite(self):
+        self.client().upload(io.BytesIO(b"original"), 1, "binary")
+        before = self.pipe.control("!stats")[:2]
+        with self.assertRaisesRegex(pft.TransferError, "name may already exist"):
+            self.client().upload(io.BytesIO(b"replacement"), name="binary")
+        self.assertEqual(self.pipe.control("!stats")[:2], before)
+        self.assertEqual(self.download("binary"), b"original")
+        for file_id in range(2, pft.MAX_FILES + 1):
+            self.client().upload(io.BytesIO(b""), file_id, f"file{file_id}")
+        before = self.pipe.control("!stats")[:2]
+        with self.assertRaisesRegex(pft.TransferError, "no ID could be allocated"):
+            self.client().upload(io.BytesIO(b"new"), name="extra")
+        self.assertEqual(self.pipe.control("!stats")[:2], before)
+        self.assertEqual(self.download("1"), b"original")
+        self.assertEqual(self.download("80"), b"")
+
+    def test_auto_id_requires_explicit_replacement_target(self):
+        client = self.client()
+        with mock.patch.object(self.pipe, "write", wraps=self.pipe.write) as writes:
+            with self.assertRaisesRegex(pft.TransferError, "explicit file ID"):
+                client.upload(io.BytesIO(b"unsafe"), name="binary", replace=True)
+            writes.assert_not_called()
+
+    def test_cli_optional_id_reports_selection_and_replaces_explicitly(self):
+        self.client().upload(io.BytesIO(b"preserved"), 1, "existing")
+        serial = SimpleNamespace(Serial=mock.Mock(side_effect=lambda *a, **k: nullcontext(self.pipe)),
+                                 SerialException=OSError)
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(sys.modules, {"serial": serial}):
+            source = Path(directory) / "record.bin"
+            source.write_bytes(b"controller")
+            args = ["--port", "test", "upload", str(source)]
+            output = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                self.assertEqual(pft.main(args), 0)
+            self.assertIn("ID=2", output.getvalue())
+            self.assertEqual(self.download("record.bin"), b"controller")
+            self.assertEqual(self.download("1"), b"preserved")
+            serial.Serial.reset_mock()
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                pft.main(args + ["--replace"])
+            self.assertEqual(error.exception.code, 2)
+            serial.Serial.assert_not_called()
+            source.write_bytes(b"changed")
+            output = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                self.assertEqual(pft.main(args + ["--replace", "--id", "2"]), 0)
+            self.assertNotIn("ID=", output.getvalue())
+            self.assertEqual(self.download("record.bin"), b"changed")
+
     def test_duplicate_ack_and_finish_are_idempotent(self):
         data = bytes(range(256)) * 3
         self.pipe.drop = b" PUT "

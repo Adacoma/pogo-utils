@@ -51,6 +51,16 @@ not a hardware-certification report. [Documentation map](index.md);
 
 ## Currently working analyses
 
+- The host PFFS uploader now accepts omitted `--id` for new files, trying IDs
+  1–80 through existing PFT1 create preflight and reporting the committed ID.
+  Explicit IDs retain their behavior; replacement still requires an ID. Only
+  `CREATE` rejections advance the search; timeouts and other errors stop it.
+  Generic firmware `CREATE` replies cannot distinguish occupied IDs, duplicate
+  names and insufficient space. The wire protocol and firmware are unchanged.
+  All 25 host transfer tests pass against the real C/NOR engine, including
+  full-ID/duplicate-name rejection, READY loss, explicit replacement and CLI
+  reporting. Serial/hardware verification of automatic selection remains pending.
+
 - Shared `go_straight`/`vicsek` simulator Makefiles now compile SDK PFFS sources
   instead of requesting the removed local reader/name objects. This also covers
   go_straight_simple, ACU and Vicsek-U-turns. Heading-detection's LED conversion

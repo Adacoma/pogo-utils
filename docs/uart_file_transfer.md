@@ -15,15 +15,27 @@ host-only serial dependency once:
 python3 -m pip install pyserial
 ```
 
-From the repository root, with IDs 10/11 free and the filesystem already valid:
+From the repository root, with a valid filesystem and space for new files:
 
 ```sh
-python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload record.bin --id 10 --name record
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload record.bin --name record
 python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download record received.bin
-python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload config.csv --id 11 --name config --envelope
+python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload config.csv --name config --envelope
 python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download config received.csv
 python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download prints robot-prints.txt
 ```
+
+`--id` is optional for a new upload. The client tries IDs 1–80 in order and
+uses the first one where creation succeeds; the final result reports `ID=N`.
+An explicit `--id 10` still selects a fixed ID, useful when mission firmware
+expects one. Existing files are not overwritten, and both raw and enveloped
+uploads support automatic selection. This works with the existing shell and
+Pogobios PFT1 protocol; no firmware update is needed.
+
+The firmware groups occupied IDs, duplicate names and insufficient space under
+the same `CREATE` error. If all candidates are rejected, the tool reports those
+possible causes. Catalog errors, an active session, or missing acknowledgements
+stop the search. Retries after a lost READY always use the same ID and writer.
 
 An ID can be used in place of the download name. Use `--port COM3` on Windows.
 The default baud rate is 115200; set `--baud` to match your UART console.
@@ -88,6 +100,8 @@ retains the existing ordinary payload type; log replacement is refused.
 The tool never deletes/recreates a file to resize it or renames another file.
 To replace a previous PFT1 upload, retain `--envelope --replace`. Replacement
 cannot switch between raw and enveloped layouts or shrink an old allocation.
+`--replace` requires an explicit `--id`; automatic ID selection creates new files
+and does not select a destructive replacement target.
 
 A new upload is published only after all data and checksums are verified.
 Replacement erases the existing file in place and is not power-fail atomic.

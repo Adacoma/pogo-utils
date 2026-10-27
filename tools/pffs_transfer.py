@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Upload/download PFFS files through the running flash_file UART shell.
+"""Upload/download PFFS files through a running PFFS UART shell.
 
 Only the command-line serial transport needs pyserial; the protocol client is
 transport-independent for tests. No firmware flashing, implicit formatting,
 automatic remote deletion, or automatic replacement is performed.
 Uploads are raw by default with exact length in the PFFS v4 catalog.
+Omit --id for a new upload to select an available ID; --replace requires --id.
 --envelope adds the optional PFT1 length/CRC header for envelope-aware readers.
 """
 from __future__ import annotations
@@ -21,11 +22,20 @@ import time
 
 CHUNK = 48
 MAX_BYTES = 5632 * 256
+MAX_FILES = 80
 MAX_LINE = 159
 
 
 class TransferError(Exception):
     """Rejected command, exhausted retries, or failed data validation."""
+
+
+class RemoteError(TransferError):
+    """Keep the firmware reason distinct from transport/retry failures."""
+
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(f"robot rejected transfer: {reason}")
 
 
 class BadPacket(Exception):
@@ -59,6 +69,8 @@ class Client:
         if not 0 < self.token <= 0xFFFFFFFF:
             raise ValueError("invalid session token")
         self.partial = bytearray()
+        # Publish the selected ID only after the current upload is committed.
+        self.uploaded_file_id = None
 
     def _frame(self, deadline):
         """Ignore prompts/echo/boot messages; bound noisy line accumulation."""
@@ -101,7 +113,7 @@ class Client:
                     reason = fields[1] if len(fields) > 1 else "malformed error"
                     if reason == "CRC":
                         break  # Receiver rejected a damaged command; resend.
-                    raise TransferError(f"robot rejected transfer: {reason}")
+                    raise RemoteError(reason)
                 if fields[0] != kind:
                     continue
                 try:
@@ -121,18 +133,25 @@ class Client:
 
     @staticmethod
     def _name(name):
-        if not 1 <= len(name) <= 32 or any(ord(c) < 33 or ord(c) > 126 for c in name):
+        if not isinstance(name, str) or not 1 <= len(name) <= 32 or any(ord(c) < 33 or ord(c) > 126 for c in name):
             raise TransferError("name must contain 1..32 printable ASCII bytes without spaces")
 
-    def upload(self, source, file_id, name, *, raw=True, replace=False, progress=None):
+    def upload(self, source, file_id=None, name=None, *, raw=True, replace=False, progress=None):
         """Hash then stream a seekable source. Returns original byte count/CRC.
 
         Raw uploads preserve native records at byte zero; PFFS v4 records the
         exact length. Pass raw=False to add the optional PFT1 payload envelope.
+        file_id=None tries new-file IDs in order. Replacement needs an explicit
+        ID. On success uploaded_file_id identifies the committed file; the
+        returned byte count/CRC pair is unchanged.
         """
+        self.uploaded_file_id = None
         self._name(name)
-        if not 1 <= file_id <= 80:
-            raise TransferError("file ID must be between 1 and 80")
+        automatic = file_id is None
+        if replace and automatic:
+            raise TransferError("replacement requires an explicit file ID (--id)")
+        if not automatic and not 1 <= file_id <= MAX_FILES:
+            raise TransferError(f"file ID must be between 1 and {MAX_FILES}")
         source.seek(0)
         length, crc = 0, 0
         while block := source.read(65536):
@@ -142,10 +161,25 @@ class Client:
             crc = binascii.crc32(block, crc)
         source.seek(0)
         mode = "raw-replace" if raw and replace else "raw" if raw else "replace" if replace else "new"
-        command = f"put {self.token:08x} {file_id} {name} {length} {crc:08x} {mode}"
-        self.request(command, "PUT",
-                     lambda f: len(f) == 5 and int(f[1]) == length and int(f[2], 16) == crc and
-                     int(f[3]) == CHUNK and int(f[4], 16) == request_signature(command))
+        # Current firmware reports occupied IDs, duplicate names and lack of
+        # space as CREATE. Only that preflight rejection advances the ID search;
+        # a missing/damaged READY must retry the SAME writer or fail, never
+        # start another candidate. Existing files are never replaced here.
+        candidates = range(1, MAX_FILES + 1) if automatic else (file_id,)
+        for selected_id in candidates:
+            command = f"put {self.token:08x} {selected_id} {name} {length} {crc:08x} {mode}"
+            try:
+                self.request(command, "PUT",
+                             lambda f: len(f) == 5 and int(f[1]) == length and int(f[2], 16) == crc and
+                             int(f[3]) == CHUNK and int(f[4], 16) == request_signature(command))
+            except RemoteError as exc:
+                if not automatic or exc.reason != "CREATE":
+                    raise
+            else:
+                break
+        else:
+            raise TransferError("no ID could be allocated: IDs may be full, the name may "
+                                "already exist, or contiguous flash space may be unavailable")
         offset, live_crc = 0, 0
         while block := source.read(CHUNK):
             if offset + len(block) > length:
@@ -162,6 +196,7 @@ class Client:
             raise TransferError("source file changed during upload; not committed")
         self.request(f"putend {self.token:08x}", "DONE",
                      lambda f: len(f) == 4 and f[1] == "PUT" and int(f[2]) == length and int(f[3], 16) == crc)
+        self.uploaded_file_id = selected_id
         return length, crc
 
     def download(self, target, destination, *, raw=False, length=None, progress=None):
@@ -255,7 +290,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="operation", required=True)
     put = sub.add_parser("upload", help="create a file, or explicitly replace a same-size allocation")
     put.add_argument("source", type=Path)
-    put.add_argument("--id", type=int, required=True)
+    put.add_argument("--id", type=int, help="PFFS ID 1..80 (default: choose an available ID)")
     put.add_argument("--name", help="PFFS name; defaults to source basename; '-' means unnamed")
     put.add_argument("--replace", action="store_true", help="destructive, non-transactional replacement")
     # Upload raw/envelope selection is separate from download --raw, which
@@ -273,6 +308,8 @@ def main(argv=None):
     get.add_argument("--length", type=int, help="retain this many bytes, while validating the full stream")
     get.add_argument("--overwrite", action="store_true", help="explicitly replace an existing local file")
     args = parser.parse_args(argv)
+    if args.operation == "upload" and args.replace and args.id is None:
+        parser.error("--replace requires an explicit --id")
     if not 0 < args.timeout < 30 or args.retries < 0 or args.baud <= 0:
         parser.error("require 0 < timeout < 30, retries >= 0 and baud > 0")
     try:
@@ -302,7 +339,10 @@ def main(argv=None):
                 client.abort()
                 raise
         print(file=sys.stderr)
-        print(f"{args.operation}: {result[0]} bytes, CRC32={result[1]:08x}")
+        # Explicit-ID invocations keep their existing summary format.
+        identity = (f", ID={client.uploaded_file_id}"
+                    if args.operation == "upload" and args.id is None else "")
+        print(f"{args.operation}: {result[0]} bytes, CRC32={result[1]:08x}{identity}")
         return 0
     except (TransferError, OSError, ValueError, serial.SerialException) as exc:
         print(f"\nerror: {exc}", file=sys.stderr)
