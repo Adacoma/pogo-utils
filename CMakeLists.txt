@@ -11,6 +11,20 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 
+# PFFS has one maintained implementation in the Pogobot SDK. Native builds
+# compile those sources for Pogosim; firmware links them from libpogobot.a.
+set(POGO_SDK "${CMAKE_CURRENT_SOURCE_DIR}/pogobot-sdk" CACHE PATH "Pogobot SDK with PFFS v4 headers and portable sources")
+set(PFFS_SOURCE_DIR "${POGO_SDK}/src/pffs")
+if(NOT EXISTS "${PFFS_SOURCE_DIR}/flash_file_read.c")
+    message(FATAL_ERROR "Refresh the Pogobot SDK with PFFS support; set -DPOGO_SDK=/path/to/sdk")
+endif()
+set(PFFS_CORE_SOURCES
+    ${PFFS_SOURCE_DIR}/flash_file_read.c ${PFFS_SOURCE_DIR}/flash_file_secure.c
+    ${PFFS_SOURCE_DIR}/flash_file_name.c ${PFFS_SOURCE_DIR}/flash_file_write.c
+    ${PFFS_SOURCE_DIR}/flash_file_status.c ${PFFS_SOURCE_DIR}/flash_log.c)
+# Make the public forwarding headers available to library consumers and tests.
+include_directories(${POGO_SDK}/includes)
+
 # Collect source files
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
@@ -19,12 +33,15 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
 list(FILTER SOURCES EXCLUDE REGEX "/(pogobot-sdk|examples)/.*$")
 
 # Create library target
-add_library(${PROJECT_NAME} ${SOURCES})
+add_library(${PROJECT_NAME} ${SOURCES} ${PFFS_CORE_SOURCES})
+target_compile_definitions(${PROJECT_NAME} PRIVATE POGOBOT_PFFS_SIMULATOR)
 
 # Include directories
 target_include_directories(${PROJECT_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${POGO_SDK}/includes
 )
 
 target_compile_definitions(${PROJECT_NAME}
@@ -72,6 +89,9 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/src/pogo-utils/  # Path to the header file
     FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"  # Only install public headers
     PATTERN "*_internal.h" EXCLUDE
 )
+
+install(DIRECTORY ${POGO_SDK}/includes/pffs/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/pffs FILES_MATCHING PATTERN "*.h")
 
 # Generate and install CMake config files
 include(CMakePackageConfigHelpers)
@@ -142,10 +162,10 @@ if(BUILD_TESTING)
                 ${CMAKE_C_COMPILER} ${CMAKE_SOURCE_DIR})
         endif()
         add_executable(pffs_transfer_bridge tests/pffs_transfer_bridge.c
-            examples/flash_file/transfer.c src/pogo-utils/flash_log.c
-            src/pogo-utils/flash_file_read.c src/pogo-utils/flash_file_secure.c
-            src/pogo-utils/flash_file_name.c src/pogo-utils/flash_file_write.c)
-        target_include_directories(pffs_transfer_bridge PRIVATE
+            examples/flash_file/transfer.c ${PFFS_SOURCE_DIR}/flash_log.c
+            ${PFFS_SOURCE_DIR}/flash_file_read.c ${PFFS_SOURCE_DIR}/flash_file_secure.c
+            ${PFFS_SOURCE_DIR}/flash_file_name.c ${PFFS_SOURCE_DIR}/flash_file_write.c)
+        target_include_directories(pffs_transfer_bridge BEFORE PRIVATE
             ${CMAKE_SOURCE_DIR}/tests/stubs ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR})
         target_compile_definitions(pffs_transfer_bridge PRIVATE REAL_ROBOT)
         add_test(NAME pffs_transfer COMMAND ${Python3_EXECUTABLE}
@@ -164,10 +184,10 @@ if(BUILD_TESTING)
     # the physical NOR branch, without executing firmware or a simulation.
     add_executable(test_print_log_nor tests/test_print_log_nor.c
         src/pogo-utils/print_format.c src/pogo-utils/print_log.c
-        src/pogo-utils/flash_file_read.c src/pogo-utils/flash_file_secure.c
-        src/pogo-utils/flash_file_name.c src/pogo-utils/flash_file_write.c
-        src/pogo-utils/flash_log.c)
-    target_include_directories(test_print_log_nor PRIVATE
+        ${PFFS_SOURCE_DIR}/flash_file_read.c ${PFFS_SOURCE_DIR}/flash_file_secure.c
+        ${PFFS_SOURCE_DIR}/flash_file_name.c ${PFFS_SOURCE_DIR}/flash_file_write.c
+        ${PFFS_SOURCE_DIR}/flash_log.c)
+    target_include_directories(test_print_log_nor BEFORE PRIVATE
         ${CMAKE_SOURCE_DIR}/tests/stubs ${CMAKE_SOURCE_DIR})
     target_compile_definitions(test_print_log_nor PRIVATE REAL_ROBOT)
     add_test(NAME print_log_nor COMMAND test_print_log_nor)
@@ -183,12 +203,12 @@ if(BUILD_TESTING)
     # model; the regular simulator mock permits overwriting without erase.
     add_executable(test_flash_file_nor
         tests/test_flash_file_nor.c
-        src/pogo-utils/flash_file_read.c
-        src/pogo-utils/flash_file_secure.c
-        src/pogo-utils/flash_file_name.c
-        src/pogo-utils/flash_file_write.c
-        src/pogo-utils/flash_file_status.c)
-    target_include_directories(test_flash_file_nor PRIVATE
+        ${PFFS_SOURCE_DIR}/flash_file_read.c
+        ${PFFS_SOURCE_DIR}/flash_file_secure.c
+        ${PFFS_SOURCE_DIR}/flash_file_name.c
+        ${PFFS_SOURCE_DIR}/flash_file_write.c
+        ${PFFS_SOURCE_DIR}/flash_file_status.c)
+    target_include_directories(test_flash_file_nor BEFORE PRIVATE
         ${CMAKE_SOURCE_DIR}/tests/stubs ${CMAKE_SOURCE_DIR})
     target_compile_definitions(test_flash_file_nor PRIVATE REAL_ROBOT)
     add_test(NAME flash_file_nor COMMAND test_flash_file_nor)
@@ -196,12 +216,12 @@ if(BUILD_TESTING)
     # Exercise append logging against the same one-way NOR programming model.
     add_executable(test_flash_log_nor
         tests/test_flash_log_nor.c
-        src/pogo-utils/flash_file_read.c
-        src/pogo-utils/flash_file_secure.c
-        src/pogo-utils/flash_file_name.c
-        src/pogo-utils/flash_file_write.c
-        src/pogo-utils/flash_log.c)
-    target_include_directories(test_flash_log_nor PRIVATE
+        ${PFFS_SOURCE_DIR}/flash_file_read.c
+        ${PFFS_SOURCE_DIR}/flash_file_secure.c
+        ${PFFS_SOURCE_DIR}/flash_file_name.c
+        ${PFFS_SOURCE_DIR}/flash_file_write.c
+        ${PFFS_SOURCE_DIR}/flash_log.c)
+    target_include_directories(test_flash_log_nor BEFORE PRIVATE
         ${CMAKE_SOURCE_DIR}/tests/stubs ${CMAKE_SOURCE_DIR})
     target_compile_definitions(test_flash_log_nor PRIVATE REAL_ROBOT)
     add_test(NAME flash_log_nor COMMAND test_flash_log_nor)

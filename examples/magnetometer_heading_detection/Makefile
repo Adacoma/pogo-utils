@@ -73,14 +73,16 @@ SIM_SRCS_CXX = $(wildcard *.cpp)
 SIM_SRCS_C = $(wildcard *.c)
 SIM_OBJECTS_CXX = $(patsubst %.cpp,build/sim/%.o,$(SIM_SRCS_CXX))
 SIM_OBJECTS_C = $(patsubst %.c,build/sim/%.o,$(SIM_SRCS_C))
-# Keep PFFS and calibration storage from this checkout together in simulator
-# binaries. Mixing a newly built v3 writer with an installed v2 reader would
-# compile successfully but misinterpret catalog entries at runtime.
-SIM_LOCAL_FLASH_SRCS = flash_file_read.c flash_file_secure.c \
-    flash_file_name.c flash_file_write.c flash_file_status.c flash_log.c \
-    magnetometer_calibration_flash.c magnetometer_calibration_flash_store.c
+# Simulator builds compile the same PFFS source shipped by the SDK. Hardware
+# builds omit these sources and obtain the complete API from libpogobot.a.
+SIM_PFFS_SRCS = flash_file_read.c flash_file_secure.c flash_file_name.c \
+    flash_file_write.c flash_file_status.c flash_log.c
+SIM_PFFS_OBJECTS = $(patsubst %.c,build/sim/%_sdk.o,$(SIM_PFFS_SRCS))
+SIM_LOCAL_FLASH_SRCS = magnetometer_calibration_flash.c magnetometer_calibration_flash_store.c
 SIM_LOCAL_FLASH_OBJECTS = $(patsubst %.c,build/sim/%_local.o,$(SIM_LOCAL_FLASH_SRCS))
-SIM_OBJECTS = $(SIM_OBJECTS_CXX) $(SIM_OBJECTS_C) $(SIM_LOCAL_FLASH_OBJECTS)
+SIM_OBJECTS = $(SIM_OBJECTS_CXX) $(SIM_OBJECTS_C) $(SIM_LOCAL_FLASH_OBJECTS) $(SIM_PFFS_OBJECTS)
+SIM_CFLAGS += -I$(POGO_SDK_INCS)
+SIM_CXXFLAGS += -I$(POGO_SDK_INCS)
 
 all: directories sim bin
 
@@ -95,6 +97,9 @@ $(BUILD_DIR)/sim/%.o: %.cpp | $(BUILD_DIR)/sim
 
 $(BUILD_DIR)/sim/%.o: %.c | $(BUILD_DIR)/sim
 	$(SIM_CC) $(SIM_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/sim/%_sdk.o: $(POGO_SDK)/src/pffs/%.c | $(BUILD_DIR)/sim
+	$(SIM_CC) $(SIM_CFLAGS) -DPOGOBOT_PFFS_SIMULATOR -c $< -o $@
 
 $(BUILD_DIR)/sim/%_local.o: $(POGOUTILS_SRC_DIR)/%.c | $(BUILD_DIR)/sim
 	$(SIM_CC) $(SIM_CFLAGS) -c $< -o $@

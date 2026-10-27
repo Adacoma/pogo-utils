@@ -142,7 +142,17 @@ See the [two-stream example](../examples/flash_log/README.md).
 
 ## Application integration
 
-The public entry point is [flash_file.h](../src/pogo-utils/flash_file.h).
+PFFS is maintained in Pogobot's `Software/pogolib/pffs`, compiled into the
+SDK's `libpogobot.a`, and used by both Pogobios and applications. The public
+entry point [flash_file.h](../src/pogo-utils/flash_file.h) forwards to
+`<pffs/flash_file.h>`; `flash_log.h` forwards similarly. Existing include paths,
+function signatures and v4 files remain compatible. There is no local core
+implementation to compile alongside the SDK library.
+
+Native builds need the updated SDK's `src/pffs` directory and compile it with
+`POGOBOT_PFFS_SIMULATOR`. CMake accepts `-DPOGO_SDK=/path/to/sdk` and installs the
+public PFFS headers with pogo-utils. Rebuild and reinstall the native library
+after updating the SDK. Hardware uses real SPI erases by default.
 Keep IDs, names and immutable page counts in application policy; the library
 does not reserve calibration ID 1 or provide a POSIX file descriptor interface.
 For small records, serialize only their meaningful bytes and use a byte-count

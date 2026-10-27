@@ -15,8 +15,9 @@ authority for exact signatures and limits.
 
 ## Build and first experiment
 
-Install a compatible Pogosim and its development dependencies first. Firmware
-also needs the Pogobot SDK/toolchain. See [prerequisites and path
+Install a compatible Pogosim and its development dependencies plus the updated
+Pogobot SDK first. Native builds compile its shared PFFS sources; firmware
+links PFFS from `libpogobot.a` and also needs the cross-toolchain. See [prerequisites and path
 configuration](docs/getting_started.md#prerequisites). From the repository root:
 
 ```sh

@@ -6,8 +6,10 @@ run Pogosim or hardware code. Flash-writing examples can alter persistent data.
 
 ## Prerequisites
 
-For the library: CMake 3.16+, a C11/C++ compiler, and the compatible Pogosim
-headers used by platform-dependent modules. For simulator examples: an installed
+For the library: CMake 3.16+, a C11/C++ compiler, the compatible Pogosim
+headers used by platform-dependent modules, and the updated Pogobot SDK with
+`includes/pffs` and `src/pffs`. PFFS has one maintained implementation in
+pogolib; native builds compile its SDK sources for Pogosim. For simulator examples: an installed
 Pogosim development library plus its dependencies, including Box2D, SDL2,
 SDL2_gfx, SDL2_ttf, yaml-cpp, spdlog, fmt, and Arrow, and pkg-config.
 The example Makefiles compile C as C11 and link through a C++20 compiler.
@@ -47,7 +49,7 @@ required includes, standards, and linker settings.
 ## Library and simulator builds
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPOGO_SDK=/absolute/path/pogobot-sdk
 cmake --build build --parallel
 cmake --install build
 make -C examples/MLP_int8 sim POGOUTILS_INCLUDE_DIR=../../src
@@ -66,8 +68,9 @@ and also builds all examples. `cmake --build build --target examples` runs
 make clean and make sim in each example; it is not a CTest target.
 
 Firmware compiles source from this checkout, whereas simulator examples
-usually link installed `libpogo-utils`. Some modern examples compile local
-flash/calibration-storage modules as well to keep PFFS versions consistent.
+usually link installed `libpogo-utils`. The flash examples compile PFFS from the SDK with the simulator backend and
+local calibration-storage modules. Hardware builds obtain PFFS from the SDK's
+`libpogobot.a`; the old pogo-utils headers forward to the SDK declarations.
 Rebuild **and reinstall** the library after compiled-module changes, then
 rebuild the application. Do not combine old headers with new library objects.
 

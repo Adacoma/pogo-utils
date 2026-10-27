@@ -11,7 +11,7 @@ not a hardware-certification report. [Documentation map](index.md);
 - Current PFFS v4, append logs, magnetometer collection/runtime/storage split,
   motion ownership and recovery, ANN layouts, optimizer contracts, SSR and numerics.
 - Earlier work included broader static audit and dependency/API inspection.
-  This fix milestone neither inspected nor modified linked repositories.
+  Earlier audit milestones did not modify linked repositories.
 
 ## Understood
 
@@ -50,6 +50,15 @@ not a hardware-certification report. [Documentation map](index.md);
   collision detection or guaranteed jam escape. ACU remains static, not optimized.
 
 ## Currently working analyses
+
+- PFFS and flash-log core now come from Pogobot SDK `src/pffs`, maintained in
+  pogolib and linked by Pogobios and hardware applications. The old public
+  headers forward to SDK headers; local duplicate implementations are removed.
+  CMake and flash-example simulator builds select the explicit simulator
+  backend. Existing v4 files and function signatures are preserved. All 15
+  Debug CTests pass against the shared sources; BIOS NOR/console and 19 UART
+  transfer tests also pass. The flash shell builds for hardware and the
+  simulator using the SDK core. Hardware validation remains pending.
 
 - PFFS v4 preserves 80 IDs, 32-byte names and two-read fast access. Byte-count
   writers pad short pages without overreading; page-count APIs remain wrappers.
