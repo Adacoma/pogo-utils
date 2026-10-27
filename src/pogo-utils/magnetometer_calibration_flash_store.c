@@ -8,8 +8,9 @@
  *
  * The human-readable name identifies the record. An existing one-page PMAG
  * file keeps its current ID; a new record takes the first free ID. Creation
- * also initializes an absent/corrupt PFFS catalog, clearing metadata but not
- * old payload bytes.
+ * also initializes absent, corrupt, or incompatible PFFS catalogs, clearing
+ * metadata but not old payload bytes. Incompatible-version recovery is an
+ * explicit calibration policy; the generic PFFS writer still refuses it.
  */
 #include "magnetometer_calibration_flash_internal.h"
 #include "flash_file.h"
@@ -119,6 +120,23 @@ magnetometer_calibration_flash_store(
             file_status = pogo_flash_file_create_bytes(
                 info.id,
                 POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
+                MAGNETOMETER_CALIBRATION_FLASH_RECORD_SIZE,
+                MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION, page);
+        }
+    }
+    if (file_status == POGO_FLASH_FILE_UNSUPPORTED_FORMAT) {
+        /* Lookup can reject catalog 0 immediately; replacement can discover an
+         * incompatible later catalog after an early successful name lookup.
+         * Calibration opts into discarding every file in either case. Format
+         * explicitly because generic PFFS creation deliberately refuses old
+         * versions. A failed format must never proceed to record creation. */
+        report_reformat(file_status);
+        stage = "format";
+        file_status = pogo_flash_file_format();
+        if (file_status == POGO_FLASH_FILE_OK) {
+            stage = "create";
+            file_status = pogo_flash_file_create_bytes(
+                1u, POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
                 MAGNETOMETER_CALIBRATION_FLASH_RECORD_SIZE,
                 MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION, page);
         }

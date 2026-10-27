@@ -52,10 +52,18 @@ Version 3 and earlier layouts are unsupported. A recognizable incompatible
 catalog returns `UNSUPPORTED_FORMAT`; create and log initialization do **not**
 erase it automatically. Export important files with the old shell firmware
 before upgrading, then explicitly `format YES` with the new shell and upload
-the saved records. Alternatively recalibrate after formatting. An old simulator
-flash archive also needs an explicit reset or replacement. There is no automatic
+the saved records. Alternatively run magnetometer calibration, which performs
+the reset described below. Other workflows need an explicit reset or replacement
+of an old simulator flash archive. There is no automatic
 migration or old-layout decoder. Exported log payloads are archives; ordinary
 uploads do not reconstruct append-log page headers.
+
+The dedicated magnetometer-calibration writer opts into destructive recovery:
+on `UNSUPPORTED_FORMAT` it explicitly formats all catalogs to the current
+version and creates the calibration file. No separate reset utility is needed
+for that workflow. This discards every old file entry and is not a migration;
+export files first if they must be retained. A format/write verification failure
+is reported rather than treated as a successful calibration save.
 
 ## Reads and writes
 

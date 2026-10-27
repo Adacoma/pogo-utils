@@ -58,7 +58,11 @@ not a hardware-certification report. [Documentation map](index.md);
   ls/stat and UART export distinguish reserved capacity from committed payload.
   Host NOR/transfer fixtures cover empty/partial/max files, fixed-page replacement,
   defrag EOF preservation and incompatible-version refusal without writes.
-  Old catalogs need explicit export/format/re-upload; there is no migration decoder.
+  Generic PFFS/log creation refuses incompatible versions. Calibration now logs
+  `MAG_CAL_FLASH_REFORMAT`, explicitly formats on `UNSUPPORTED_FORMAT`, and creates
+  its record; this discards all prior entries. No migration decoder is included.
+  Regression fixtures cover first/later incompatible catalogs and format failure;
+  targeted calibration/PFFS/log tests pass normally and under ASan/UBSan.
   All 15 Debug tests pass normally and under ASan/UBSan/float-cast-overflow;
   19 transfer cases run against the real C engine over host pipes. Shell/reset
   host smoke tests, both platform syntax branches and tutorial C snippets pass.

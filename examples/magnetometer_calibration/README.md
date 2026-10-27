@@ -14,7 +14,7 @@ Collection runs at 20 Hz. Once collection enters the fitting phase, the example
 switches to 1 Hz and performs fitting and flash storage on separate ticks; those
 operations can take hundreds of milliseconds on a physical robot.
 
-If PFFS is absent or corrupt, calibration automatically
+If PFFS is absent, corrupt, or reports `UNSUPPORTED_FORMAT`, calibration automatically
 recreates the PFFS v4 catalogs before creating its file. This loses access to
 all other PFFS files, including potentially recoverable ones under a damaged
 catalog; old data-sector bytes remain until reused. The serial log announces
@@ -22,8 +22,12 @@ corruption detected before creation with
 `# MAG_CAL_FLASH_REFORMAT`. Name lookup skips catalog CRCs and may return
 before inspecting later catalogs; create may detect damage and format without
 that log line. The file takes the first free ID, or retains its existing ID.
-Recognizable older catalog versions are rejected without erasing; export with
-the old firmware, then explicitly format and restore files or recalibrate.
+Recognizable older catalog versions are explicitly formatted by this calibration
+writer, then the new calibration is created. This also works if name lookup
+finds a calibration in an early catalog but replacement discovers an incompatible
+later catalog. Export important files with the old firmware before launching
+calibration if you need to retain them. Generic PFFS creation and log initialization
+still refuse incompatible versions without formatting.
 The calibration file records exactly 168 bytes in one allocated page.
 Later calibrations with valid catalogs erase and rewrite only the calibration
 file's dedicated 4 KiB sector and its catalog's 4 KiB sector, retaining
@@ -90,7 +94,7 @@ MAG_CAL_STORED and green indicate successful verified storage; MAG_CAL_FATAL/vio
 
 ### Constraints and validation
 
-Writes flash and can autoformat absent/corrupt catalogs; calibrate every mission robot and exit normally to export.
+Writes flash and can autoformat absent/corrupt/incompatible catalogs; calibrate every mission robot and exit normally to export.
 
 Check stdout/diagnostics and the relevant header contracts rather than treating
 a successful build as scientific validation. No new hardware timing or trajectory

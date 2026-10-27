@@ -79,9 +79,10 @@ typedef enum {
 } magnetometer_calibration_flash_status_t;
 
 /** Create or replace the named magnetometer-calibration flash file.
- * A previously unformatted user section is formatted once; later stores keep
- * other catalog files and cannot change this file's one-page allocation. A
- * new record takes the first free ID; an existing record retains its ID.
+ * Missing, corrupt, or incompatible PFFS catalogs are formatted to the current
+ * version, discarding all existing file entries. Healthy catalogs retain
+ * other files and this file's one-page allocation. A new record takes the
+ * first free ID; an existing record retains its ID on a healthy filesystem.
  * Inputs are fully validated and serialized before flash is modified. On
  * success `metadata->calibration_id` is updated; otherwise caller data is not
  * changed. This writer belongs in calibration firmware, not mission firmware.

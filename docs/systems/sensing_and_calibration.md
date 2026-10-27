@@ -113,7 +113,9 @@ It never formats flash. Read-only missions do not need the fitting/store modules
 
 `magnetometer_calibration_flash_store` creates or replaces that one-page
 file, retaining its ID on replacement. Create-time recovery formats absent or
-corrupt PFFS catalogs and loses access to unrelated files. On a healthy filesystem
+corrupt PFFS catalogs and loses access to unrelated files. The calibration writer
+also explicitly formats incompatible catalogs on `UNSUPPORTED_FORMAT`, then
+creates the record using the current PFFS version. On a healthy filesystem
 other files remain intact. This is not power-fail-atomic. No old raw-page or PFFS
 backward loading path exists. See [PFFS](../flash_files.md).
 

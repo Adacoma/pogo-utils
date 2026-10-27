@@ -9,8 +9,9 @@ motor-calibration security registers.
 Normal new-file creation now formats absent or corrupt PFFS automatically, so
 this separate utility is optional and primarily useful when you want to reset
 the filesystem without immediately creating a file. Recognizable older formats
-require this explicit reset (or `format YES` in the shell); export important files
-using their previous firmware before formatting.
+can be reset here or with `format YES` in the shell. Magnetometer calibration
+also formats them automatically before storing its record. Export important files
+using their previous firmware before any of these resets.
 
 For robot 23342, run this only after deciding that the existing user-flash
 contents can be discarded. Compile and upload this example as a physical

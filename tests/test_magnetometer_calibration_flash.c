@@ -81,7 +81,57 @@ static magnetometer_calibration_metadata_t valid_metadata(void) {
     return metadata;
 }
 
+/** Calibration explicitly opts into a destructive version reset. Both an
+ * unsupported first catalog and a later mismatch found during replacement
+ * must rebuild every catalog before publishing a readable calibration. */
+static void test_unsupported_catalog_recovery(void) {
+    magnetometer_heading_detection_t detector;
+    magnetometer_heading_detection_init(&detector);
+    detector.model = valid_model();
+    magnetometer_calibration_metadata_t metadata = valid_metadata();
+    for (unsigned scenario = 0u; scenario < 3u; ++scenario) {
+        assert(pogo_flash_file_format() == POGO_FLASH_FILE_OK);
+        assert(pogo_flash_file_create_blank_bytes(80u, "discarded", 1u, 1u) ==
+               POGO_FLASH_FILE_OK);
+        if (scenario == 1u) {
+            assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
+                   MAGNETOMETER_CALIBRATION_FLASH_OK);
+            /* Name lookup succeeds in catalog 0; only the replacement writer
+             * reaches the incompatible last catalog. */
+            fake_flash[240u][4] = 3u;
+        } else {
+            fake_flash[0][4] = scenario == 0u ? 2u : 255u;
+            /* Reproduce an old/incomplete layout with unused later catalogs. */
+            memset(fake_flash[16u], 0xff, sizeof(fake_flash[16u]));
+        }
+        assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
+               MAGNETOMETER_CALIBRATION_FLASH_OK);
+        assert(pogo_flash_file_check() == POGO_FLASH_FILE_OK);
+        for (unsigned catalog = 0u; catalog < POGO_FLASH_FILE_CATALOG_PAGES; ++catalog)
+            assert(fake_flash[catalog * POGO_FLASH_FILE_ERASE_SECTOR_PAGES][4] == 4u);
+        pogo_flash_file_info_t info;
+        assert(pogo_flash_file_find_by_name("discarded", &info) == POGO_FLASH_FILE_NOT_FOUND);
+        assert(pogo_flash_file_find_by_name(POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
+               &info) == POGO_FLASH_FILE_OK);
+        assert(info.size_bytes == MAGNETOMETER_CALIBRATION_FLASH_RECORD_SIZE);
+        magnetometer_heading_detection_t loaded;
+        magnetometer_heading_detection_init(&loaded);
+        assert(magnetometer_calibration_flash_load(&loaded, NULL) ==
+               MAGNETOMETER_CALIBRATION_FLASH_OK);
+    }
+
+    /* A failed erase/format is reported, with no successful save identity
+     * published to the caller and no attempt to continue through bad metadata. */
+    fake_flash[0][4] = 3u;
+    magnetometer_calibration_metadata_t unchanged = metadata;
+    corrupt_next_write = true;
+    assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
+           MAGNETOMETER_CALIBRATION_FLASH_VERIFY_FAILED);
+    assert(memcmp(&metadata, &unchanged, sizeof(metadata)) == 0);
+}
+
 int main(void) {
+    test_unsupported_catalog_recovery();
     /* Both uninitialized simulator flash and recognizable damaged catalogs
      * are reformatted by the create path before calibration is published. */
     memset(fake_flash, 0xa5, sizeof(fake_flash));
