@@ -202,6 +202,20 @@ if(BUILD_TESTING)
     target_compile_definitions(test_print_log_nor PRIVATE REAL_ROBOT)
     add_test(NAME print_log_nor COMMAND test_print_log_nor)
 
+    # Run the real example startup with NOR mocks, including its opt-in clear
+    # policy. No Pogosim scheduler, hardware or serial transport is involved.
+    foreach(PRINT_LOG_CLEAR IN ITEMS 0 1)
+        set(PRINT_LOG_EXAMPLE_TEST test_print_log_example_${PRINT_LOG_CLEAR})
+        add_executable(${PRINT_LOG_EXAMPLE_TEST} tests/test_print_log_example.c
+            src/pogo-utils/print_format.c src/pogo-utils/print_log.c ${PFFS_CORE_SOURCES})
+        target_include_directories(${PRINT_LOG_EXAMPLE_TEST} BEFORE PRIVATE
+            ${CMAKE_SOURCE_DIR}/tests/print_log_example_stubs
+            ${CMAKE_SOURCE_DIR}/tests/stubs ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR})
+        target_compile_definitions(${PRINT_LOG_EXAMPLE_TEST} PRIVATE
+            REAL_ROBOT PRINT_LOG_CLEAR_ON_BOOT=${PRINT_LOG_CLEAR})
+        add_test(NAME print_log_example_${PRINT_LOG_CLEAR} COMMAND ${PRINT_LOG_EXAMPLE_TEST})
+    endforeach()
+
     add_executable(test_flash_file
         tests/test_flash_file.c)
     target_link_libraries(test_flash_file

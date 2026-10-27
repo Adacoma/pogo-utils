@@ -58,6 +58,11 @@ The fixed-point benchmark's float comparisons remain explicit libc calls.
 
 ## Flash-first lifecycle
 
+The [print_log example](../../examples/print_log/README.md) identifies its
+`prints` and `csv` streams by name, resumes existing IDs/sizes, and chooses
+free IDs for new logs. The low-level log API still takes an explicit ID;
+the example resolves names during startup, keeping the print/service paths unchanged.
+
 1. During startup, open/initialize each flash_log. Creation/clear may erase
    sectors, and catalog autoformat can lose access to unrelated files.
 2. `pogo_log_attach(&printer,&flash,message,sizeof(message))` performs no I/O.

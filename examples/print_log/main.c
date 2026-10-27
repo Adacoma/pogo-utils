@@ -24,7 +24,7 @@
 #endif
 
 enum { STREAMS = 2, MESSAGE_BYTES = 96, TERMINAL_BUDGET = 16 };
-static const uint8_t ids[STREAMS] = {2u, 3u};
+/* Names identify the streams; each robot can allocate different numeric IDs. */
 static const char *const names[STREAMS] = {"prints", "csv"};
 
 typedef struct {
@@ -50,27 +50,49 @@ static size_t terminal_write(void *context, const char *bytes, size_t length) {
 }
 #endif
 
+/** Resume a named log at its existing size, or create it in the first free
+ * slot. Occupied IDs and ordinary files with the same name are never replaced.
+ * Filesystem recovery is completed in user_init before any handle is opened. */
+static bool open_named_log(pogo_flash_log_t *log, const char *name) {
+    pogo_flash_file_info_t info;
+    pogo_flash_file_status_t status = pogo_flash_file_find_by_name(name, &info);
+    if (status == POGO_FLASH_FILE_OK) {
+        return pogo_flash_log_initialize(log, info.id, name, info.page_count,
+            PRINT_LOG_CLEAR_ON_BOOT != 0, NULL) == POGO_FLASH_LOG_OK;
+    }
+    if (status != POGO_FLASH_FILE_NOT_FOUND) return false;
+    for (uint8_t id = 1u; id <= POGO_FLASH_FILE_MAX_FILES; ++id) {
+        status = pogo_flash_file_find(id, &info);
+        if (status == POGO_FLASH_FILE_NOT_FOUND) {
+            return pogo_flash_log_initialize(log, id, name,
+                POGO_FLASH_LOG_DEFAULT_PAGES, false, NULL) == POGO_FLASH_LOG_OK;
+        }
+        if (status != POGO_FLASH_FILE_OK) return false;
+    }
+    return false; /* Every ID is occupied; leave all existing files intact. */
+}
+
 void user_init(void) {
     main_loop_hz = 5;
     max_nb_processed_msg_per_tick = 0;
     msg_rx_fn = NULL;
     msg_tx_fn = NULL;
+    /* Preserve the example's missing/corrupt-catalog recovery policy, but
+     * format before attaching either stream so recovery cannot stale a handle.
+     * Incompatible versions and physical write failures remain errors. */
+    pogo_flash_file_status_t filesystem = pogo_flash_file_check();
+    if (filesystem == POGO_FLASH_FILE_UNFORMATTED ||
+        filesystem == POGO_FLASH_FILE_CORRUPT_CATALOG)
+        filesystem = pogo_flash_file_format();
+    if (filesystem != POGO_FLASH_FILE_OK) {
+        mydata->error = 1u;
+        pogobot_led_setColor(255, 0, 0);
+        return;
+    }
     for (unsigned i = 0; i < STREAMS; ++i) {
         /* Retain an existing matching log's size/data. Missing logs use the
-         * current 64 KiB default. Creation autoformats absent/corrupt PFFS
-         * catalogs: use only disposable flash for this example's first run. */
-        pogo_flash_log_status_t status = pogo_flash_log_open(&mydata->flash[i], ids[i]);
-        if (status == POGO_FLASH_LOG_OK) {
-            pogo_flash_file_info_t info;
-            if (pogo_flash_file_find(ids[i], &info) != POGO_FLASH_FILE_OK ||
-                strcmp(info.name, names[i]) != 0) status = POGO_FLASH_LOG_WRONG_FORMAT;
-            else if (PRINT_LOG_CLEAR_ON_BOOT)
-                status = pogo_flash_log_clear(&mydata->flash[i]);
-        } else {
-            status = pogo_flash_log_initialize(&mydata->flash[i], ids[i], names[i],
-                POGO_FLASH_LOG_DEFAULT_PAGES, PRINT_LOG_CLEAR_ON_BOOT != 0, NULL);
-        }
-        if (status != POGO_FLASH_LOG_OK ||
+         * current 64 KiB default and any available ID, including 1, 2 or 3. */
+        if (!open_named_log(&mydata->flash[i], names[i]) ||
             pogo_log_attach(&mydata->printer[i], &mydata->flash[i],
                 mydata->message[i], MESSAGE_BYTES) != POGO_PRINT_OK) {
             mydata->error = 1u;

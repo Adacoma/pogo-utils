@@ -1,11 +1,14 @@
 # Flash-first fixed-point printing
 
 [main.c](main.c) demonstrates [print_log.h](../../src/pogo-utils/print_log.h)
-with independent `prints` (ID 2) and `csv` (ID 3) append logs. This is not a
-controller and needs no calibration. New logs allocate 64 KiB each; existing
-matching log sizes/data remain unchanged. Never overwrite unrelated files at
-these IDs. Missing/corrupt catalogs can be autoformatted during creation,
-losing access to other files: use disposable/exported flash when testing.
+with independent `prints` and `csv` append logs. It looks up each name and
+resumes that file at its existing ID and size. A missing log takes the first
+free ID and allocates 64 KiB; IDs 2 and 3 have no special meaning. An ordinary
+file with the same name or a full ID table causes initialization to fail without
+overwriting existing files. This example needs no calibration or robot motion.
+Missing/corrupt catalogs are formatted before either stream opens, losing access
+to other files: use disposable/exported flash when testing. Incompatible catalog
+versions remain errors.
 
 ## Build and run
 
@@ -24,8 +27,8 @@ make -C examples/print_log connect TTY=/dev/ttyUSB0
 ```
 
 The scenario imports/exports persistent memory according to
-[flash_file.yaml](../../conf/flash_file.yaml). Retain that export for the shell
-or the read-only flash_log dumper described below.
+[flash_file.yaml](../../conf/flash_file.yaml). Retain that export for inspection
+with the PFFS shell.
 
 ## Behavior and settings
 
@@ -57,9 +60,9 @@ each physical page has a 12-byte log header/CRC. Launch the
 [PFFS shell](../flash_file/README.md) with the same flash-state configuration
 and use `ls`, `cat prints`, or `cat csv`. Its dedicated log reader validates
 each committed page, strips headers/padding, and escapes nontext bytes.
-Alternatively, use `pogo_flash_log_read_page()` and concatenate only used
-payload bytes, or build [flash_log](../flash_log/README.md) with
-`FLASH_LOG_DUMP_ONLY=1`. Never interpret a log with ordinary-file whole-payload
+Alternatively, resolve the name with `pogo_flash_file_find_by_name()`, open the
+returned ID, and use `pogo_flash_log_read_page()` to concatenate only used
+payload bytes. Never interpret a log with ordinary-file whole-payload
 CRC rules or concatenate its raw physical pages as text.
 
 Read the [format/logging guide](../../docs/systems/printing.md) for supported

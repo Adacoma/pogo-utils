@@ -1,6 +1,6 @@
 # Current project state
 
-Last updated: 2026-10-27. This is a concise engineering/scientific handoff,
+Last updated: 2026-10-28. This is a concise engineering/scientific handoff,
 not a hardware-certification report. [Documentation map](index.md);
 [historical audit](code_audit.md).
 
@@ -50,6 +50,13 @@ not a hardware-certification report. [Documentation map](index.md);
   collision detection or guaranteed jam escape. ACU remains static, not optimized.
 
 ## Currently working analyses
+
+- print_log selects `prints`/`csv` by name, resumes existing IDs/allocations,
+  and creates missing logs at the first free ID. Ordinary-name collisions and
+  a full ID table fail without replacement; explicit clear-on-boot remains
+  supported. Missing/corrupt catalogs are recovered before opening handles.
+  Startup NOR fixtures for retention and clear modes pass normally and under
+  ASan/UBSan. The native example builds; no simulation or firmware run was used.
 
 - The host PFFS uploader now accepts omitted `--id` for new files, trying IDs
   1–80 through existing PFT1 create preflight and reporting the committed ID.
