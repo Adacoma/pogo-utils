@@ -6,7 +6,10 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+/* The platform's colormap header may already provide this conversion. */
+#ifndef SCALE_0_255_TO_0_25
 #define SCALE_0_255_TO_0_25(x)   (uint8_t)((x) * (25.0f / 255.0f) + 0.5f)
+#endif
 
 typedef enum {
     PHASE_RUN,

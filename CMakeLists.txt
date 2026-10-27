@@ -160,6 +160,16 @@ if(BUILD_TESTING)
             add_test(NAME esn_configuration COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/tests/test_esn_configuration.py
                 ${CMAKE_C_COMPILER} ${CMAKE_SOURCE_DIR})
+            # Catch stale source/object paths in the shared example Makefiles
+            # without requiring simulator libraries or running any example.
+            find_program(POGO_TEST_MAKE NAMES gmake make)
+            if(POGO_TEST_MAKE)
+                add_test(NAME example_makefiles COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_SOURCE_DIR}/tests/test_example_makefiles.py
+                    ${CMAKE_C_COMPILER} ${CMAKE_CXX_COMPILER} ${POGO_TEST_MAKE}
+                    ${CMAKE_SOURCE_DIR})
+                set_tests_properties(example_makefiles PROPERTIES TIMEOUT 60)
+            endif()
         endif()
         add_executable(pffs_transfer_bridge tests/pffs_transfer_bridge.c
             examples/flash_file/transfer.c ${PFFS_SOURCE_DIR}/flash_log.c

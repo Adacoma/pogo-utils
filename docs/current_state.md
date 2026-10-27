@@ -51,6 +51,13 @@ not a hardware-certification report. [Documentation map](index.md);
 
 ## Currently working analyses
 
+- Shared `go_straight`/`vicsek` simulator Makefiles now compile SDK PFFS sources
+  instead of requesting the removed local reader/name objects. This also covers
+  go_straight_simple, ACU and Vicsek-U-turns. Heading-detection's LED conversion
+  macro is guarded when the platform already defines it. The five affected
+  motion examples and heading_detection build natively; none was launched.
+  An isolated host fixture checks shared/inherited rules and custom build paths.
+
 - PFFS and flash-log core now come from Pogobot SDK `src/pffs`, maintained in
   pogolib and linked by Pogobios and hardware applications. The old public
   headers forward to SDK headers; local duplicate implementations are removed.

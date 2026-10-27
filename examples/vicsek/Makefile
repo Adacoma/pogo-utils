@@ -131,12 +131,15 @@ SIM_SRCS_CXX = $(wildcard *.cpp)
 SIM_SRCS_C = $(wildcard *.c)
 SIM_OBJECTS_CXX = $(patsubst %.cpp,$(BUILD_DIR)/sim/%.o,$(SIM_SRCS_CXX))
 SIM_OBJECTS_C = $(patsubst %.c,$(BUILD_DIR)/sim/%.o,$(SIM_SRCS_C))
-# Mission binaries need this checkout's v3 reader and calibration decoder;
-# an older installed library may still interpret the v2 catalog layout.
-SIM_LOCAL_FLASH_OBJECTS = $(BUILD_DIR)/sim/flash_file_read_local.o \
-    $(BUILD_DIR)/sim/flash_file_name_local.o \
-    $(BUILD_DIR)/sim/magnetometer_calibration_flash_local.o
-SIM_OBJECTS = $(SIM_OBJECTS_CXX) $(SIM_OBJECTS_C) $(SIM_LOCAL_FLASH_OBJECTS)
+# Use the SDK-owned PFFS core with its simulator backend, as in the
+# flash examples. Only calibration decoding remains local to pogo-utils.
+SIM_PFFS_SRCS = flash_file_read.c flash_file_secure.c flash_file_name.c \
+    flash_file_write.c flash_file_status.c flash_log.c
+SIM_PFFS_OBJECTS = $(patsubst %.c,$(BUILD_DIR)/sim/%_sdk.o,$(SIM_PFFS_SRCS))
+SIM_LOCAL_FLASH_OBJECTS = $(BUILD_DIR)/sim/magnetometer_calibration_flash_local.o
+SIM_OBJECTS = $(SIM_OBJECTS_CXX) $(SIM_OBJECTS_C) $(SIM_LOCAL_FLASH_OBJECTS) $(SIM_PFFS_OBJECTS)
+SIM_CFLAGS += -I$(POGO_SDK_INCS)
+SIM_CXXFLAGS += -I$(POGO_SDK_INCS)
 
 all: directories sim bin
 
@@ -153,6 +156,9 @@ $(BUILD_DIR)/sim/%.o: %.cpp | $(BUILD_DIR)/sim
 
 $(BUILD_DIR)/sim/%.o: %.c | $(BUILD_DIR)/sim
 	$(SIM_CC) $(SIM_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/sim/%_sdk.o: $(POGO_SDK)/src/pffs/%.c | $(BUILD_DIR)/sim
+	$(SIM_CC) $(SIM_CFLAGS) -DPOGOBOT_PFFS_SIMULATOR -c $< -o $@
 
 $(BUILD_DIR)/sim/%_local.o: $(POGOUTILS_SRC_DIR)/%.c | $(BUILD_DIR)/sim
 	$(SIM_CC) $(SIM_CFLAGS) -c $< -o $@

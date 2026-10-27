@@ -11,7 +11,8 @@ historical investigation; inspect current code before treating a finding as open
 | --- | --- |
 | pogobase/pogo-utils header missing | Check SDK/simulator installation and example-relative include paths; `-C examples/...` changes the working directory. |
 | Undefined symbol or wrong behavior after editing source | Most simulator targets link installed libpogo-utils. Build and reinstall compiled modules, then rebuild the application; check for duplicate installations. |
-| New flash writer with old reader | Modern examples compile local flash modules to keep versions matched; use current Makefile and do not mix old installed storage objects. |
+| Missing `flash_file_read_local.o` / `flash_file_name_local.o` | The PFFS implementation moved to the SDK. Use updated `go_straight`/`vicsek` Makefiles that compile SDK PFFS objects; child examples inherit these rules. |
+| New flash writer with old reader | Current flash and motion examples compile SDK PFFS with its simulator backend and local calibration decoding; do not mix old installed storage objects. |
 | SDK page index truncation / signature mismatch | Current PFFS needs updated 16-bit flash-page API and 5,888 user pages; older SDK archives/headers are incompatible. |
 | Firmware tool/include not found | Check POGO_SDK, variables.mak/common.mak, cross-compiler, and SDK build outputs. |
 | Numerical make target exits successfully without producing a binary | Its missing-version-header guard can skip builds. Pass `POGOUTILS_INCLUDE_DIR=../../src` and inspect compiler/link output. |
