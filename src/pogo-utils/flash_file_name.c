@@ -39,6 +39,7 @@ pogo_flash_file_status_t pogo_flash_file_find_by_name(
          catalog_index < POGO_FLASH_FILE_CATALOG_PAGES; ++catalog_index) {
         read_page_flash(pogo_flash_file_internal_catalog_page(catalog_index),
                         (char *)page);
+        if (pogo_flash_file_internal_old_catalog(page)) return POGO_FLASH_FILE_UNSUPPORTED_FORMAT;
         if (!pogo_flash_file_internal_catalog_header_valid(page, catalog_index)) {
             /* Page zero blank means no filesystem. Any later blank/invalid
              * catalog after a valid page zero is an incomplete format. */

@@ -138,9 +138,10 @@ static void start_put(pffs_transfer_t *t, pogo_flash_log_t *scratch,
     t->token = token; t->length = length; t->crc = crc; t->raw = raw;
     t->signature = signature(w, count); t->page_end = pages;
     t->running_crc = UINT32_MAX; t->activity_ms = now;
-    status = replace ? pogo_flash_file_write_begin_replace(&t->file.writer, (uint8_t)id) :
-        pogo_flash_file_write_begin_create(&t->file.writer, (uint8_t)id, name,
-                                           pages, raw ? 1u : PFT_FORMAT, NULL);
+    /* v4 stores EOF in the catalog, including for header-free uploads. */
+    status = replace ? pogo_flash_file_write_begin_replace_bytes(&t->file.writer, (uint8_t)id, length + header) :
+        pogo_flash_file_write_begin_create_bytes(&t->file.writer, (uint8_t)id, name,
+                                                 length + header, raw ? 1u : PFT_FORMAT, NULL);
     if (status != POGO_FLASH_FILE_OK) { error(token, "CREATE"); return; }
     t->mode = PUT;
     memset(scratch->page, 0xff, 256u);
@@ -273,11 +274,11 @@ static void start_get(pffs_transfer_t *t, pogo_flash_log_t *scratch,
     t->signature = signature(w, count);
     t->raw = strcmp(w[3], "raw") == 0;
     t->log = is_log && !t->raw;
-    t->length = (uint32_t)info.page_count * 256u;
+    t->length = t->raw ? (uint32_t)info.page_count * 256u : info.size_bytes;
     uint32_t expected = 0u;
     bool envelope = info.format_version == PFT_FORMAT && !t->raw;
     if (envelope) {
-        if (memcmp(scratch->page, "PFT1", 4u) != 0 || get32(scratch->page + 12) != 0u ||
+        if (t->length < PFT_HEADER || memcmp(scratch->page, "PFT1", 4u) != 0 || get32(scratch->page + 12) != 0u ||
             get32(scratch->page + 4) > t->length - PFT_HEADER) {
             error(token, "HEADER"); return;
         }
@@ -285,14 +286,7 @@ static void start_get(pffs_transfer_t *t, pogo_flash_log_t *scratch,
         t->used = PFT_HEADER;
     }
     if (t->log) {
-        t->length = 0u;
-        for (uint16_t i = 0; i < scratch->next_page; ++i) {
-            uint8_t used;
-            if (pogo_flash_log_read_page(scratch, i, scratch->page, &used) != POGO_FLASH_LOG_OK) {
-                error(token, "READ"); return;
-            }
-            t->length += used;
-        }
+        t->length = pogo_flash_log_committed_bytes(scratch);
         t->used = POGO_FLASH_LOG_HEADER_SIZE;
     }
     /* Read-only preflight computes the wire-content CRC before READY. The

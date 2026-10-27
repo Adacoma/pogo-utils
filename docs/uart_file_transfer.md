@@ -34,10 +34,11 @@ timeout if needed. Opening a serial port can reset some adapters/boards;
 make sure the shell is running before starting a transfer.
 
 Uploads are **raw by default**: the original bytes start at byte zero, without
-a PFT1 header. Files have page-granular length, including final 0xff padding.
-A 256-byte calibration record therefore occupies one page. Use `--envelope`
-when exact-length storage matters; downloads automatically remove that header
-and padding, including for an empty enveloped file. `upload --raw` remains an
+a PFT1 header. PFFS v4 saves their exact byte length in the catalog, so normal
+downloads return the original bytes without padding or a `--length` argument.
+A 256-byte record occupies one page; an empty file downloads as zero bytes
+while retaining one allocated page. `--envelope` optionally adds a PFT1 prefix
+for readers using that schema; downloads remove it automatically. `upload --raw` remains an
 explicit spelling of the default; it cannot be combined with `--envelope`.
 Downloading a log returns its committed payload bytes, concatenated across
 pages without log headers or padding. Cached, uncommitted log bytes cannot be
@@ -45,8 +46,8 @@ downloaded after switching firmware.
 
 ## Raw records and replacements
 
-The default raw mode preserves mission records at byte zero. Use `--length N`
-on download when you know the original length and want to omit page padding:
+The default raw mode preserves mission records at byte zero and downloads stop
+at catalog EOF. `--length N` is an optional prefix export:
 
 ```sh
 python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload record.bin --id 10 --name record
@@ -54,7 +55,7 @@ python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download record record-copy.b
 ```
 
 Raw upload stores the input at byte zero and pads the final 256-byte page with
-0xff. Its PFFS payload format is 1, and no original byte length is saved. A
+0xff. Its PFFS payload format is 1, and its catalog stores the input length. A
 raw empty file therefore allocates one erased page. `download --length N`
 retains only N bytes but still validates the complete remote stream. For a
 trimmed download, the reported byte count and CRC describe the saved prefix.
@@ -62,7 +63,7 @@ For a physical file image, `download --raw` exports every allocated page, includ
 upload/log headers and erased padding.
 Raw mode still validates files; it does not bypass checks to salvage corrupt data.
 
-For an exact-length text or binary file, opt into the 16-byte envelope:
+For readers that require the optional 16-byte PFT1 envelope:
 
 ```sh
 python3 tools/pffs_transfer.py --port /dev/ttyUSB0 upload config.csv --id 11 --name config --envelope
@@ -103,7 +104,8 @@ replacement instead.
 
 ## Storage and firmware scope
 
-The PFFS catalog format is unchanged. The shell reserves ordinary payload type
+The shell requires the PFFS v4 catalog; see the [upgrade procedure](flash_files.md#upgrading-from-an-older-catalog)
+before replacing firmware on a robot with older files. The shell reserves ordinary payload type
 0x8002 for an optional `--envelope` upload with a 16-byte prefix:
 
 | Byte offset | Content |
@@ -117,10 +119,12 @@ The PFFS catalog format is unchanged. The shell reserves ordinary payload type
 PFFS's ordinary-file CRC still covers the entire allocation, including this
 prefix/padding. Applications using normal fast reads see the prefix and must
 decode it or use default raw uploads for their existing schema. Ordinary shell
-`cat` remains a physical hexadecimal dump. The host downloader unwraps only
+`cat` dumps bytes through catalog EOF, including an optional stored prefix.
+The host downloader unwraps only
 type 0x8002 with a valid header/content CRC. The maximum payload is 1,441,776
 bytes with the header or 1,441,792 raw bytes, subject to free contiguous sectors
-and an available file ID. No flash format/ABI migration is required.
+and an available file ID. For an enveloped file the catalog length includes
+the 16-byte header; the header's length describes the original content alone.
 
 Transfer state lives only in this example, with no mandatory mission-library
 dependency. It borrows the shell's existing 256-byte cache, keeps a 48-byte last

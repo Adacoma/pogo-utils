@@ -90,14 +90,16 @@ magnetometer_calibration_flash_store(
         /* Creation publishes the name at a free ID. The writer autoformats
          * absent or corrupt metadata before allocating the payload sector. */
         stage = "create";
-        file_status = pogo_flash_file_create(
+        file_status = pogo_flash_file_create_bytes(
             file_id,
             POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
-            1u, MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION, page);
+            MAGNETOMETER_CALIBRATION_FLASH_RECORD_SIZE,
+            MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION, page);
     } else if (file_status == POGO_FLASH_FILE_OK) {
         /* Refuse to reinterpret an ID assigned with a different allocation or
-         * payload schema. Replacement may change contents, never file shape. */
+         * payload schema. Replacement retains the one-page allocation. */
         if (info.page_count != 1u ||
+            info.size_bytes < MAGNETOMETER_CALIBRATION_FLASH_RECORD_SIZE ||
             info.format_version != MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION) {
             printf("# MAG_CAL_FLASH_ERROR,robot=%u,stage=existing-schema,"
                    "pages=%u,version=%u\n",
@@ -106,18 +108,19 @@ magnetometer_calibration_flash_store(
             return MAGNETOMETER_CALIBRATION_FLASH_STORAGE_ERROR;
         }
         stage = "replace";
-        file_status = pogo_flash_file_replace(
-            info.id, 1u, page);
+        file_status = pogo_flash_file_replace_bytes(
+            info.id, MAGNETOMETER_CALIBRATION_FLASH_RECORD_SIZE, page);
         if (file_status == POGO_FLASH_FILE_UNFORMATTED ||
             file_status == POGO_FLASH_FILE_CORRUPT_CATALOG) {
             /* Name lookup skips catalog CRCs. Replacement may discover CRC or
              * allocation damage and choose destructive recovery. */
             report_reformat(file_status);
             stage = "create";
-            file_status = pogo_flash_file_create(
+            file_status = pogo_flash_file_create_bytes(
                 info.id,
                 POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION,
-                1u, MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION, page);
+                MAGNETOMETER_CALIBRATION_FLASH_RECORD_SIZE,
+                MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION, page);
         }
     }
     if (file_status != POGO_FLASH_FILE_OK) {

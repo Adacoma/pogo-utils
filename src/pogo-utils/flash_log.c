@@ -45,7 +45,7 @@ static void put_u32(uint8_t *p, uint32_t value) {
 
 /** Verify all catalogs before a log writes to an extent selected by them. */
 static pogo_flash_log_status_t check_catalogs(uint8_t scratch[256]) {
-    /* The 368-byte map checks all v3 extents without pulling the writer's
+    /* The 368-byte map checks all extents without pulling the writer's
      * catalog-validation object into read-only log firmware. */
     bool occupied_sectors[POGO_FLASH_FILE_USER_PAGES /
         POGO_FLASH_FILE_ERASE_SECTOR_PAGES] = {false};
@@ -55,6 +55,7 @@ static pogo_flash_log_status_t check_catalogs(uint8_t scratch[256]) {
     for (uint8_t i = 0u; i < POGO_FLASH_FILE_CATALOG_PAGES; ++i) {
         read_page_flash(pogo_flash_file_internal_catalog_page(i),
                         (char *)scratch);
+        if (pogo_flash_file_internal_old_catalog(scratch)) return POGO_FLASH_LOG_WRONG_FORMAT;
         if (!pogo_flash_file_internal_catalog_header_valid(scratch, i)) {
             return i == 0u && pogo_flash_file_internal_page_is_blank(scratch) ?
                 POGO_FLASH_LOG_NOT_FOUND : POGO_FLASH_LOG_CORRUPT;
@@ -211,10 +212,11 @@ pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
      * before writing to that sector again. */
     bool seen_erased = false;
     for (uint16_t i = 0u; i < info.page_count; ++i) {
+        uint8_t used = 0u;
         read_page_flash((uint16_t)(info.first_page + i), (char *)log->page);
         if (erased_page(log->page)) {
             seen_erased = true;
-        } else if (seen_erased || !valid_page(log->page, i, NULL)) {
+        } else if (seen_erased || !valid_page(log->page, i, &used)) {
             memset(log->page, 0xff, sizeof(log->page));
             /* Preserve the valid prefix for diagnostic readback, but prevent
              * any further write until clear() erases the damaged sector. */
@@ -223,6 +225,7 @@ pogo_flash_log_status_t pogo_flash_log_open(pogo_flash_log_t *log,
             return POGO_FLASH_LOG_CORRUPT;
         } else {
             log->next_page = (uint16_t)(i + 1u);
+            log->committed_bytes += used;
         }
     }
     memset(log->page, 0xff, sizeof(log->page));
@@ -242,6 +245,7 @@ pogo_flash_log_status_t pogo_flash_log_initialize(
     /* The caller-provided cache is scratch during initialization too; avoid
      * another 256-byte local array on the robot's task stack. */
     pogo_flash_log_status_t catalog = check_catalogs(log->page);
+    if (catalog == POGO_FLASH_LOG_WRONG_FORMAT) return catalog;
     pogo_flash_file_info_t info;
     pogo_flash_file_status_t found = catalog == POGO_FLASH_LOG_OK ?
         pogo_flash_file_find(file_id, &info) : POGO_FLASH_FILE_NOT_FOUND;
@@ -347,6 +351,7 @@ static pogo_flash_log_status_t commit_page(pogo_flash_log_t *log) {
         return POGO_FLASH_LOG_VERIFY_FAILED;
     }
     ++log->next_page;
+    log->committed_bytes += log->used;
     log->used = 0u;
     memset(log->page, 0xff, sizeof(log->page));
     return POGO_FLASH_LOG_OK;
@@ -361,6 +366,10 @@ pogo_flash_log_status_t pogo_flash_log_service(pogo_flash_log_t *log) {
 
 pogo_flash_log_status_t pogo_flash_log_force_flush(pogo_flash_log_t *log) {
     return commit_page(log);
+}
+
+uint32_t pogo_flash_log_committed_bytes(const pogo_flash_log_t *log) {
+    return log != NULL && log->ready != 0u ? log->committed_bytes : 0u;
 }
 
 pogo_flash_log_status_t pogo_flash_log_read_page(

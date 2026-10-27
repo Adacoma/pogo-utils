@@ -22,12 +22,19 @@ most 32 text bytes per step. This diagnostic mode is intended for the example's
 text and CSV data; applications storing arbitrary binary values should use the
 library's length-returning page reader rather than `%s` output.
 
+PFFS v4 stores reserved log capacity in `info.size_bytes`.
+`pogo_flash_log_committed_bytes()` reports the exact committed payload length
+without I/O, excluding cache contents and page headers. The flash shell's
+`ls`/`stat` show both values; ordinary UART downloads export only payload.
+
 To explicitly empty both files on boot, set `FLASH_LOG_CLEAR_ON_BOOT` to `1`.
 This erases all data sectors owned by each log (16 sectors for a 64 KiB log).
 Creating a missing file on absent or
 corrupt catalog reformats PFFS metadata, losing access to unrelated
 files including magnetometer calibration; the example prints
 `FLASH_LOG_FORMATTED` when that happened.
+Recognizable incompatible catalog versions are refused without erasure;
+export old files before explicitly formatting with the v4 shell or reset utility.
 
 `service()` leaves partial pages in RAM for space efficiency. Call
 `pogo_flash_log_force_flush()` at a chosen checkpoint if those bytes must

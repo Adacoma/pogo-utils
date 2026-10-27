@@ -57,8 +57,10 @@ checksum policy. Use a free stable ID or exact optional name; there is no reserv
 calibration ID. Version payload separately from PFFS catalog format.
 Do not persist C padding or pointers.
 
-Use one-page/streaming PFFS APIs depending on size. Fixed size is immutable:
-replacement rewrites the extent; resize needs recreation.
+Use byte-count or streaming PFFS APIs depending on size. Record exact EOF in
+`size_bytes`; pad physical pages with `0xff`. Replacement can change byte length
+within the same page-count range, and rewrites the extent. Changing page count
+needs recreation. Logs retain reserved size and report committed payload separately.
 Read-only loaders must not silently format damaged metadata.
 If creation autoformats, expose/report that destructive behavior.
 Design power-failure/error handling knowing replacement/catalog edits/overlapping

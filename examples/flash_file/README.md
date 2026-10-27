@@ -1,6 +1,6 @@
 # Flash-file shell
 
-This example is an interactive serial shell for the bounded PFFS v3 filesystem.
+This example is an interactive serial shell for the bounded PFFS v4 filesystem.
 On a Pogobot, type commands in the Pogobios-style UART console. In Pogosim,
 type them in the terminal that launched the simulator. `robots` shows the
 available simulated robot IDs, and `use <robot_id>` switches which robot's
@@ -27,10 +27,10 @@ Commands (names are exact, case-sensitive, and contain no spaces):
 | --- | --- |
 | `help` | Show the command summary. |
 | `ls` | List IDs 1–80 and validate catalog/file CRCs. |
-| `df` | Show allocatable sector capacity, file-ID usage, and allocated payload pages. |
+| `df` | Show sector capacity, file-ID usage, allocated pages, and catalog byte lengths. |
 | `stat <id\|name>` | Show one file's metadata. |
-| `cat <id\|name>` | Hex-dump all allocated bytes of an ordinary file, including erased padding; print a log's committed bytes with non-text bytes escaped. |
-| `touch <id> <name\|-> [pages]` | Create a blank ordinary file (1–5632 pages, default 1); `-` means unnamed. |
+| `cat <id\|name>` | Hex-dump an ordinary file through its exact EOF; print a log's committed bytes with non-text bytes escaped. |
+| `touch <id> <name\|-> [bytes]` | Create a blank ordinary file (0–1,441,792 bytes, default 0); `-` means unnamed. Empty files reserve one page. |
 | `write <id\|name> <offset> <hexbytes>` | Replace bytes within an existing **one-page ordinary file**. Example: `write notes 0 4869` stores `Hi`. |
 | `mv <id\|name> <new_name\|->` | Rename the optional label; the stable numeric ID never changes. |
 | `rm <id\|name>` | Remove the catalog entry; payload may remain until its sector is reused. |
@@ -44,6 +44,9 @@ removing or renaming the file named `magnetometer_calibration` can make
 calibration unavailable to mission programs, regardless of its numeric ID.
 `write` verifies the current whole-file CRC before replacing the page and
 rewrites its dedicated erase sector; it is not atomic across power loss.
+It extends EOF to include the written bytes, up to 256 bytes, without shrinking
+an existing file. Gaps contain erased `0xff` bytes. For example, `touch 42 notes`
+followed by `write notes 0 4869` creates a two-byte file containing `Hi`.
 Multi-page editing is deliberately omitted so the shell needs only a 256-byte
 data buffer; the library's streaming writer supports large-file updates.
 `touch` does support multi-page files.
@@ -66,9 +69,10 @@ python3 tools/pffs_transfer.py --port /dev/ttyUSB0 download prints robot-prints.
 
 Use a free ID for creation. The uploader refuses missing/corrupt filesystems;
 it never formats them. Uploads are raw by default, preserving binary layouts
-at byte zero. Files have page-granular size; `download --length N` can discard
-known padding. `upload --envelope` adds a 16-byte PFT1 header preserving the
-exact original length, which the downloader removes automatically. A 256-byte
+at byte zero. Catalogs store exact byte lengths, and downloads omit page padding
+automatically. `download --length N` optionally exports a prefix.
+`upload --envelope` adds a 16-byte PFT1 header for readers using that schema,
+which the downloader removes automatically. A 256-byte
 record needs one page by default or two with the header. Explicit `upload --raw`
 is still accepted; it is mutually exclusive with `--envelope`.
 Logs download as concatenated committed payload, including arbitrary binary
@@ -96,19 +100,25 @@ entry changes. Previously completed moves remain committed. A failed run is
 not safe to resume without inspecting or restoring the affected file. Defrag
 does not securely erase vacated bytes or reduce flash wear.
 
-The `ls` output includes each file's ID, name, payload format, page count,
+The `ls` output includes each file's ID, name, payload format, page count, exact bytes,
 generation, CRC, and validation result. Ordinary files use a whole-file CRC;
-append-only logs validate each committed page. A malformed catalog is reported
+append-only logs validate each committed page and show reserved/committed bytes
+separately. `stat` also distinguishes logical bytes from allocated page bytes.
+A malformed catalog is reported
 as `FLASH_CATALOG_ERROR` rather than treating its slots as empty.
 
 `df` first validates the catalogs. `Sector cap`, `Used`, and `Avail` count whole
 4 KiB data sectors: each occupied file consumes as many contiguous sectors as
 its page count requires. The 1,472 KiB physical user-flash section contains
 64 KiB of catalog sectors and 1,408 KiB available for file extents. `Payload
-pages` counts reserved pages, **not** bytes actually written or committed in
-a log. Deleted files are considered free by the catalog even though their old
+pages` includes final page padding; `File lengths` sums catalog byte lengths.
+Log lengths reserve their fixed capacity; use `ls` or `stat` for committed
+payload length. Deleted files are considered free by the catalog even though their old
 payload bytes remain until those sectors are reused. Fragmentation may prevent
 a large allocation despite free sectors shown by `df`.
+
+Older catalogs require [explicit export/format/re-upload](../../docs/flash_files.md#upgrading-from-an-older-catalog).
+They are rejected without automatic erasure; the shell does not migrate them.
 
 ## Integration reference
 

@@ -2,7 +2,7 @@
  * @file main.c
  * @brief Dedicated magnetometer calibration and flash-storage firmware.
  *
- * The first store initializes an unformatted PFFS v3 catalog; later runs
+ * The first store initializes an unformatted PFFS v4 catalog; later runs
  * replace only the fixed-size named calibration file. Mission firmware loads
  * that record instead of linking collection and fitting code.
  *

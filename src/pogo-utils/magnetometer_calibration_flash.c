@@ -44,7 +44,7 @@ _Static_assert(sizeof(float) == sizeof(uint32_t), "float must be 32 bits");
 
 enum {
     RECORD_CRC_OFFSET = 164,          /**< First byte excluded from record CRC. */
-    RECORD_SIZE = 168,                /**< Header+payload+CRC meaningful bytes. */
+    RECORD_SIZE = MAGNETOMETER_CALIBRATION_FLASH_RECORD_SIZE,
     RECORD_MODEL_FIT_OK = 1u,         /**< Serialized model passed float fit. */
     RECORD_MODEL_FIXED_READY = 2u,    /**< Checked Q15 map is available. */
     RECORD_METADATA_SIGN_VALID = 1u   /**< Steering-sign metadata is usable. */
@@ -413,6 +413,10 @@ magnetometer_calibration_flash_status_t magnetometer_calibration_flash_load(
             file_info.format_version != MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION) {
             return MAGNETOMETER_CALIBRATION_FLASH_UNSUPPORTED_VERSION;
         }
+        /* Never decode beyond the recorded EOF, even if physical tail bytes
+         * happen to contain an otherwise valid calibration record. */
+        if (file_info.size_bytes < RECORD_SIZE)
+            return MAGNETOMETER_CALIBRATION_FLASH_BAD_LENGTH;
         read_page_flash(file_info.first_page, (char *)page);
     } else if (file_status == POGO_FLASH_FILE_NOT_FOUND) {
         return MAGNETOMETER_CALIBRATION_FLASH_EMPTY;

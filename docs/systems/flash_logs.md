@@ -26,6 +26,8 @@ file or opens an exactly matching existing one, optionally clearing it.
 It refuses an occupied ID with different name/type/size. Create-time autoformat
 of missing/corrupt PFFS catalogs loses access to other files; report
 `formatted` and make this policy explicit to users.
+Recognizable incompatible catalog versions return WRONG_FORMAT without erasing;
+use the [PFFS upgrade procedure](../flash_files.md#upgrading-from-an-older-catalog).
 
 `open(log,id)` never writes; it scans at most 256 pages for a valid committed
 prefix followed by erased pages. Opening a live handle discards its uncommitted
@@ -50,8 +52,16 @@ an unchanged log. Use one writer per log.
 
 These checks add four bytes of handle state, a catalog read/CRC and an erased
 page read per commit. Appends remain RAM-only and each service call still
-programs at most one page. The on-flash format is unchanged; rebuild applications
+programs at most one page. The log page format is unchanged; rebuild applications
 using the updated in-memory handle structure.
+
+PFFS v4 `info.size_bytes` is the reserved container capacity for a log, including
+page headers. `pogo_flash_log_committed_bytes(log)` returns the exact committed
+payload count, reconstructed during `open` and updated only after successful
+commits. It excludes cached/uncommitted bytes and requires no flash I/O or catalog
+rewrite. The cached count assumes the same ownership rules as the handle;
+reopen after external mutations. This adds another four bytes to each handle.
+The shell's `ls`/`stat` show both lengths; UART downloads return committed payload.
 
 `read_page(log,index,out,&used)` CRC-checks one committed page, returning END
 for an unused page. Payload starts at `POGO_FLASH_LOG_HEADER_SIZE`; concatenate

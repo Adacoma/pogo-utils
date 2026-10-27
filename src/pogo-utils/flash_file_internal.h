@@ -11,7 +11,7 @@
  * Each 256-byte catalog page is encoded explicitly in little-endian order:
  *
  *   0..3     ASCII magic "PFFS"
- *   4        catalog format version (3 for extended user flash)
+ *   4        catalog format version (4 for exact byte lengths)
  *   5        catalog index (0..15)
  *   6        number of fixed entries (5)
  *   7        reserved, must be zero
@@ -24,8 +24,8 @@
  *   0        stable file ID
  *   1        bit 0: in use; bits 1..6: name length; bit 7: reserved
  *   2..3     caller-owned payload format version
- *   4..5     first data page (uint16_t)
- *   6..7     contiguous page count (uint16_t)
+ *   4..7     packed extent: bits 0..20 byte length, bits 21..29 first sector,
+ *            bits 30..31 reserved zero. Page count = max(1, ceil(bytes/256)).
  *   8..11    file replacement generation
  *   12..15   CRC-32 over every byte in the data extent
  *   16..47   optional name bytes, not NUL-terminated on flash
@@ -37,13 +37,32 @@
 #include <stdint.h>
 
 enum {
-    POGO_FLASH_FILE_CATALOG_VERSION = 3,     /**< Serialized schema version. */
+    POGO_FLASH_FILE_CATALOG_VERSION = 4,     /**< Serialized schema version. */
     POGO_FLASH_FILE_CATALOG_HEADER_SIZE = 12, /**< Bytes before entry zero. */
     POGO_FLASH_FILE_ENTRY_SIZE = 48,         /**< Serialized bytes per slot. */
     POGO_FLASH_FILE_ENTRIES_PER_CATALOG = 5, /**< Fixed slots in one page. */
     POGO_FLASH_FILE_CATALOG_CRC_OFFSET = 252, /**< Stored CRC byte offset. */
     POGO_FLASH_FILE_ENTRY_IN_USE = 1         /**< Low bit marks active slots. */
 };
+
+/* Sector alignment saves address bits, retaining 32-byte names and 80 IDs. */
+#define POGO_FLASH_FILE_LENGTH_MASK UINT32_C(0x001fffff)
+#define POGO_FLASH_FILE_EXTENT_RESERVED UINT32_C(0xc0000000)
+/** Caller validates bytes <= MAX_BYTES before rounding; zero still owns a page. */
+static inline uint16_t pogo_flash_file_internal_pages_for_bytes(uint32_t bytes) {
+    return bytes == 0u ? 1u : (uint16_t)((bytes + 255u) / 256u);
+}
+/** Caller supplies a validated sector-aligned address and bounded byte length. */
+static inline uint32_t pogo_flash_file_internal_pack_extent(uint16_t first_page,
+                                                            uint32_t bytes) {
+    return ((uint32_t)(first_page / POGO_FLASH_FILE_ERASE_SECTOR_PAGES) << 21) | bytes;
+}
+
+/** Identify incompatible versions without decoding or erasing their catalogs. */
+static inline bool pogo_flash_file_internal_old_catalog(const uint8_t *page) {
+    return page[0] == 'P' && page[1] == 'F' && page[2] == 'F' && page[3] == 'S' &&
+        page[4] != 0u && page[4] != POGO_FLASH_FILE_CATALOG_VERSION;
+}
 
 /** Each catalog page is the first page of its own 4 KiB erase sector. */
 static inline uint16_t pogo_flash_file_internal_catalog_page(uint8_t index) {

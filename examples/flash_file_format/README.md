@@ -1,14 +1,16 @@
 # Explicit flash-file reset
 
 This firmware erases all 16 PFFS catalog sectors and creates
-empty PFFS v3 catalogs. It is for deliberate recovery from an incompatible or
+empty PFFS v4 catalogs. It is for deliberate recovery from an incompatible or
 damaged catalog. **Every PFFS file becomes inaccessible.** Data-sector bytes
 remain until reuse; this is not a secure wipe. It does not erase the separate
 motor-calibration security registers.
 
 Normal new-file creation now formats absent or corrupt PFFS automatically, so
 this separate utility is optional and primarily useful when you want to reset
-the filesystem without immediately creating a file.
+the filesystem without immediately creating a file. Recognizable older formats
+require this explicit reset (or `format YES` in the shell); export important files
+using their previous firmware before formatting.
 
 For robot 23342, run this only after deciding that the existing user-flash
 contents can be discarded. Compile and upload this example as a physical
@@ -22,13 +24,13 @@ ID 1 is not reserved.
 The reset is not part of normal calibration. Leaving this firmware installed
 and launching it again clears the catalogs again.
 
-Both physical and simulator example builds compile this checkout's PFFS v3
+Both physical and simulator example builds compile this checkout's PFFS v4
 sources. The reset example verifies the resulting catalog version before
 reporting success.
 
 ## Integration reference
 
-Deliberately recreate empty v3 catalogs without immediately creating a payload file.
+Deliberately recreate empty v4 catalogs without immediately creating a payload file.
 
 Entry point: [main.c](main.c); build rules: [Makefile](Makefile).
 See the [system guide](../../docs/flash_files.md) and [all examples](../../docs/examples.md).

@@ -62,6 +62,9 @@ PFFS owns catalog/extent layout over the SDK flash API; it has separate fast
 reader, secure reader, name lookup, writer, and status modules. Stable numeric
 IDs resolve directly to a catalog slot; names require a scan. Append logging
 builds on PFFS allocation but uses a distinct page format/checksum scheme.
+The v4 catalog records exact ordinary-file byte lengths in its existing entry
+size. Logs retain reserved capacity and derive committed payload length from
+their page headers, avoiding catalog writes during flushing.
 No persistence module provides locks, filesystem transactions, or an OS file
 descriptor.
 

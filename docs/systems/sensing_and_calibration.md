@@ -94,9 +94,11 @@ A violet/fatal result is not a saved calibration.
 ## Flash model lifecycle
 
 [magnetometer_calibration_flash.h](../../src/pogo-utils/magnetometer_calibration_flash.h)
-stores a 256-byte PMAG format-1 record in the named PFFS file
+stores a 168-byte PMAG format-1 record in one physical page of the named PFFS file
 `magnetometer_calibration`. It uses any free ID; **ID 1 is not reserved**.
-PFFS catalog version 3 and calibration payload version 1 are different schemas.
+PFFS catalog version 4 and calibration payload version 1 are different schemas.
+Page bytes 168–255 are erased padding, excluded from the catalog byte length.
+The loader rejects a catalog length shorter than the complete record.
 
 The record includes its own magic, length, CRC, validated model, collection
 diagnostics, and canonical CW steering sign. Loading adapts the sign to the

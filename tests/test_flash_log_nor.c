@@ -159,6 +159,9 @@ int main(void) {
     pogo_flash_file_info_t info;
     assert(pogo_flash_file_find(2u, &info) == POGO_FLASH_FILE_OK);
     assert(info.format_version == POGO_FLASH_LOG_FORMAT_VERSION);
+    assert(info.size_bytes == 512u); /* Reserved container length stays fixed. */
+    assert(pogo_flash_log_committed_bytes(&print_log) == 0u);
+    assert(pogo_flash_log_committed_bytes(NULL) == 0u);
     assert(pogo_flash_file_read_page_secure(2u, 0u, calibration, NULL) ==
            POGO_FLASH_FILE_UNSUPPORTED_FORMAT);
     assert(pogo_flash_file_replace(2u, 2u, calibration) ==
@@ -169,7 +172,9 @@ int main(void) {
     uint8_t full[POGO_FLASH_LOG_PAYLOAD_SIZE];
     memset(full, 'A', sizeof(full));
     append_all(&print_log, full, sizeof(full));
+    assert(pogo_flash_log_committed_bytes(&print_log) == 0u); /* Cache only. */
     assert(pogo_flash_log_service(&print_log) == POGO_FLASH_LOG_OK);
+    assert(pogo_flash_log_committed_bytes(&print_log) == sizeof(full));
     assert(sector_erases == erases_before);
     assert(page_programs == programs_before + 1u);
     append_all(&print_log, "end\n", 4u);
@@ -178,6 +183,8 @@ int main(void) {
     assert(pogo_flash_log_force_flush(&print_log) == POGO_FLASH_LOG_OK);
     assert(sector_erases == erases_before);
     assert(page_programs == programs_before + 2u);
+    assert(pogo_flash_log_committed_bytes(&print_log) == sizeof(full) + 4u);
+    assert(pogo_flash_file_find(2u, &info) == POGO_FLASH_FILE_OK && info.size_bytes == 512u);
 
     char number[13];
     size_t n = pogo_flash_log_format_scaled_i32(number, -12345, 2u);
@@ -196,6 +203,7 @@ int main(void) {
 
     pogo_flash_log_t reopened;
     assert(pogo_flash_log_open(&reopened, 2u) == POGO_FLASH_LOG_OK);
+    assert(pogo_flash_log_committed_bytes(&reopened) == sizeof(full) + 4u);
     uint8_t page[POGO_FLASH_FILE_PAGE_SIZE];
     uint8_t used = 0u;
     assert(pogo_flash_log_read_page(&reopened, 0u, page, &used) ==
@@ -205,6 +213,7 @@ int main(void) {
            POGO_FLASH_LOG_OK && used == 4u);
     assert(memcmp(page + POGO_FLASH_LOG_HEADER_SIZE, "end\n", 4u) == 0);
     assert(pogo_flash_log_clear(&reopened) == POGO_FLASH_LOG_OK);
+    assert(pogo_flash_log_committed_bytes(&reopened) == 0u);
     assert(pogo_flash_log_read_page(&reopened, 0u, page, &used) ==
            POGO_FLASH_LOG_END);
     assert(pogo_flash_file_read_page_secure(1u, 0u, page, NULL) ==
@@ -227,6 +236,7 @@ int main(void) {
     assert(pogo_flash_log_service(&reopened) == POGO_FLASH_LOG_VERIFY_FAILED);
     torn_page = -1;
     assert(pogo_flash_log_open(&reopened, 2u) == POGO_FLASH_LOG_CORRUPT);
+    assert(pogo_flash_log_committed_bytes(&reopened) == sizeof(full));
     assert(pogo_flash_log_read_page(&reopened, 0u, page, &used) ==
            POGO_FLASH_LOG_OK && used == sizeof(full));
     assert(pogo_flash_log_read_page(&reopened, 1u, page, &used) ==
@@ -243,12 +253,23 @@ int main(void) {
     assert(pogo_flash_log_initialize(&reopened, 4u, "new", 1u, false,
                                      &formatted) == POGO_FLASH_LOG_OK);
     assert(formatted); /* Virgin flash has the same explicit recovery policy. */
-    flash[0][12u + 3u * 48u + 6u] = 0u; /* ID 4 with impossible page count. */
+    flash[0][12u + 3u * 48u + 7u] |= 0xc0u; /* Reserved extent bits in ID 4. */
     refresh_catalog_crc(0u);
     assert(pogo_flash_log_initialize(&reopened, 5u, "later", 1u, false,
                                      &formatted) == POGO_FLASH_LOG_OK);
     assert(formatted);
     assert(pogo_flash_file_find(4u, &info) == POGO_FLASH_FILE_NOT_FOUND);
+
+    /* An incompatible catalog is not the corrupt-current recovery case:
+     * initialization must preserve every byte for explicit export/format. */
+    flash[0][4] = 3u;
+    unsigned version_erases = sector_erases;
+    unsigned version_programs = page_programs;
+    assert(pogo_flash_log_open(&reopened, 5u) == POGO_FLASH_LOG_WRONG_FORMAT);
+    assert(pogo_flash_log_initialize(&reopened, 5u, "later", 1u, false,
+                                     &formatted) == POGO_FLASH_LOG_WRONG_FORMAT);
+    assert(!formatted && flash[0][4] == 3u && sector_erases == version_erases &&
+           page_programs == version_programs);
 
     /* No numeric ID is reserved for calibration; even ID 1 can host a log. */
     erase_write_section_flash();

@@ -10,7 +10,7 @@
  * sensor mounting and motor convention are compatible with the source robot.
  *
  * Storage is through the PFFS name "magnetometer_calibration", at any free ID.
- * The catalog entry declares a one-page payload and repeats this record's
+ * The catalog entry declares a 168-byte payload in one page and repeats this record's
  * format version. The payload has independent magic, length, CRC, and semantic
  * validation. Missions scan at most sixteen catalog pages once at startup,
  * then read the selected data page without a whole-file CRC pass.
@@ -30,8 +30,10 @@ extern "C" {
 #endif
 
 enum {
-    /** Complete flash-file payload size; one physical flash page. */
+    /** Physical page buffer size, including erased padding after the record. */
     MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE = 256,
+    /** Exact PMAG record length stored in the PFFS catalog. */
+    MAGNETOMETER_CALIBRATION_FLASH_RECORD_SIZE = 168,
     /** Schema of the serialized PMAG record, not the PFFS catalog schema. */
     MAGNETOMETER_CALIBRATION_FLASH_FORMAT_VERSION = 1
 };

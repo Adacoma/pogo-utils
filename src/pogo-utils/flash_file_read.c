@@ -19,7 +19,7 @@ static const uint8_t catalog_magic[4] = {'P', 'F', 'F', 'S'};
  * The page API's uint16_t indices are required to reach the final data page. */
 _Static_assert(POGO_FLASH_FILE_PAGE_SIZE == POGOBOT_USER_FLASH_PAGE_SIZE &&
     POGO_FLASH_FILE_USER_PAGES == POGOBOT_USER_FLASH_PAGE_COUNT,
-    "PFFS v3 requires the extended SDK user-flash geometry");
+    "PFFS v4 requires the extended SDK user-flash geometry");
 
 /* Compile-time checks tie the arithmetic below to the serialized layout. A
  * layout change must update the constants and cannot silently leave unused or
@@ -38,6 +38,11 @@ _Static_assert(POGO_FLASH_FILE_ERASE_SECTOR_PAGES *
     POGO_FLASH_FILE_MAX_PAGES ==
         POGO_FLASH_FILE_USER_PAGES - POGO_FLASH_FILE_DATA_FIRST_PAGE,
     "catalogs and data extents must exactly cover user flash");
+_Static_assert(POGO_FLASH_FILE_MAX_BYTES ==
+    POGO_FLASH_FILE_MAX_PAGES * POGO_FLASH_FILE_PAGE_SIZE &&
+    POGO_FLASH_FILE_MAX_BYTES <= POGO_FLASH_FILE_LENGTH_MASK &&
+    POGO_FLASH_FILE_USER_PAGES / POGO_FLASH_FILE_ERASE_SECTOR_PAGES <= 512,
+    "byte lengths and sector addresses must fit the packed extent");
 
 uint16_t pogo_flash_file_internal_get_u16(const uint8_t *p) {
     /* Byte assembly is valid for unaligned buffers and every host endianness. */
@@ -54,7 +59,7 @@ bool pogo_flash_file_internal_catalog_header_valid(
     const uint8_t page[POGO_FLASH_FILE_PAGE_SIZE],
     uint8_t expected_catalog_index) {
     /* Header byte 7 is reserved. Requiring zero makes future incompatible
-     * layouts fail explicitly instead of being misread as version 3. */
+     * layouts fail explicitly instead of being misread as version 4. */
     return memcmp(page, catalog_magic, sizeof(catalog_magic)) == 0 &&
         page[4] == POGO_FLASH_FILE_CATALOG_VERSION &&
         page[5] == expected_catalog_index &&
@@ -81,13 +86,20 @@ bool pogo_flash_file_internal_decode_entry(
     pogo_flash_file_info_t *info) {
     /* Decode fixed-width fields before validation. Reading bytes
      * directly avoids alignment and packed-structure assumptions. */
-    uint16_t page_count = pogo_flash_file_internal_get_u16(entry + 6);
-    uint16_t first_page = pogo_flash_file_internal_get_u16(entry + 4);
+    uint32_t extent = pogo_flash_file_internal_get_u32(entry + 4);
+    uint32_t bytes = extent & POGO_FLASH_FILE_LENGTH_MASK;
+    uint16_t first_page = (uint16_t)(((extent >> 21) & 0x1ffu) *
+        POGO_FLASH_FILE_ERASE_SECTOR_PAGES);
+    uint16_t page_count = pogo_flash_file_internal_pages_for_bytes(bytes);
     uint8_t flags = entry[1];
     uint8_t name_length = (uint8_t)((flags >> 1) & 0x3fu);
     /* Widen the sum so a damaged 16-bit extent cannot wrap. */
     unsigned end_page = (unsigned)first_page + (unsigned)page_count;
-    if ((flags & POGO_FLASH_FILE_ENTRY_IN_USE) == 0u ||
+    if ((extent & POGO_FLASH_FILE_EXTENT_RESERVED) != 0u ||
+        bytes > POGO_FLASH_FILE_MAX_BYTES ||
+        (pogo_flash_file_internal_get_u16(entry + 2) == 0x8001u &&
+         (bytes == 0u || bytes % POGO_FLASH_FILE_PAGE_SIZE != 0u)) ||
+        (flags & POGO_FLASH_FILE_ENTRY_IN_USE) == 0u ||
         (flags & 0x80u) != 0u || entry[0] != expected_id || page_count == 0u ||
         page_count > POGO_FLASH_FILE_MAX_PAGES ||
         first_page < POGO_FLASH_FILE_DATA_FIRST_PAGE ||
@@ -104,6 +116,7 @@ bool pogo_flash_file_internal_decode_entry(
         info->format_version = pogo_flash_file_internal_get_u16(entry + 2);
         info->first_page = first_page;
         info->page_count = page_count;
+        info->size_bytes = bytes;
         info->name_length = name_length;
         info->generation = pogo_flash_file_internal_get_u32(entry + 8);
         info->data_crc32 = pogo_flash_file_internal_get_u32(entry + 12);
@@ -128,6 +141,7 @@ pogo_flash_file_status_t pogo_flash_file_internal_load_slot(
     uint8_t entry_index = (uint8_t)(slot % POGO_FLASH_FILE_ENTRIES_PER_CATALOG);
     read_page_flash(pogo_flash_file_internal_catalog_page(catalog_index),
                     (char *)page);
+    if (pogo_flash_file_internal_old_catalog(page)) return POGO_FLASH_FILE_UNSUPPORTED_FORMAT;
     if (!pogo_flash_file_internal_catalog_header_valid(page, catalog_index)) {
         /* Blank means the filesystem has never been formatted. Any other
          * invalid header is data/corruption and must not be auto-erased here. */

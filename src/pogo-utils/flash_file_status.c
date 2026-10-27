@@ -24,7 +24,7 @@ const char *pogo_flash_file_status_string(pogo_flash_file_status_t status) {
     case POGO_FLASH_FILE_BAD_CHECKSUM: return "flash file checksum mismatch";
     case POGO_FLASH_FILE_VERIFY_FAILED: return "flash-file write verification failed";
     case POGO_FLASH_FILE_GENERATION_EXHAUSTED: return "flash-file generation exhausted";
-    case POGO_FLASH_FILE_UNSUPPORTED_FORMAT: return "file needs a format-specific reader";
+    case POGO_FLASH_FILE_UNSUPPORTED_FORMAT: return "unsupported catalog or payload format";
     default: return "unknown flash-file status";
     }
 }

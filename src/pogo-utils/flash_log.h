@@ -65,6 +65,7 @@ typedef struct {
     uint8_t ready;
     uint8_t failed;
     uint32_t identity_crc; /**< Fingerprint of the catalog entry read at open. */
+    uint32_t committed_bytes; /**< Verified stream bytes, excluding page headers/padding. */
 } pogo_flash_log_t;
 
 /** Open an existing clean log, scanning at most 256 pages. Never writes.
@@ -100,6 +101,11 @@ pogo_flash_log_status_t pogo_flash_log_service(pogo_flash_log_t *log);
 
 /** Commit even a partial page. Its unused capacity cannot be used later. */
 pogo_flash_log_status_t pogo_flash_log_force_flush(pogo_flash_log_t *log);
+
+/** Exact durable payload length, reconstructed at open and updated on commit.
+ * Excludes the RAM cache. This is a cached count with no flash I/O; reopen the
+ * handle after external file changes. Returns zero for NULL/unopened handles. */
+uint32_t pogo_flash_log_committed_bytes(const pogo_flash_log_t *log);
 
 /** Read and CRC-check one committed page. Returns END for an unused page.
  * output is caller-owned scratch; only payload bytes at offset 12, of length

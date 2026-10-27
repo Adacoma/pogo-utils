@@ -145,7 +145,8 @@ class Transfers(unittest.TestCase):
                 result = self.client().download("binary", output, length=keep)
                 self.assertEqual(output.getvalue(), data[:keep])
                 self.assertEqual(result, (keep, pft.binascii.crc32(data[:keep])))
-        self.assertEqual(len(self.download()), 512)
+        self.assertEqual(self.download(), data)
+        self.assertEqual(len(self.download(raw=True)), 512)
 
     def test_default_upload_preserves_raw_pages_and_replacement(self):
         for n in (0, 1, 239, 240, 255, 256, 257, 512, 4097):
@@ -156,7 +157,7 @@ class Transfers(unittest.TestCase):
                 stored = data + b"\xff" * (max(1, (n + 255) // 256) * 256 - n)
                 self.assertEqual(result, (n, pft.binascii.crc32(data)))
                 self.assertEqual(self.download(raw=True), stored)
-                self.assertEqual(self.download(), stored)
+                self.assertEqual(self.download(), data)
         self.pipe.control("!format")
         # A native payload resembling the envelope magic is still left intact.
         data = b"PFT1" + bytes(range(252))
@@ -168,6 +169,16 @@ class Transfers(unittest.TestCase):
         with self.assertRaisesRegex(pft.TransferError, "SIZE"):
             self.client().upload(io.BytesIO(b"x" * 257), 10, "binary", replace=True)
         self.assertEqual(self.download(), replacement)
+
+    def test_raw_replacement_updates_exact_eof_within_one_page(self):
+        # Length may vary without reallocating. Shrinking must erase the old
+        # suffix; empty files retain one physical page, but download zero bytes.
+        self.client().upload(io.BytesIO(b"x" * 256), 10, "binary")
+        for data in (b"short", b"", b"\xff" * 255, b"z" * 256):
+            with self.subTest(length=len(data)):
+                self.client().upload(io.BytesIO(data), 10, "binary", replace=True)
+                self.assertEqual(self.download(), data)
+                self.assertEqual(self.download(raw=True), data + b"\xff" * (256 - len(data)))
 
     def test_cli_default_raw_and_optional_envelope(self):
         # Exercise argument parsing and main() against the real C engine, with

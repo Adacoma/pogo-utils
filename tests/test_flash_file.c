@@ -63,7 +63,7 @@ int main(void) {
     assert(pogo_flash_file_create(1u, "x", 1u, 1u, one_page) ==
            POGO_FLASH_FILE_OK);
     assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_OK);
-    fake_flash[0][18] = 0u; /* Damage page count in the existing ID-1 entry. */
+    fake_flash[0][12u + 7u] |= 0xc0u; /* Reserved packed-extent bits are invalid. */
     assert(pogo_flash_file_find(1u, &info) ==
            POGO_FLASH_FILE_CORRUPT_CATALOG);
     /* A corrupt catalog triggers destructive recovery on the next create. */
@@ -71,13 +71,18 @@ int main(void) {
            POGO_FLASH_FILE_OK);
     assert(pogo_flash_file_find(1u, &info) == POGO_FLASH_FILE_NOT_FOUND);
 
-    /* No v2 migration path exists: an old catalog is rejected by readers
-     * and creation explicitly starts a new v3 catalog. */
-    fake_flash[0][4] = 2u;
-    assert(pogo_flash_file_find(2u, &info) == POGO_FLASH_FILE_CORRUPT_CATALOG);
-    assert(pogo_flash_file_create(1u, "v3", 1u, 1u, one_page) ==
+    /* Incompatible catalogs require an explicit format, preserving the chance
+     * to export files with the previous firmware before erasing metadata. */
+    fake_flash[0][4] = 3u;
+    assert(pogo_flash_file_find(2u, &info) == POGO_FLASH_FILE_UNSUPPORTED_FORMAT);
+    unsigned before = write_count;
+    assert(pogo_flash_file_create(1u, "v4", 1u, 1u, one_page) ==
+           POGO_FLASH_FILE_UNSUPPORTED_FORMAT);
+    assert(write_count == before && fake_flash[0][4] == 3u);
+    assert(pogo_flash_file_format() == POGO_FLASH_FILE_OK);
+    assert(pogo_flash_file_create(1u, "v4", 1u, 1u, one_page) ==
            POGO_FLASH_FILE_OK);
-    assert(fake_flash[0][4] == 3u);
+    assert(fake_flash[0][4] == 4u);
     assert(pogo_flash_file_find(2u, &info) == POGO_FLASH_FILE_NOT_FOUND);
 
     erase_write_section_flash();
@@ -186,7 +191,7 @@ int main(void) {
     assert(pogo_flash_file_replace(1u, 1u, one_page) ==
            POGO_FLASH_FILE_CORRUPT_CATALOG);
     memcpy(fake_flash[0], saved_catalog, sizeof(saved_catalog));
-    fake_flash[0][12u + 5u] = 0u; /* Structurally invalid data-page allocation. */
+    fake_flash[0][12u + 7u] |= 0xc0u; /* Structurally invalid packed extent. */
     assert(pogo_flash_file_read_page_fast(1u, 0u, output, NULL) ==
            POGO_FLASH_FILE_CORRUPT_CATALOG);
     memcpy(fake_flash[0], saved_catalog, sizeof(saved_catalog));

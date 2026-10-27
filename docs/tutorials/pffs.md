@@ -18,7 +18,7 @@ Use `robots` / `use <robot_id>` in simulation, then `ls`, `df`, and
 On hardware build/upload the same example's firmware and use UART.
 Read [shell commands](../../examples/flash_file/README.md).
 
-`df` reports **allocated sectors**, not useful data bytes. A one-page file
+`df` reports **allocated sectors** plus separate file-length/page totals. A one-page file
 owns a whole 4 KiB erase sector. There are 80 stable IDs and 1,408 KiB allocatable
 data, but large files need contiguous free space.
 
@@ -32,17 +32,17 @@ Check that your chosen ID/name is free; no numeric ID is reserved by the library
 #include <string.h>
 #include "pogo-utils/flash_file.h"
 
-/* Wire format: four magic bytes, little-endian counter, zero-filled padding. */
+/* Wire format: four magic bytes and one little-endian counter, exactly 8 bytes. */
 pogo_flash_file_status_t save_counter(uint32_t counter, bool create) {
-    uint8_t page[POGO_FLASH_FILE_PAGE_SIZE] = {0};
+    uint8_t page[8];
     memcpy(page, "CNT1", 4);
     for (unsigned i = 0; i < 4; ++i)
         page[4 + i] = (uint8_t)(counter >> (8u * i));
     if (create) {
         /* WARNING: create autoformats absent/corrupt catalogs. */
-        return pogo_flash_file_create(42, "counter", 1, 1, page);
+        return pogo_flash_file_create_bytes(42, "counter", sizeof(page), 1, page);
     }
-    return pogo_flash_file_replace(42, 1, page); /* Same page count/extent. */
+    return pogo_flash_file_replace_bytes(42, sizeof(page), page); /* One page. */
 }
 
 pogo_flash_file_status_t load_counter(uint32_t *counter) {
@@ -52,7 +52,7 @@ pogo_flash_file_status_t load_counter(uint32_t *counter) {
     pogo_flash_file_status_t s =
         pogo_flash_file_read_page_secure(42, 0, page, &info);
     if (s != POGO_FLASH_FILE_OK) return s;
-    if (info.format_version != 1 || info.page_count != 1 ||
+    if (info.format_version != 1 || info.size_bytes != 8 ||
         memcmp(page, "CNT1", 4) != 0)
         return POGO_FLASH_FILE_UNSUPPORTED_FORMAT;
     uint32_t value = 0;
@@ -79,24 +79,28 @@ filesystem-lifecycle assumptions remain valid.
 
 ## 3. Large files without a large RAM buffer
 
-Use the streaming writer: begin, write every page in order, then finish.
+Use the streaming writer: begin with the exact byte length, write every physical
+page in order with `0xff` padding after EOF, then finish. Empty files still
+submit one fully erased page. The original page-count API remains available
+for callers that intentionally store complete page images.
 This module illustrates deterministic page generation:
 
 ```c
 #include <stdint.h>
 #include "pogo-utils/flash_file.h"
 
-pogo_flash_file_status_t create_pattern(uint8_t id, uint16_t pages) {
+pogo_flash_file_status_t create_pattern(uint8_t id, uint32_t bytes) {
     pogo_flash_file_writer_t writer;
     bool formatted = false;
-    pogo_flash_file_status_t s = pogo_flash_file_write_begin_create(
-        &writer, id, "pattern", pages, 1, &formatted);
+    pogo_flash_file_status_t s = pogo_flash_file_write_begin_create_bytes(
+        &writer, id, "pattern", bytes, 1, &formatted);
     if (s != POGO_FLASH_FILE_OK) return s;
     /* Application should warn if formatted: other file metadata was lost. */
     uint8_t page[POGO_FLASH_FILE_PAGE_SIZE];
-    for (uint16_t p = 0; p < pages; ++p) {
+    for (uint16_t p = 0; p < writer.page_count; ++p) {
         for (unsigned b = 0; b < sizeof(page); ++b)
-            page[b] = (uint8_t)(p + b);
+            page[b] = (uint32_t)p * sizeof(page) + b < bytes ?
+                (uint8_t)(p + b) : 0xffu;
         s = pogo_flash_file_write_page(&writer, page);
         if (s != POGO_FLASH_FILE_OK) {
             pogo_flash_file_write_abort(&writer); /* RAM only; no rollback. */
@@ -108,7 +112,8 @@ pogo_flash_file_status_t create_pattern(uint8_t id, uint16_t pages) {
 ```
 
 Metadata is published after all pages verify. For replacement begin with
-`write_begin_replace`; keep the same number of pages. Old data can become
+`write_begin_replace_bytes`; keep the same number of allocated pages, although
+the exact byte length can change within that range. Old data can become
 invalid on the first erase, before finish. Each write handles a page, but
 sector erases/catalog updates are synchronous and may violate a control deadline.
 Do not interleave another writer, rename, delete, or defrag while streaming.
@@ -118,7 +123,7 @@ Do not interleave another writer, rename, delete, or defrag while streaming.
 In the shell on disposable data, after explicitly accepting any format loss:
 
 ```text
-touch 42 notes 1
+touch 42 notes
 write notes 0 4869
 cat notes
 mv notes renamed
@@ -127,9 +132,11 @@ rm renamed
 df
 ```
 
-`mv` changes the optional label, not the ID. File size is immutable:
-resize means delete/recreate (and possible relocation), not replace.
-`write` in the shell edits one-page ordinary files only.
+`mv` changes the optional label and preserves ID/length. `touch` takes a byte
+length, default zero; writing `Hi` extends this empty file to two bytes.
+The allocated **page count** is immutable: changing it requires delete/recreate
+(and possible relocation). The exact EOF can change within that allocation.
+`write` in the shell edits or extends one-page ordinary files only.
 To recover contiguity after deletion use `defrag YES`, backed up and under
 stable power. It is incremental but **not transactional**.
 `format YES` logically deletes all PFFS files, including calibration; it does
@@ -138,6 +145,8 @@ not securely wipe payload bytes.
 Readers never format. Library create autoformats missing/corrupt catalogs by
 design, while shell touch refuses that implicit destruction and requires explicit
 format. Choose recovery policy consciously in your application.
+Recognizable older catalog versions instead require explicit formatting;
+[export with the previous firmware first](../flash_files.md#upgrading-from-an-older-catalog).
 
 ## 5. Verify failure semantics
 

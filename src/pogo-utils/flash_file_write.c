@@ -26,7 +26,7 @@
 #include "pogobase.h"
 
 #ifdef REAL_ROBOT
-/* The SDK exposes the physical start of the v3 user-flash region. The SPI
+/* The SDK exposes the physical start of the user-flash region. The SPI
  * primitive erases one aligned 4 KiB sector at an absolute chip offset. */
 #include "spi.h"
 #endif
@@ -184,6 +184,7 @@ static pogo_flash_file_status_t load_catalogs(
          catalog_index < POGO_FLASH_FILE_CATALOG_PAGES; ++catalog_index) {
         read_page_flash(pogo_flash_file_internal_catalog_page(catalog_index),
                         (char *)page);
+        if (pogo_flash_file_internal_old_catalog(page)) return POGO_FLASH_FILE_UNSUPPORTED_FORMAT;
         /* Writers require the stronger catalog CRC check because publishing a
          * mutation based on damaged metadata could overwrite a live extent. */
         if (!pogo_flash_file_internal_catalog_header_valid(
@@ -259,6 +260,7 @@ static uint16_t find_free_extent(
 static pogo_flash_file_status_t write_data_pages(
     uint16_t first_page,
     uint16_t page_count,
+    uint32_t size_bytes,
     const uint8_t *data,
     bool blank_file,
     uint32_t *data_crc) {
@@ -292,11 +294,21 @@ static pogo_flash_file_status_t write_data_pages(
     for (uint16_t page = 0u; page < page_count; ++page) {
         const uint8_t *expected = data + (size_t)page * POGO_FLASH_FILE_PAGE_SIZE;
         uint16_t physical = (uint16_t)(first_page + page);
-        write_page_flash(physical, expected);
+        size_t count = size_bytes - (uint32_t)page * POGO_FLASH_FILE_PAGE_SIZE;
+        if (count > sizeof(actual)) count = sizeof(actual);
+        /* Only the final short page needs staging. Reuse the readback buffer
+         * and compare its prefix/tail afterwards, without a second page array. */
+        if (count < sizeof(actual)) {
+            memset(actual, 0xff, sizeof(actual));
+            memcpy(actual, expected, count);
+        }
+        write_page_flash(physical, count == sizeof(actual) ? expected : actual);
         read_page_flash(physical, (char *)actual);
-        if (memcmp(actual, expected, POGO_FLASH_FILE_PAGE_SIZE) != 0) {
+        if (memcmp(actual, expected, count) != 0) {
             return POGO_FLASH_FILE_VERIFY_FAILED;
         }
+        for (size_t i = count; i < sizeof(actual); ++i)
+            if (actual[i] != 0xffu) return POGO_FLASH_FILE_VERIFY_FAILED;
         crc = crc32_update(crc, actual, POGO_FLASH_FILE_PAGE_SIZE);
     }
     *data_crc = crc32_finish(crc);
@@ -349,7 +361,7 @@ pogo_flash_file_status_t pogo_flash_file_format(void) {
 static pogo_flash_file_status_t create_file(
     uint8_t file_id,
     const char *name,
-    uint16_t page_count,
+    uint32_t size_bytes,
     uint16_t format_version,
     const uint8_t *data,
     bool log_format,
@@ -360,13 +372,16 @@ static pogo_flash_file_status_t create_file(
      * effects and an unterminated string is never scanned without a bound. */
     size_t name_length = bounded_name_length(name);
     if (file_id == 0u || file_id > POGO_FLASH_FILE_MAX_FILES ||
-        (!log_format && ((!blank_file && data == NULL) ||
+        (!log_format && ((!blank_file && data == NULL && size_bytes != 0u) ||
             format_version == POGO_FLASH_LOG_FORMAT_VERSION)) ||
         (blank_file && (log_format || data != NULL)) ||
         name_length > POGO_FLASH_FILE_MAX_NAME) {
         return POGO_FLASH_FILE_INVALID_ARGUMENT;
     }
-    if (page_count == 0u || page_count > POGO_FLASH_FILE_MAX_PAGES ||
+    if (size_bytes > POGO_FLASH_FILE_MAX_BYTES || (log_format && size_bytes == 0u))
+        return POGO_FLASH_FILE_INVALID_SIZE;
+    uint16_t page_count = pogo_flash_file_internal_pages_for_bytes(size_bytes);
+    if (page_count > POGO_FLASH_FILE_MAX_PAGES ||
         (log_format && page_count > POGO_FLASH_LOG_MAX_PAGES)) {
         return POGO_FLASH_FILE_INVALID_SIZE;
     }
@@ -405,7 +420,8 @@ static pogo_flash_file_status_t create_file(
     uint32_t data_crc;
     /* Write data before filling/publishing the entry. If this fails, the pages
      * contain garbage/orphan data but no catalog file points at them. */
-    status = write_data_pages(first_page, page_count, data, blank_file, &data_crc);
+    status = write_data_pages(first_page, page_count, size_bytes, data,
+                              blank_file || size_bytes == 0u, &data_crc);
     if (status != POGO_FLASH_FILE_OK) return status;
 
     /* Construct the complete serialized entry in RAM. Reserved bytes and unused
@@ -414,8 +430,7 @@ static pogo_flash_file_status_t create_file(
     entry[0] = file_id;
     entry[1] = (uint8_t)(POGO_FLASH_FILE_ENTRY_IN_USE | (name_length << 1));
     put_u16(entry + 2, format_version);
-    put_u16(entry + 4, first_page);
-    put_u16(entry + 6, page_count);
+    put_u32(entry + 4, pogo_flash_file_internal_pack_extent(first_page, size_bytes));
     put_u32(entry + 8, 1u);
     put_u32(entry + 12, data_crc);
     if (name_length > 0u) memcpy(entry + 16, name, name_length);
@@ -425,20 +440,34 @@ static pogo_flash_file_status_t create_file(
 pogo_flash_file_status_t pogo_flash_file_create(
     uint8_t file_id, const char *name, uint16_t page_count,
     uint16_t format_version, const uint8_t *data) {
-    return create_file(file_id, name, page_count, format_version, data,
+    if (page_count == 0u || page_count > POGO_FLASH_FILE_MAX_PAGES) return POGO_FLASH_FILE_INVALID_SIZE;
+    return create_file(file_id, name, (uint32_t)page_count * 256u, format_version, data,
                        false, false, NULL);
 }
 
 pogo_flash_file_status_t pogo_flash_file_create_blank(
     uint8_t file_id, const char *name, uint16_t page_count,
     uint16_t format_version) {
-    return create_file(file_id, name, page_count, format_version, NULL,
+    if (page_count == 0u || page_count > POGO_FLASH_FILE_MAX_PAGES) return POGO_FLASH_FILE_INVALID_SIZE;
+    return create_file(file_id, name, (uint32_t)page_count * 256u, format_version, NULL,
                        false, true, NULL);
+}
+
+pogo_flash_file_status_t pogo_flash_file_create_bytes(
+    uint8_t id, const char *name, uint32_t size_bytes,
+    uint16_t format_version, const uint8_t *data) {
+    return create_file(id, name, size_bytes, format_version, data, false, false, NULL);
+}
+
+pogo_flash_file_status_t pogo_flash_file_create_blank_bytes(
+    uint8_t id, const char *name, uint32_t size_bytes, uint16_t format_version) {
+    return create_file(id, name, size_bytes, format_version, NULL, false, true, NULL);
 }
 
 pogo_flash_file_status_t pogo_flash_file_internal_create_log(
     uint8_t file_id, const char *name, uint16_t page_count, bool *formatted) {
-    return create_file(file_id, name, page_count,
+    if (page_count == 0u || page_count > POGO_FLASH_LOG_MAX_PAGES) return POGO_FLASH_FILE_INVALID_SIZE;
+    return create_file(file_id, name, (uint32_t)page_count * 256u,
                        POGO_FLASH_LOG_FORMAT_VERSION, NULL, true, false,
                        formatted);
 }
@@ -480,9 +509,18 @@ pogo_flash_file_status_t pogo_flash_file_replace(
     uint8_t file_id,
     uint16_t page_count,
     const uint8_t *data) {
-    if (file_id == 0u || file_id > POGO_FLASH_FILE_MAX_FILES || data == NULL) {
+    if (page_count == 0u || page_count > POGO_FLASH_FILE_MAX_PAGES) return POGO_FLASH_FILE_INVALID_SIZE;
+    return pogo_flash_file_replace_bytes(file_id, (uint32_t)page_count * 256u, data);
+}
+
+pogo_flash_file_status_t pogo_flash_file_replace_bytes(
+    uint8_t file_id, uint32_t size_bytes, const uint8_t *data) {
+    if (file_id == 0u || file_id > POGO_FLASH_FILE_MAX_FILES ||
+        (data == NULL && size_bytes != 0u)) {
         return POGO_FLASH_FILE_INVALID_ARGUMENT;
     }
+    if (size_bytes > POGO_FLASH_FILE_MAX_BYTES) return POGO_FLASH_FILE_INVALID_SIZE;
+    uint16_t page_count = pogo_flash_file_internal_pages_for_bytes(size_bytes);
     uint8_t catalog_index = (uint8_t)((file_id - 1u) /
         POGO_FLASH_FILE_ENTRIES_PER_CATALOG);
     uint8_t catalog[POGO_FLASH_FILE_PAGE_SIZE];
@@ -509,12 +547,13 @@ pogo_flash_file_status_t pogo_flash_file_replace(
     uint32_t data_crc;
     /* Non-transactional point: erasing this dedicated sector removes the old
      * payload before a new payload or catalog checksum can be committed. */
-    status = write_data_pages(info.first_page, info.page_count, data, false,
+    status = write_data_pages(info.first_page, info.page_count, size_bytes, data, size_bytes == 0u,
                               &data_crc);
     if (status != POGO_FLASH_FILE_OK) return status;
     /* File generation tracks successful replacements. write_changed_catalog()
      * separately increments the generation for the containing catalog page. */
     put_u32(entry + 8, info.generation + 1u);
+    put_u32(entry + 4, pogo_flash_file_internal_pack_extent(info.first_page, size_bytes));
     put_u32(entry + 12, data_crc);
     return write_changed_catalog(catalog_index, catalog);
 }
@@ -577,6 +616,19 @@ pogo_flash_file_status_t pogo_flash_file_write_begin_create(
     uint16_t page_count, uint16_t format_version, bool *formatted) {
     if (formatted != NULL) *formatted = false;
     if (writer == NULL) return POGO_FLASH_FILE_INVALID_ARGUMENT;
+    if (page_count == 0u || page_count > POGO_FLASH_FILE_MAX_PAGES) {
+        memset(writer, 0, sizeof(*writer));
+        return POGO_FLASH_FILE_INVALID_SIZE;
+    }
+    return pogo_flash_file_write_begin_create_bytes(writer, file_id, name,
+        (uint32_t)page_count * 256u, format_version, formatted);
+}
+
+pogo_flash_file_status_t pogo_flash_file_write_begin_create_bytes(
+    pogo_flash_file_writer_t *writer, uint8_t file_id, const char *name,
+    uint32_t size_bytes, uint16_t format_version, bool *formatted) {
+    if (formatted != NULL) *formatted = false;
+    if (writer == NULL) return POGO_FLASH_FILE_INVALID_ARGUMENT;
     memset(writer, 0, sizeof(*writer));
     size_t name_length = bounded_name_length(name);
     if (file_id == 0u || file_id > POGO_FLASH_FILE_MAX_FILES ||
@@ -584,9 +636,10 @@ pogo_flash_file_status_t pogo_flash_file_write_begin_create(
         format_version == POGO_FLASH_LOG_FORMAT_VERSION) {
         return POGO_FLASH_FILE_INVALID_ARGUMENT;
     }
-    if (page_count == 0u || page_count > POGO_FLASH_FILE_MAX_PAGES) {
+    if (size_bytes > POGO_FLASH_FILE_MAX_BYTES) {
         return POGO_FLASH_FILE_INVALID_SIZE;
     }
+    uint16_t page_count = pogo_flash_file_internal_pages_for_bytes(size_bytes);
     uint8_t catalog_index = (uint8_t)((file_id - 1u) /
         POGO_FLASH_FILE_ENTRIES_PER_CATALOG);
     uint8_t catalog[POGO_FLASH_FILE_PAGE_SIZE];
@@ -618,6 +671,7 @@ pogo_flash_file_status_t pogo_flash_file_write_begin_create(
     if (first_page == 0u) return POGO_FLASH_FILE_NO_SPACE;
     writer->first_page = first_page;
     writer->page_count = page_count;
+    writer->size_bytes = size_bytes;
     writer->format_version = format_version;
     writer->file_id = file_id;
     writer->name_length = (uint8_t)name_length;
@@ -628,13 +682,14 @@ pogo_flash_file_status_t pogo_flash_file_write_begin_create(
     return POGO_FLASH_FILE_OK;
 }
 
-pogo_flash_file_status_t pogo_flash_file_write_begin_replace(
-    pogo_flash_file_writer_t *writer, uint8_t file_id) {
+static pogo_flash_file_status_t begin_replace(
+    pogo_flash_file_writer_t *writer, uint8_t file_id, uint32_t size_bytes, bool keep_size) {
     if (writer == NULL) return POGO_FLASH_FILE_INVALID_ARGUMENT;
     memset(writer, 0, sizeof(*writer));
     if (file_id == 0u || file_id > POGO_FLASH_FILE_MAX_FILES) {
         return POGO_FLASH_FILE_INVALID_ARGUMENT;
     }
+    if (!keep_size && size_bytes > POGO_FLASH_FILE_MAX_BYTES) return POGO_FLASH_FILE_INVALID_SIZE;
     uint8_t catalog_index = (uint8_t)((file_id - 1u) /
         POGO_FLASH_FILE_ENTRIES_PER_CATALOG);
     uint8_t catalog[POGO_FLASH_FILE_PAGE_SIZE];
@@ -651,12 +706,16 @@ pogo_flash_file_status_t pogo_flash_file_write_begin_replace(
     if (info.format_version == POGO_FLASH_LOG_FORMAT_VERSION) {
         return POGO_FLASH_FILE_UNSUPPORTED_FORMAT;
     }
+    if (keep_size) size_bytes = info.size_bytes;
+    if (pogo_flash_file_internal_pages_for_bytes(size_bytes) != info.page_count)
+        return POGO_FLASH_FILE_INVALID_SIZE;
     uint32_t catalog_generation = pogo_flash_file_internal_get_u32(catalog + 8);
     if (catalog_generation == UINT32_MAX || info.generation == UINT32_MAX) {
         return POGO_FLASH_FILE_GENERATION_EXHAUSTED;
     }
     writer->first_page = info.first_page;
     writer->page_count = info.page_count;
+    writer->size_bytes = size_bytes;
     writer->format_version = info.format_version;
     writer->file_id = file_id;
     writer->file_generation = info.generation;
@@ -666,6 +725,16 @@ pogo_flash_file_status_t pogo_flash_file_write_begin_replace(
     return POGO_FLASH_FILE_OK;
 }
 
+pogo_flash_file_status_t pogo_flash_file_write_begin_replace(
+    pogo_flash_file_writer_t *writer, uint8_t file_id) {
+    return begin_replace(writer, file_id, 0u, true);
+}
+
+pogo_flash_file_status_t pogo_flash_file_write_begin_replace_bytes(
+    pogo_flash_file_writer_t *writer, uint8_t file_id, uint32_t size_bytes) {
+    return begin_replace(writer, file_id, size_bytes, false);
+}
+
 pogo_flash_file_status_t pogo_flash_file_write_page(
     pogo_flash_file_writer_t *writer,
     const uint8_t data[POGO_FLASH_FILE_PAGE_SIZE]) {
@@ -673,12 +742,21 @@ pogo_flash_file_status_t pogo_flash_file_write_page(
         (writer->mode != 1u && writer->mode != 2u) ||
         writer->file_id == 0u || writer->file_id > POGO_FLASH_FILE_MAX_FILES ||
         writer->page_count == 0u ||
+        writer->size_bytes > POGO_FLASH_FILE_MAX_BYTES ||
+        pogo_flash_file_internal_pages_for_bytes(writer->size_bytes) != writer->page_count ||
         writer->first_page < POGO_FLASH_FILE_DATA_FIRST_PAGE ||
         writer->first_page % POGO_FLASH_FILE_ERASE_SECTOR_PAGES != 0u ||
         (unsigned)writer->first_page + writer->page_count >
             POGO_FLASH_FILE_USER_PAGES ||
         writer->next_page >= writer->page_count) {
         return POGO_FLASH_FILE_INVALID_ARGUMENT;
+    }
+    if (writer->next_page + 1u == writer->page_count) {
+        uint32_t used = writer->size_bytes - (uint32_t)writer->next_page * 256u;
+        /* Validate before the lazy sector erase. This API accepts full page
+         * images; only bytes preceding the recorded EOF may contain data. */
+        for (uint32_t i = used; i < 256u; ++i)
+            if (data[i] != 0xffu) return POGO_FLASH_FILE_INVALID_ARGUMENT;
     }
     uint16_t physical = (uint16_t)(writer->first_page + writer->next_page);
     /* The first page of each owned sector erases that sector lazily. Thus an
@@ -702,6 +780,8 @@ pogo_flash_file_status_t pogo_flash_file_write_finish(
     if (writer == NULL || (writer->mode != 1u && writer->mode != 2u) ||
         writer->file_id == 0u || writer->file_id > POGO_FLASH_FILE_MAX_FILES ||
         writer->page_count == 0u ||
+        writer->size_bytes > POGO_FLASH_FILE_MAX_BYTES ||
+        pogo_flash_file_internal_pages_for_bytes(writer->size_bytes) != writer->page_count ||
         writer->first_page < POGO_FLASH_FILE_DATA_FIRST_PAGE ||
         writer->first_page % POGO_FLASH_FILE_ERASE_SECTOR_PAGES != 0u ||
         (unsigned)writer->first_page + writer->page_count >
@@ -758,8 +838,6 @@ pogo_flash_file_status_t pogo_flash_file_write_finish(
         entry[1] = (uint8_t)(POGO_FLASH_FILE_ENTRY_IN_USE |
             (writer->name_length << 1));
         put_u16(entry + 2, writer->format_version);
-        put_u16(entry + 4, writer->first_page);
-        put_u16(entry + 6, writer->page_count);
         put_u32(entry + 8, 1u);
         if (writer->name_length > 0u) {
             memcpy(entry + 16, writer->name, writer->name_length);
@@ -776,6 +854,7 @@ pogo_flash_file_status_t pogo_flash_file_write_finish(
         }
         put_u32(entry + 8, info.generation + 1u);
     }
+    put_u32(entry + 4, pogo_flash_file_internal_pack_extent(writer->first_page, writer->size_bytes));
     put_u32(entry + 12, crc32_finish(writer->crc));
     writer->mode = 0u;
     return write_changed_catalog(catalog_index, catalog);
@@ -961,7 +1040,7 @@ pogo_flash_file_status_t pogo_flash_file_defrag_step(
             return POGO_FLASH_FILE_CORRUPT_CATALOG;
         }
     }
-    put_u16(entry + 4, defrag->target_page);
+    put_u32(entry + 4, pogo_flash_file_internal_pack_extent(defrag->target_page, info.size_bytes));
     status = write_changed_catalog(index, catalog);
     if (status != POGO_FLASH_FILE_OK) {
         defrag->phase = 0u;

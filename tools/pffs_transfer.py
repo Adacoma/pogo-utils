@@ -4,7 +4,8 @@
 Only the command-line serial transport needs pyserial; the protocol client is
 transport-independent for tests. No firmware flashing, implicit formatting,
 automatic remote deletion, or automatic replacement is performed.
-Uploads are raw by default; --envelope adds the optional PFT1 length/CRC header.
+Uploads are raw by default with exact length in the PFFS v4 catalog.
+--envelope adds the optional PFT1 length/CRC header for envelope-aware readers.
 """
 from __future__ import annotations
 
@@ -126,8 +127,8 @@ class Client:
     def upload(self, source, file_id, name, *, raw=True, replace=False, progress=None):
         """Hash then stream a seekable source. Returns original byte count/CRC.
 
-        Raw uploads preserve native records at byte zero and use page-granular
-        storage. Pass raw=False to add the optional exact-length PFT1 envelope.
+        Raw uploads preserve native records at byte zero; PFFS v4 records the
+        exact length. Pass raw=False to add the optional PFT1 payload envelope.
         """
         self._name(name)
         if not 1 <= file_id <= 80:
@@ -181,7 +182,7 @@ class Client:
         if not 0 <= keep <= size:
             raise TransferError("requested length exceeds the remote stream")
         # Validate the entire remote stream, but report the digest of the bytes
-        # actually saved when --length trims a raw file's padding.
+        # actually saved when --length requests only a prefix.
         offset, crc, saved_crc = 0, 0, 0
         while offset < size:
             count = min(CHUNK, size - offset)
@@ -261,9 +262,9 @@ def main(argv=None):
     # explicitly exports physical pages instead of decoding headers/logs.
     put_mode = put.add_mutually_exclusive_group()
     put_mode.add_argument("--raw", dest="raw", action="store_true",
-                          help="store bytes without a header (default; page-granular length)")
+                          help="store bytes without a header (default; exact catalog length)")
     put_mode.add_argument("--envelope", dest="raw", action="store_false",
-                          help="prepend a 16-byte PFT1 header preserving exact byte length")
+                          help="prepend a 16-byte PFT1 length/CRC header for envelope-aware readers")
     put.set_defaults(raw=True)
     get = sub.add_parser("download", help="download an ordinary file or a log's committed payload")
     get.add_argument("target", help="PFFS ID or name")

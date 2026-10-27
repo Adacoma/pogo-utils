@@ -1,9 +1,9 @@
 /** @file transfer.h
  * Bounded, stop-and-wait UART file transfers for the flash shell only.
- * No new PFFS format/ABI is required. Ordinary uploads use payload type 0x8002
- * and a 16-byte PFT1 envelope: magic, LE byte length, LE content CRC32, zero.
- * Raw uploads use ordinary payload type 1 and have only page-granular length.
- * Downloads unwrap envelopes, concatenate logs, or export raw allocated pages.
+ * PFFS v4 records exact byte lengths. Raw uploads use ordinary payload type 1;
+ * optional enveloped uploads use type 0x8002 and a 16-byte PFT1 prefix:
+ * magic, LE byte length, LE content CRC32, zero. Downloads stop at catalog EOF,
+ * unwrap envelopes, concatenate logs, or explicitly export allocated pages.
  *
  * Call command() only after tokenizing a complete bounded ASCII line; call
  * poll() regularly. While busy(), block ALL other shell/PFFS commands, including

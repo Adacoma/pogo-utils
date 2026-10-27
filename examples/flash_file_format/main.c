@@ -1,6 +1,6 @@
 /**
  * @file main.c
- * @brief Remove PFFS v3 files by resetting its catalog sectors.
+ * @brief Remove PFFS v4 files by resetting its catalog sectors.
  *
  * This firmware is intentionally separate from calibration: booting it is an
  * explicit recovery decision that removes every PFFS file. It runs once,
@@ -45,7 +45,7 @@ void user_step(void) {
      * untouched until a later file allocation reuses them. */
     pogo_flash_file_status_t status = pogo_flash_file_format();
     if (status == POGO_FLASH_FILE_OK) {
-        /* Check every v3 catalog identity before reporting format success. */
+        /* Check every v4 catalog identity before reporting format success. */
         static const uint8_t magic[4] = {'P', 'F', 'F', 'S'};
         uint8_t page[POGO_FLASH_FILE_PAGE_SIZE];
         for (uint8_t index = 0u; index < POGO_FLASH_FILE_CATALOG_PAGES;
@@ -53,7 +53,7 @@ void user_step(void) {
             read_page_flash((uint16_t)index *
                             POGO_FLASH_FILE_ERASE_SECTOR_PAGES, (char *)page);
             if (memcmp(page, magic, sizeof(magic)) != 0 ||
-                page[4] != 3u || page[5] != index) {
+                page[4] != 4u || page[5] != index) {
                 status = POGO_FLASH_FILE_VERIFY_FAILED;
                 break;
             }
@@ -61,7 +61,7 @@ void user_step(void) {
     }
     if (status == POGO_FLASH_FILE_OK) {
         pogobot_led_setColor(0u, 25u, 0u);
-        printf("# FLASH_FORMAT_DONE,robot=%u,version=3\n",
+        printf("# FLASH_FORMAT_DONE,robot=%u,version=4\n",
                (unsigned)pogobot_helper_getid());
     } else {
         pogobot_led_setColor(25u, 0u, 25u);

@@ -82,7 +82,9 @@ training/setup use floating point. Sensor heading is a calibrated local frame,
 not a guaranteed geographic compass. IR reception is not a distance or contact
 sensor. Recovery policies cannot promise motion through a permanent obstruction.
 
-PFFS v3 is bounded and non-transactional, with no backward-format compatibility.
+PFFS v4 stores exact byte lengths in a bounded, non-transactional catalog.
+Allocated page counts remain fixed; logs report committed payload separately
+from reserved capacity. Older catalogs require explicit formatting after export.
 The fast reader omits CRC validation; secure ordinary-file reads scan the whole
 file; logs have their own per-page reader. Read the
 [persistence guarantees](docs/flash_files.md) before writing valuable data.

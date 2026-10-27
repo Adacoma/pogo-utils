@@ -8,7 +8,7 @@ Start with the [project README](../README.md), [getting started](getting_started
 | Task | Tutorial |
 | --- | --- |
 | Combine magnetometer, PID, wall avoidance, and kinematics | [Controllers](tutorials/controllers.md) |
-| Create, read, replace, and manage flash files | [PFFS](tutorials/pffs.md) |
+| Create, read, replace, and manage files with exact byte lengths | [PFFS](tutorials/pffs.md) |
 | Cache and persist print, CSV, or binary data | [Flash logs](tutorials/flash_logs.md) |
 | Choose, configure, and integrate a neural network | [ANN](tutorials/ann.md) |
 | Evaluate candidates with local or social optimizers | [Optimization](tutorials/optimization.md) |

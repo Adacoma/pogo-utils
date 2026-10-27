@@ -1,6 +1,6 @@
 # Current project state
 
-Last updated: 2026-10-26. This is a concise engineering/scientific handoff,
+Last updated: 2026-10-27. This is a concise engineering/scientific handoff,
 not a hardware-certification report. [Documentation map](index.md);
 [historical audit](code_audit.md).
 
@@ -8,7 +8,7 @@ not a hardware-certification report. [Documentation map](index.md);
 
 - Library architecture, all 45 installed public headers, all 36 examples,
   build/install rules, relevant source implementations and scenario configs.
-- Current PFFS v3, append logs, magnetometer collection/runtime/storage split,
+- Current PFFS v4, append logs, magnetometer collection/runtime/storage split,
   motion ownership and recovery, ANN layouts, optimizer contracts, SSR and numerics.
 - Earlier work included broader static audit and dependency/API inspection.
   This fix milestone neither inspected nor modified linked repositories.
@@ -24,13 +24,15 @@ not a hardware-certification report. [Documentation map](index.md);
 - Calibration firmware collects/fits/stores; missions load the named record
   and warm a live window. No calibration ID is reserved or old format supported.
 - PFFS uses 5,888 physical pages, 80 IDs and contiguous sector-owned extents:
-  64 KiB catalog sectors and 1,408 KiB data. Replacement cannot resize.
+  64 KiB catalog sectors and 1,408 KiB data. Exact byte lengths are packed into
+  unchanged 48-byte entries; replacement retains page count but can change EOF.
   Writes/defrag are not transactional; creation can autoformat damaged catalogs.
 - Logs use one-page caches and per-page CRC. New defaults are 64 KiB per log;
-  existing sizes remain fixed. Uncommitted RAM bytes disappear on reset.
+  existing sizes remain fixed. Catalog length reserves container capacity;
+  handles reconstruct/cache committed payload length. RAM bytes disappear on reset.
 - Flash shell UART transfers use 48-byte CRC/ACK frames and its existing page
-  cache. Uploads default to raw native schemas and page-granular length;
-  `--envelope` opts into type 0x8002 with exact length/content CRC. Downloads
+  cache. Uploads default to raw native schemas with exact catalog length;
+  `--envelope` opts into type 0x8002 with a payload prefix/content CRC. Downloads
   unwrap envelopes/logs automatically. Creation never autoformats;
   replacement is explicit, same-page-count and non-transactional.
 - Printing uses a standalone integer/fixed-point core and flash-first adapter:
@@ -49,6 +51,18 @@ not a hardware-certification report. [Documentation map](index.md);
 
 ## Currently working analyses
 
+- PFFS v4 preserves 80 IDs, 32-byte names and two-read fast access. Byte-count
+  writers pad short pages without overreading; page-count APIs remain wrappers.
+  Calibration records now store 168 bytes. Shell touch uses bytes (default zero),
+  cat respects EOF, df/stat separate physical allocation from lengths; log
+  ls/stat and UART export distinguish reserved capacity from committed payload.
+  Host NOR/transfer fixtures cover empty/partial/max files, fixed-page replacement,
+  defrag EOF preservation and incompatible-version refusal without writes.
+  Old catalogs need explicit export/format/re-upload; there is no migration decoder.
+  All 15 Debug tests pass normally and under ASan/UBSan/float-cast-overflow;
+  19 transfer cases run against the real C engine over host pipes. Shell/reset
+  host smoke tests, both platform syntax branches and tutorial C snippets pass.
+  No simulator, serial/hardware run or firmware build was used for this change.
 - Latest high-priority fixes cover log ownership checks before flash I/O,
   legacy speed/turn recovery and clock wrap, wide Q1.15 dot products, safe float
   conversion endpoints/NaN, and SSR/photostart capacity bounds. All 15 Debug
@@ -58,7 +72,7 @@ not a hardware-certification report. [Documentation map](index.md);
 - Raw upload is now the CLI and Python-client default; `--raw` remains accepted
   and `--envelope` enables the stored PFT1 header. Host pipe/NOR tests cover
   one-page 256-byte uploads, padding/empty inputs, replacement, optional headers,
-  CLI parsing and download decoding. All 18 transfer tests pass normally and
+  CLI parsing and download decoding. The original 18 transfer tests passed normally and
   with the ASan/UBSan bridge; no serial device or simulation was used.
 - Latest audit fixes cover optimizer ownership/defaults/enums and example
   failure handling; symmetric ANN rounding, signed scaling, MLP shifts/gates,
@@ -79,7 +93,7 @@ not a hardware-certification report. [Documentation map](index.md);
   defaults differ. Target size, stack and deadlines remain unmeasured.
 - Historical robot-23342 evidence: violet calibration was failure, catalog CRC
   damage was consistent with NOR writes without erase, and v2 sector-based format
-  plus calibration succeeded. This is not physical validation of current v3.
+  plus calibration succeeded. This is not physical validation of current v4.
   Earlier simulator runs do not imply new runs at this milestone.
 
 ## Current scientific decisions
@@ -94,8 +108,8 @@ not a hardware-certification report. [Documentation map](index.md);
   Logs separately trade cached speed and page density against checkpoint loss.
   Log entry fingerprints reject changed ownership before I/O; callers reopen
   after file movement/destructive operations and keep one writer per log.
-- UART transfer preserves PFFS v3. Exact byte length is an optional payload
-  envelope, not new catalog metadata; existing mission layouts use raw upload.
+- UART transfer uses PFFS v4 exact byte lengths; mission layouts use raw upload
+  without an extra header. Optional PFT1 is retained for readers using that schema.
   Host downloads publish only verified data; CRC is not authentication.
 - Printing deliberately supports a small syntax without float/double fallback;
   Q conversion quantizes finite inputs, and coarse decimal rounding can carry
@@ -133,7 +147,7 @@ Example assertions/benchmarks are not a complete repeatable regression suite.
    with matching peers after numerical/protocol changes.
 2. Address the remaining medium findings listed in the audit, config/Makefile
    traps, and PID/sensor/reference coverage gaps.
-3. Validate v3 autoformat, logs/checkpoints and power interruption on disposable
+3. Validate v4 autoformat, logs/checkpoints and power interruption on disposable
    physical flash; measure erase/program, stack and deadline margins.
 4. Test manual heading jumps, sensor/IR outages and jams on representative robots;
    include go_straight_simple and log recovery/displacement separately.

@@ -135,7 +135,7 @@ static void shell_tty_write(const char *bytes, size_t length) {
 /** Check a raw catalog, including the checksum of an entirely empty page.
  *
  * File lookup intentionally skips CRC work and returns NOT_FOUND for an empty
- * slot. This inventory mirrors the documented PFFS v3 header and CRC layout
+ * slot. This inventory mirrors the documented PFFS v4 header and CRC layout
  * locally without adding diagnostic code to the mission firmware reader.
  * `scratch` is reusable USERDATA storage.
  */
@@ -152,7 +152,10 @@ static pogo_flash_file_status_t check_catalog(
         all_zero = all_zero && scratch[i] == 0u;
         all_erased = all_erased && scratch[i] == 0xffu;
     }
-    if (memcmp(scratch, magic, sizeof(magic)) != 0 || scratch[4] != 3u ||
+    if (memcmp(scratch, magic, sizeof(magic)) == 0 &&
+        scratch[4] != 0u && scratch[4] != 4u)
+        return POGO_FLASH_FILE_UNSUPPORTED_FORMAT;
+    if (memcmp(scratch, magic, sizeof(magic)) != 0 || scratch[4] != 4u ||
         scratch[5] != catalog_index ||
         scratch[6] != POGO_FLASH_FILE_MAX_FILES / POGO_FLASH_FILE_CATALOG_PAGES ||
         scratch[7] != 0u) {
@@ -178,7 +181,7 @@ static pogo_flash_file_status_t check_catalog(
         /* An empty slot can coexist with a bad page checksum. Emit only the
          * small fixed header/first-slot diagnostic needed to distinguish an
          * interrupted update from an invalidated catalog; do not dump payloads
-         * or modify flash. Offsets follow the documented PFFS v3 layout. */
+         * or modify flash. Offsets follow the documented PFFS v4 layout. */
         uint32_t generation = (uint32_t)scratch[8] |
             ((uint32_t)scratch[9] << 8) |
             ((uint32_t)scratch[10] << 16) |
@@ -218,30 +221,16 @@ static void list_file(uint8_t id, unsigned *found, unsigned *empty,
         /* A log's catalog CRC covers metadata, not its changing data extent.
          * Its dedicated reader checks each committed page instead. */
         pogo_flash_log_status_t result = pogo_flash_log_open(&mydata->log, id);
-        unsigned bytes = 0u;
-        unsigned pages = 0u;
-        if (result == POGO_FLASH_LOG_OK) {
-            /* A maximum-size log has 256 pages; an 8-bit loop would wrap. */
-            for (uint16_t i = 0u; i < info.page_count; ++i) {
-                uint8_t used = 0u;
-                result = pogo_flash_log_read_page(&mydata->log, i,
-                                                  mydata->log.page,
-                                                  &used);
-                if (result == POGO_FLASH_LOG_END) {
-                    result = POGO_FLASH_LOG_OK;
-                    break;
-                }
-                if (result != POGO_FLASH_LOG_OK) break;
-                bytes += used;
-                ++pages;
-            }
-        }
+        /* open already verified the committed prefix; do not scan it twice. */
+        uint32_t bytes = pogo_flash_log_committed_bytes(&mydata->log);
+        unsigned pages = mydata->log.next_page;
         if (result != POGO_FLASH_LOG_OK) ++*errors;
         printf("# FLASH_LOG_FILE,id=%u,name=%s,first_page=%u,pages=%u,"
-               "committed_pages=%u,committed_bytes=%u,validation=%s\n",
+               "reserved_bytes=%lu,committed_pages=%u,committed_bytes=%lu,validation=%s\n",
                (unsigned)id, info.name_length ? info.name : "(unnamed)",
                (unsigned)info.first_page, (unsigned)info.page_count,
-               pages, bytes, result == POGO_FLASH_LOG_OK ? "ok" : "damaged");
+               (unsigned long)info.size_bytes, pages, (unsigned long)bytes,
+               result == POGO_FLASH_LOG_OK ? "ok" : "damaged");
         return;
     }
     /* A secure read verifies the selected catalog page and every data page.
@@ -255,7 +244,7 @@ static void list_file(uint8_t id, unsigned *found, unsigned *empty,
            "pages=%u,bytes=%u,generation=%lu,data_crc32=%08lx,validation=%s\n",
            (unsigned)info.id, name, (unsigned)info.format_version,
            (unsigned)info.first_page, (unsigned)info.page_count,
-           (unsigned)info.page_count * (unsigned)POGO_FLASH_FILE_PAGE_SIZE,
+           (unsigned)info.size_bytes,
            (unsigned long)info.generation, (unsigned long)info.data_crc32,
            pogo_flash_file_status_string(validation));
 }
@@ -347,6 +336,7 @@ static void shell_df(void) {
 
     unsigned files_used = 0u;
     unsigned payload_pages = 0u;
+    uint32_t file_bytes = 0u; /* Logs contribute reserved capacity, not live payload. */
     unsigned sectors_used = 0u;
     for (uint8_t id = 1u; id <= POGO_FLASH_FILE_MAX_FILES; ++id) {
         pogo_flash_file_info_t info;
@@ -359,12 +349,13 @@ static void shell_df(void) {
         }
         ++files_used;
         payload_pages += info.page_count;
+        file_bytes += info.size_bytes;
         sectors_used += ((unsigned)info.page_count +
             POGO_FLASH_FILE_ERASE_SECTOR_PAGES - 1u) /
             POGO_FLASH_FILE_ERASE_SECTOR_PAGES;
     }
 
-    /* SDK v3 exposes all 5888 pages. Catalogs each own a whole sector; data
+    /* The SDK exposes all 5888 pages. Catalogs each own a whole sector; data
      * extents may span multiple sectors, so file count is not space usage. */
     const unsigned physical_pages = POGO_FLASH_FILE_USER_PAGES;
     const unsigned sector_kib = POGO_FLASH_FILE_ERASE_SECTOR_PAGES *
@@ -387,7 +378,9 @@ static void shell_df(void) {
            payload_pages * (unsigned)POGO_FLASH_FILE_PAGE_SIZE);
     printf("Physical: %uK user flash; %uK catalog; %uK data extents.\n",
            physical_kib, catalog_kib, size_kib);
-    puts("Payload pages count reservations, not bytes written; free space may be fragmented.");
+    printf("File lengths: %luB (log lengths reserve capacity; ls/stat show committed payload).\n",
+           (unsigned long)file_bytes);
+    puts("Payload pages include page padding; Used includes sector rounding. Free space may be fragmented.");
 }
 
 /** Begin a potentially long, destructive compaction only after explicit YES.
@@ -461,11 +454,19 @@ static void shell_defrag_service(void) {
 
 /** Print one file's stable identity and allocation; no payload is changed. */
 static void shell_stat(const pogo_flash_file_info_t *info) {
-    printf("id=%u name=%s format=%u page=%u pages=%u generation=%lu crc=%08lx\n",
+    printf("id=%u name=%s format=%u page=%u pages=%u bytes=%lu allocated_bytes=%lu generation=%lu crc=%08lx\n",
            (unsigned)info->id, info->name_length ? info->name : "(unnamed)",
            (unsigned)info->format_version, (unsigned)info->first_page,
-           (unsigned)info->page_count, (unsigned long)info->generation,
+           (unsigned)info->page_count, (unsigned long)info->size_bytes,
+           (unsigned long)info->page_count * POGO_FLASH_FILE_PAGE_SIZE,
+           (unsigned long)info->generation,
            (unsigned long)info->data_crc32);
+    if (info->format_version == POGO_FLASH_LOG_FORMAT_VERSION) {
+        pogo_flash_log_status_t status = pogo_flash_log_open(&mydata->log, info->id);
+        printf("committed_bytes=%lu validation=%s status=%u\n",
+               (unsigned long)pogo_flash_log_committed_bytes(&mydata->log),
+               status == POGO_FLASH_LOG_OK ? "ok" : "damaged", (unsigned)status);
+    }
 }
 
 /** Preserve readable text while escaping binary log bytes that could alter
@@ -520,10 +521,12 @@ static void shell_cat(const pogo_flash_file_info_t *info) {
                 return;
             }
         }
-        for (unsigned offset = 0u; offset < POGO_FLASH_FILE_PAGE_SIZE;
+        unsigned used = info->size_bytes - (uint32_t)page * POGO_FLASH_FILE_PAGE_SIZE;
+        if (used > POGO_FLASH_FILE_PAGE_SIZE) used = POGO_FLASH_FILE_PAGE_SIZE;
+        for (unsigned offset = 0u; offset < used;
              offset += 16u) {
             printf("%04x:", (unsigned)page * POGO_FLASH_FILE_PAGE_SIZE + offset);
-            for (unsigned i = 0u; i < 16u; ++i) {
+            for (unsigned i = 0u; i < 16u && offset + i < used; ++i) {
                 printf(" %02x", (unsigned)mydata->log.page[offset + i]);
             }
             putchar('\n');
@@ -573,7 +576,9 @@ static void shell_write(const pogo_flash_file_info_t *info,
         mydata->log.page[offset + i / 2u] = (uint8_t)(
             (hex_digit(hex[i]) << 4) | hex_digit(hex[i + 1u]));
     }
-    status = pogo_flash_file_replace(info->id, 1u, mydata->log.page);
+    uint32_t size_bytes = offset + (uint32_t)(digits / 2u);
+    if (size_bytes < info->size_bytes) size_bytes = info->size_bytes;
+    status = pogo_flash_file_replace_bytes(info->id, size_bytes, mydata->log.page);
     printf("write: %s\n", pogo_flash_file_status_string(status));
 }
 
@@ -612,7 +617,7 @@ static void shell_execute(char *line) {
     const char *command = words[0];
     if (strcmp(command, "help") == 0 && count == 1u) {
         puts("help | ls | df | stat <id|name> | cat <id|name> | rm <id|name>");
-        puts("touch <id> <name|-> [pages] | mv <id|name> <new_name|->");
+        puts("touch <id> <name|-> [bytes] | mv <id|name> <new_name|->");
         puts("write <id|name> <offset> <hexbytes> | defrag YES | format YES");
         puts("UART upload/download: tools/pffs_transfer.py (put/get, CRC, ACK)");
         puts("abort <session_hex> cancels a transfer; interrupted replacement can lose data.");
@@ -670,18 +675,18 @@ static void shell_execute(char *line) {
         return;
     }
     if (strcmp(command, "touch") == 0 && (count == 3u || count == 4u)) {
-        uint32_t id, pages = 1u;
+        uint32_t id, bytes = 0u;
         if (!parse_u32(words[1], &id) || id == 0u ||
             id > POGO_FLASH_FILE_MAX_FILES ||
-            (count == 4u && !parse_u32(words[3], &pages)) ||
-            pages == 0u || pages > POGO_FLASH_FILE_MAX_PAGES) {
-            puts("error: touch needs ID 1..80 and pages 1..5632");
+            (count == 4u && !parse_u32(words[3], &bytes)) ||
+            bytes > POGO_FLASH_FILE_MAX_BYTES) {
+            puts("error: touch needs ID 1..80 and bytes 0..1441792");
             return;
         }
         if (!catalogs_ready()) return;
         const char *name = strcmp(words[2], "-") == 0 ? "" : words[2];
-        pogo_flash_file_status_t status = pogo_flash_file_create_blank(
-            (uint8_t)id, name, (uint16_t)pages, 1u);
+        pogo_flash_file_status_t status = pogo_flash_file_create_blank_bytes(
+            (uint8_t)id, name, bytes, 1u);
         printf("touch: %s\n", pogo_flash_file_status_string(status));
         return;
     }

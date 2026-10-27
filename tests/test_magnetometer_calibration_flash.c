@@ -95,12 +95,13 @@ int main(void) {
     fake_flash[16][MAGNETOMETER_CALIBRATION_FLASH_PAGE_SIZE - 1u] ^= 1u;
     assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
            MAGNETOMETER_CALIBRATION_FLASH_OK);
-    assert(fake_flash[16][4] == 3u);
+    assert(fake_flash[16][4] == 4u);
     memset(fake_flash, 0xa5, sizeof(fake_flash));
     memcpy(fake_flash[0], "PFFS", 4u);
+    fake_flash[0][4] = 0u; /* Damaged current header, not an incompatible version. */
     assert(magnetometer_calibration_flash_store(&detector, &metadata) ==
            MAGNETOMETER_CALIBRATION_FLASH_OK);
-    assert(memcmp(fake_flash[0], "PFFS", 4u) == 0 && fake_flash[0][4] == 3u);
+    assert(memcmp(fake_flash[0], "PFFS", 4u) == 0 && fake_flash[0][4] == 4u);
 
     /* Some fresh allocations are instead uniformly zero-filled. */
     memset(fake_flash, 0, sizeof(fake_flash));
@@ -135,6 +136,13 @@ int main(void) {
         POGO_FLASH_FILE_NAME_MAGNETOMETER_CALIBRATION, &calibration_info) ==
         POGO_FLASH_FILE_OK);
     uint16_t calibration_page = calibration_info.first_page;
+    assert(calibration_info.size_bytes == MAGNETOMETER_CALIBRATION_FLASH_RECORD_SIZE);
+    /* A short logical file cannot smuggle a full record through page padding. */
+    uint8_t saved_size_byte = fake_flash[0][12u + 4u];
+    fake_flash[0][12u + 4u] = 1u;
+    assert(magnetometer_calibration_flash_load(&detector, NULL) ==
+           MAGNETOMETER_CALIBRATION_FLASH_BAD_LENGTH);
+    fake_flash[0][12u + 4u] = saved_size_byte;
 
     /* Storing from CCW with the equivalent adapted sign produces the same
      * canonical record and does not rewrite the caller's sign convention. */
